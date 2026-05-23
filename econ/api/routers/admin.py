@@ -41,6 +41,8 @@ def update_entity(
         entity.name = body.name
     if body.entity_type is not None:
         entity.entity_type = body.entity_type
+    if body.is_monetary_authority is not None:
+        entity.is_monetary_authority = body.is_monetary_authority
     session.commit()
     session.refresh(entity)
     return entity
