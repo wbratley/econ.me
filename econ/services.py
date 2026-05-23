@@ -15,6 +15,10 @@ class CurrencyMismatchError(ValueError):
     pass
 
 
+class NotMonetaryAuthorityError(ValueError):
+    pass
+
+
 def create_entity(session: Session, name: str, entity_type: EntityType) -> Entity:
     entity = Entity(name=name, entity_type=entity_type)
     session.add(entity)
@@ -126,3 +130,61 @@ def transfer(
     session.add_all([debit, credit])
     session.flush()
     return debit, credit
+
+
+def issue_money(
+    session: Session,
+    account: Account,
+    amount: Decimal,
+    reference: str,
+    date: datetime | None = None,
+) -> Transaction:
+    if not account.entity.is_monetary_authority:
+        raise NotMonetaryAuthorityError(
+            f"entity {account.entity_id} is not a monetary authority"
+        )
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    tx = Transaction(
+        account=account,
+        date=date or datetime.now(timezone.utc),
+        amount=amount,
+        tx_type=TransactionType.ISSUANCE,
+        to_account_id=account.id,
+        reference=reference,
+    )
+    account.balance += amount
+    session.add(tx)
+    session.flush()
+    return tx
+
+
+def retire_money(
+    session: Session,
+    account: Account,
+    amount: Decimal,
+    reference: str,
+    date: datetime | None = None,
+) -> Transaction:
+    if not account.entity.is_monetary_authority:
+        raise NotMonetaryAuthorityError(
+            f"entity {account.entity_id} is not a monetary authority"
+        )
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    if account.balance < amount:
+        raise InsufficientFundsError(
+            f"account {account.id} has {account.balance} {account.currency}, need {amount}"
+        )
+    tx = Transaction(
+        account=account,
+        date=date or datetime.now(timezone.utc),
+        amount=amount,
+        tx_type=TransactionType.RETIREMENT,
+        from_account_id=account.id,
+        reference=reference,
+    )
+    account.balance -= amount
+    session.add(tx)
+    session.flush()
+    return tx

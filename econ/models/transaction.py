@@ -8,8 +8,10 @@ from .base import Base
 
 
 class TransactionType(enum.Enum):
-    DEBIT = "debit"
-    CREDIT = "credit"
+    DEBIT      = "debit"
+    CREDIT     = "credit"
+    ISSUANCE   = "issuance"
+    RETIREMENT = "retirement"
 
 
 class Transaction(Base):
