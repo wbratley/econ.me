@@ -4,16 +4,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from econ.models import Base, EntityType
+from econ.models.transaction import TransactionType
 from econ.services import (
     create_entity,
     create_account,
     deposit,
     withdraw,
     transfer,
+    issue_money,
+    retire_money,
     InsufficientFundsError,
     CurrencyMismatchError,
+    NotMonetaryAuthorityError,
 )
-from econ.models.transaction import TransactionType
 
 
 @pytest.fixture
@@ -31,6 +34,15 @@ def alice_bob(session):
     a = create_account(session, alice, "USD", initial_balance=Decimal("1000"))
     b = create_account(session, bob, "USD")
     return session, a, b
+
+
+@pytest.fixture
+def central_bank(session):
+    bank = create_entity(session, "Central Bank", EntityType.BANK)
+    bank.is_monetary_authority = True
+    session.flush()
+    acct = create_account(session, bank, "USD", initial_balance=Decimal("0"))
+    return session, acct
 
 
 # --- create_entity ---
@@ -226,3 +238,105 @@ def test_transfer_rejects_negative_amount(alice_bob):
     session, a, b = alice_bob
     with pytest.raises(ValueError):
         transfer(session, a, b, Decimal("-1"), "bad")
+
+
+# --- issue_money ---
+
+def test_issue_money_increases_balance(central_bank):
+    session, acct = central_bank
+    issue_money(session, acct, Decimal("1000"), "initial issuance")
+    assert acct.balance == Decimal("1000")
+
+
+def test_issue_money_creates_issuance_transaction(central_bank):
+    session, acct = central_bank
+    tx = issue_money(session, acct, Decimal("500"), "ref")
+    assert tx.tx_type == TransactionType.ISSUANCE
+    assert tx.amount == Decimal("500")
+    assert tx.account_id == acct.id
+    assert tx.to_account_id == acct.id
+    assert tx.from_account_id is None
+
+
+def test_issue_money_has_no_from_account(central_bank):
+    session, acct = central_bank
+    tx = issue_money(session, acct, Decimal("100"), "ref")
+    assert tx.from_account_id is None
+
+
+def test_issue_money_rejects_non_authority(alice_bob):
+    session, a, _ = alice_bob
+    with pytest.raises(NotMonetaryAuthorityError):
+        issue_money(session, a, Decimal("100"), "ref")
+
+
+def test_issue_money_rejects_zero_amount(central_bank):
+    session, acct = central_bank
+    with pytest.raises(ValueError):
+        issue_money(session, acct, Decimal("0"), "ref")
+
+
+def test_issue_money_rejects_negative_amount(central_bank):
+    session, acct = central_bank
+    with pytest.raises(ValueError):
+        issue_money(session, acct, Decimal("-1"), "ref")
+
+
+# --- retire_money ---
+
+def test_retire_money_decreases_balance(central_bank):
+    session, acct = central_bank
+    issue_money(session, acct, Decimal("1000"), "issue")
+    retire_money(session, acct, Decimal("400"), "retire")
+    assert acct.balance == Decimal("600")
+
+
+def test_retire_money_creates_retirement_transaction(central_bank):
+    session, acct = central_bank
+    issue_money(session, acct, Decimal("500"), "issue")
+    tx = retire_money(session, acct, Decimal("200"), "ref")
+    assert tx.tx_type == TransactionType.RETIREMENT
+    assert tx.amount == Decimal("200")
+    assert tx.account_id == acct.id
+    assert tx.from_account_id == acct.id
+    assert tx.to_account_id is None
+
+
+def test_retire_money_has_no_to_account(central_bank):
+    session, acct = central_bank
+    issue_money(session, acct, Decimal("500"), "issue")
+    tx = retire_money(session, acct, Decimal("100"), "ref")
+    assert tx.to_account_id is None
+
+
+def test_retire_money_rejects_non_authority(alice_bob):
+    session, a, _ = alice_bob
+    with pytest.raises(NotMonetaryAuthorityError):
+        retire_money(session, a, Decimal("100"), "ref")
+
+
+def test_retire_money_raises_on_insufficient_funds(central_bank):
+    session, acct = central_bank
+    with pytest.raises(InsufficientFundsError):
+        retire_money(session, acct, Decimal("1"), "ref")
+
+
+def test_retire_money_does_not_mutate_balance_on_failure(central_bank):
+    session, acct = central_bank
+    issue_money(session, acct, Decimal("100"), "issue")
+    before = acct.balance
+    with pytest.raises(InsufficientFundsError):
+        retire_money(session, acct, Decimal("9999"), "ref")
+    assert acct.balance == before
+
+
+def test_retire_money_rejects_zero_amount(central_bank):
+    session, acct = central_bank
+    with pytest.raises(ValueError):
+        retire_money(session, acct, Decimal("0"), "ref")
+
+
+def test_retire_money_rejects_negative_amount(central_bank):
+    session, acct = central_bank
+    with pytest.raises(ValueError):
+        retire_money(session, acct, Decimal("-1"), "ref")
