@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional
+
+from pydantic import BaseModel, field_serializer
+
+from econ.models.entity import EntityType
+from econ.models.transaction import TransactionType
+
+
+class EntityCreate(BaseModel):
+    name: str
+    entity_type: EntityType
+
+
+class AdminEntityCreate(BaseModel):
+    name: str
+    entity_type: EntityType
+    owner_id: Optional[str] = None
+
+
+class EntityUpdate(BaseModel):
+    name: Optional[str] = None
+    entity_type: Optional[EntityType] = None
+
+
+class AccountRead(BaseModel):
+    id: str
+    entity_id: str
+    currency: str
+    balance: Decimal
+
+    @field_serializer("balance")
+    def _balance(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class EntityRead(BaseModel):
+    id: str
+    name: str
+    entity_type: EntityType
+    owner_id: Optional[str] = None
+    accounts: list[AccountRead] = []
+
+    model_config = {"from_attributes": True}
+
+
+class AccountCreate(BaseModel):
+    currency: str
+    initial_balance: Decimal = Decimal("0")
+
+
+class TransactionRead(BaseModel):
+    id: str
+    date: datetime
+    amount: Decimal
+    tx_type: TransactionType
+    from_account_id: Optional[str] = None
+    to_account_id: Optional[str] = None
+    reference: str
+
+    @field_serializer("amount")
+    def _amount(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class DepositRequest(BaseModel):
+    account_id: str
+    amount: str
+    reference: str
+
+
+class WithdrawRequest(BaseModel):
+    account_id: str
+    amount: str
+    reference: str
+
+
+class TransferRequest(BaseModel):
+    from_account_id: str
+    to_account_id: str
+    amount: str
+    reference: str
+
+
+class UserRead(BaseModel):
+    id: str
+    email: str
+    name: str
+    is_admin: bool
+
+    model_config = {"from_attributes": True}
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    is_admin: Optional[bool] = None
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
