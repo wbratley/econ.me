@@ -24,6 +24,7 @@ class AdminEntityCreate(BaseModel):
 class EntityUpdate(BaseModel):
     name: Optional[str] = None
     entity_type: Optional[EntityType] = None
+    is_monetary_authority: Optional[bool] = None
 
 
 class AccountRead(BaseModel):
@@ -44,6 +45,7 @@ class EntityRead(BaseModel):
     name: str
     entity_type: EntityType
     owner_id: Optional[str] = None
+    is_monetary_authority: bool = False
     accounts: list[AccountRead] = []
 
     model_config = {"from_attributes": True}
@@ -56,6 +58,7 @@ class AccountCreate(BaseModel):
 
 class TransactionRead(BaseModel):
     id: str
+    account_id: str
     date: datetime
     amount: Decimal
     tx_type: TransactionType
@@ -85,6 +88,18 @@ class WithdrawRequest(BaseModel):
 class TransferRequest(BaseModel):
     from_account_id: str
     to_account_id: str
+    amount: str
+    reference: str
+
+
+class IssueRequest(BaseModel):
+    account_id: str
+    amount: str
+    reference: str
+
+
+class RetireRequest(BaseModel):
+    account_id: str
     amount: str
     reference: str
 

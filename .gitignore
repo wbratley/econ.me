@@ -6,3 +6,4 @@ dist/
 build/
 .env
 econ.db
+.venv/
