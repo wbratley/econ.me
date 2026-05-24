@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_serializer
 
 from econ.models.entity import EntityType
 from econ.models.transaction import TransactionType
+from econ.models.script import ScriptType
 
 
 class EntityCreate(BaseModel):
@@ -121,3 +122,39 @@ class UserUpdate(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ScriptCreate(BaseModel):
+    name: str
+    description: str = ""
+    script_type: ScriptType
+    source: str
+    timeout_ms: int = 100
+
+
+class ScriptRead(BaseModel):
+    id: str
+    name: str
+    description: str
+    script_type: ScriptType
+    source: str
+    is_active: bool
+    timeout_ms: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ScriptUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    source: Optional[str] = None
+    is_active: Optional[bool] = None
+    timeout_ms: Optional[int] = None
+
+
+class ScriptValidateResult(BaseModel):
+    ok: bool
+    error: Optional[str] = None
+    intents: list[dict] = []
