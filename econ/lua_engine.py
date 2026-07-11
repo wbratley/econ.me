@@ -19,6 +19,7 @@ Scripts must define an entry-point function matching their ScriptType:
 """
 
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -60,13 +61,35 @@ _SANDBOX_BLACKLIST = [
     "newproxy",
 ]
 
+_MAX_MEMORY_BYTES = 16 * 1024 * 1024
+
+_TIMEOUT_SENTINEL = "__script_timeout__"
+
+# Installed before the sandbox nils out `debug`, so the script can never
+# reach sethook. The hook checks the deadline every 1000 VM instructions;
+# once exceeded it re-arms to fire on *every* instruction, so even a script
+# that wraps its loop in pcall cannot make progress — each unwind lands on
+# an instruction that immediately raises again until the chunk exits.
+_HOOK_INSTALLER = """
+function(deadline_exceeded)
+  local sethook = debug.sethook
+  sethook(function()
+    if deadline_exceeded() then
+      sethook(function() error("%s", 2) end, "", 1)
+      error("%s", 2)
+    end
+  end, "", 1000)
+end
+""" % (_TIMEOUT_SENTINEL, _TIMEOUT_SENTINEL)
+
 
 class LuaEngine:
     def run(self, source: str, ctx: dict, timeout_ms: int = 100) -> RunResult:
         """
         Execute Lua source with the given ctx dict. Returns a RunResult.
-        Each call gets a fresh LuaRuntime. If execution exceeds timeout_ms
-        the thread is abandoned and RunResult.error is set.
+        Each call gets a fresh LuaRuntime capped at _MAX_MEMORY_BYTES.
+        A debug hook aborts execution inside the VM once timeout_ms elapses
+        (pcall cannot swallow it); RunResult.error is set on timeout.
         """
         try:
             from lupa import LuaRuntime
@@ -78,7 +101,12 @@ class LuaEngine:
 
         def _execute() -> None:
             try:
-                lua = LuaRuntime(unpack_returned_tuples=True)
+                lua = LuaRuntime(unpack_returned_tuples=True, max_memory=_MAX_MEMORY_BYTES)
+
+                deadline = time.monotonic() + timeout_ms / 1000.0
+                install_hook = lua.eval(_HOOK_INSTALLER)
+                install_hook(lambda: time.monotonic() > deadline)
+
                 _apply_sandbox(lua)
 
                 entity_id = ctx.get("entity", {}).get("id", "")
@@ -89,11 +117,19 @@ class LuaEngine:
                 # Capture any mutations the script made to ctx.state
                 result["state_updates"] = _read_lua_table(state_tbl)
             except Exception as exc:
-                result["error"] = str(exc)
+                if _TIMEOUT_SENTINEL in str(exc):
+                    result["error"] = f"script timed out after {timeout_ms}ms"
+                else:
+                    # str() can be empty (e.g. LuaMemoryError) — fall back to
+                    # the exception type so the error check stays truthy.
+                    result["error"] = str(exc) or type(exc).__name__
 
         thread = threading.Thread(target=_execute, daemon=True)
         thread.start()
-        thread.join(timeout=timeout_ms / 1000.0)
+        # The debug hook kills the script at the deadline from inside the VM.
+        # The join grace only covers time spent in C calls, where hooks don't
+        # fire; if we hit it the thread is abandoned as a last resort.
+        thread.join(timeout=timeout_ms / 1000.0 + 1.0)
 
         if thread.is_alive():
             intents.clear()

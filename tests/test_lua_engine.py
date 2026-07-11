@@ -122,6 +122,44 @@ def test_timeout_kills_infinite_loop():
     assert result.intents == []
 
 
+def test_timeout_actually_stops_the_vm():
+    # The hook must abort execution shortly after the deadline — run() should
+    # not need the watchdog grace period, and no thread should be left running.
+    import time
+    import threading
+
+    before = threading.active_count()
+    start = time.monotonic()
+    result = engine.run("while true do end", _CTX, timeout_ms=100)
+    elapsed = time.monotonic() - start
+
+    assert "timed out" in result.error
+    assert elapsed < 0.5
+    time.sleep(0.1)
+    assert threading.active_count() <= before
+
+
+def test_timeout_cannot_be_swallowed_by_pcall():
+    src = """
+while true do
+    pcall(function() while true do end end)
+end
+"""
+    result = engine.run(src, _CTX, timeout_ms=100)
+    assert result.error is not None
+    assert "timed out" in result.error
+
+
+def test_memory_bomb_is_capped():
+    src = """
+local s = "xxxxxxxxxxxxxxxx"
+while true do s = s .. s end
+"""
+    result = engine.run(src, _CTX, timeout_ms=5000)
+    assert result.error is not None
+    assert "timed out" not in result.error
+
+
 def test_intents_discarded_on_timeout():
     src = """
 ctx.action.issue_money("acct-1", "999", "before loop")
