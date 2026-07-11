@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import ScriptCreate, ScriptRead, ScriptUpdate, ScriptValidateResult
 from econ.lua_engine import LuaEngine
-from econ.models import Script, User
+from econ.models import Entity, Script, User
 from econ.models.script import ScriptType
 
 router = APIRouter(prefix="/admin/scripts", tags=["scripts"])
@@ -42,12 +42,15 @@ def create_script(
     session: Session = Depends(get_session),
     _: User = Depends(require_admin),
 ):
+    if body.entity_id is not None and session.get(Entity, body.entity_id) is None:
+        raise HTTPException(status_code=400, detail="Entity not found")
     script = Script(
         name=body.name,
         description=body.description,
         script_type=body.script_type,
         source=body.source,
         timeout_ms=body.timeout_ms,
+        entity_id=body.entity_id,
     )
     session.add(script)
     session.commit()
@@ -87,6 +90,10 @@ def update_script(
         script.is_active = body.is_active
     if body.timeout_ms is not None:
         script.timeout_ms = body.timeout_ms
+    if body.entity_id is not None:
+        if session.get(Entity, body.entity_id) is None:
+            raise HTTPException(status_code=400, detail="Entity not found")
+        script.entity_id = body.entity_id
     session.commit()
     session.refresh(script)
     return script

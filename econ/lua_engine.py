@@ -8,7 +8,8 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
   ctx.accounts      read-only account list
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
-  ctx.query.*       read-only economy queries (stubbed until Step 3)
+  ctx.query.*       read-only economy queries — backed by callables the caller
+                    passes in ctx["queries"]; missing ones return nil
   ctx.action.*      queue an intent for Python to resolve after all scripts run
 
 Scripts must define an entry-point function matching their ScriptType:
@@ -99,6 +100,15 @@ class LuaEngine:
         intents: list[Intent] = []
         result: dict = {"state_updates": {}, "error": None}
 
+        # Query callables may hold a DB session owned by the caller's thread.
+        # They go inert once run() returns, so a script abandoned by the
+        # watchdog can never touch the session afterwards.
+        finished = {"flag": False}
+        queries = {
+            name: _wrap_query(fn, finished)
+            for name, fn in (ctx.get("queries") or {}).items()
+        }
+
         def _execute() -> None:
             try:
                 lua = LuaRuntime(unpack_returned_tuples=True, max_memory=_MAX_MEMORY_BYTES)
@@ -110,7 +120,7 @@ class LuaEngine:
                 _apply_sandbox(lua)
 
                 entity_id = ctx.get("entity", {}).get("id", "")
-                state_tbl = _build_ctx(lua, ctx, entity_id, intents)
+                state_tbl = _build_ctx(lua, ctx, entity_id, intents, queries)
 
                 lua.execute(source)
 
@@ -130,6 +140,7 @@ class LuaEngine:
         # The join grace only covers time spent in C calls, where hooks don't
         # fire; if we hit it the thread is abandoned as a last resort.
         thread.join(timeout=timeout_ms / 1000.0 + 1.0)
+        finished["flag"] = True
 
         if thread.is_alive():
             intents.clear()
@@ -151,7 +162,18 @@ def _apply_sandbox(lua) -> None:
         setattr(g, name, None)
 
 
-def _build_ctx(lua, ctx: dict, entity_id: str, intents: list):
+def _wrap_query(fn, finished: dict):
+    def wrapper(*args):
+        if finished["flag"]:
+            return None
+        try:
+            return fn(*args)
+        except Exception:
+            return None
+    return wrapper
+
+
+def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     """
     Build the ctx Lua table injected into each script.
     Returns the state_tbl so the caller can read mutations after execution.
@@ -159,13 +181,23 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list):
     def _to_lua_table(d: dict):
         t = lua.table()
         for k, v in d.items():
-            t[k] = v
+            if isinstance(v, dict):
+                t[k] = _to_lua_table(v)
+            elif isinstance(v, list):
+                t[k] = _to_lua_list(v)
+            else:
+                t[k] = v
         return t
 
     def _to_lua_list(lst: list):
         t = lua.table()
         for i, item in enumerate(lst, start=1):
-            t[i] = _to_lua_table(item) if isinstance(item, dict) else item
+            if isinstance(item, dict):
+                t[i] = _to_lua_table(item)
+            elif isinstance(item, list):
+                t[i] = _to_lua_list(item)
+            else:
+                t[i] = item
         return t
 
     entity_tbl  = _to_lua_table(ctx.get("entity", {}))
@@ -173,11 +205,12 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list):
     events_tbl  = _to_lua_list(ctx.get("events", []))
     state_tbl   = _to_lua_table(ctx.get("state", {}))
 
-    # --- query stubs (return nil until Step 3) ---
+    # --- queries (caller-provided callables; missing ones return nil) ---
     query_tbl = lua.table()
-    query_tbl["balance"]       = lambda account_id: None
-    query_tbl["total_supply"]  = lambda currency: None
-    query_tbl["market_price"]  = lambda symbol: None
+    for name in ("balance", "total_supply", "market_price"):
+        query_tbl[name] = queries.get(name) or (lambda *args: None)
+    for name, fn in queries.items():
+        query_tbl[name] = fn
 
     # --- action stubs (collect intents) ---
     action_tbl = lua.table()
@@ -231,7 +264,21 @@ def _read_lua_table(tbl) -> dict:
     result = {}
     try:
         for k in tbl:
-            result[k] = tbl[k]
+            result[k] = _lua_to_python(tbl[k])
     except Exception:
         pass
     return result
+
+
+def _lua_to_python(value):
+    """Recursively convert Lua tables so state stays JSON-serializable."""
+    try:
+        from lupa import lua_type
+    except ImportError:
+        return value
+    if lua_type(value) != "table":
+        return value
+    keys = list(value.keys())
+    if keys and all(isinstance(k, int) for k in keys) and sorted(keys) == list(range(1, len(keys) + 1)):
+        return [_lua_to_python(value[k]) for k in sorted(keys)]
+    return {k: _lua_to_python(value[k]) for k in keys}

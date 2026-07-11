@@ -4,6 +4,7 @@ from .entity import Entity, EntityType
 from .account import Account
 from .transaction import Transaction, TransactionType
 from .script import Script, ScriptType
+from .tick import Tick
 
 __all__ = [
     "Base",
@@ -16,4 +17,5 @@ __all__ = [
     "TransactionType",
     "Script",
     "ScriptType",
+    "Tick",
 ]
