@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, field_serializer
 
@@ -162,6 +162,7 @@ class ScriptValidateResult(BaseModel):
     ok: bool
     error: Optional[str] = None
     intents: list[dict] = []
+    return_value: Any = None
 
 
 class TickRead(BaseModel):

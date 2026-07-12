@@ -8,15 +8,17 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
   ctx.accounts      read-only account list
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
+  ctx.op            the service operation being validated/hooked (HOOK and
+                    VALIDATOR runs only)
   ctx.query.*       read-only economy queries — backed by callables the caller
                     passes in ctx["queries"]; missing ones return nil
   ctx.action.*      queue an intent for Python to resolve after all scripts run
 
-Scripts must define an entry-point function matching their ScriptType:
-  BEHAVIOUR  →  on_tick(ctx)
-  HOOK       →  on_hook(ctx)
-  VALIDATOR  →  on_validate(ctx)  -- must return {allow=bool, reason=string}
-  POLICY     →  on_policy(ctx)
+Scripts run as a top-level chunk; the chunk's return value is captured in
+RunResult.return_value. VALIDATOR scripts use it for their verdict:
+  return {allow=false, reason="too large"}   -- deny
+  return false                               -- deny
+  return {allow=true}  /  no return          -- allow
 """
 
 import threading
@@ -48,6 +50,7 @@ class RunResult:
     intents: list       # list[Intent]
     state_updates: dict # mutations the script made to ctx.state
     error: str | None   # set if the script raised an error or timed out
+    return_value: object = None  # the chunk's return value (validator verdicts)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +101,7 @@ class LuaEngine:
             return RunResult(intents=[], state_updates={}, error=f"lupa not installed: {exc}")
 
         intents: list[Intent] = []
-        result: dict = {"state_updates": {}, "error": None}
+        result: dict = {"state_updates": {}, "error": None, "return_value": None}
 
         # Query callables may hold a DB session owned by the caller's thread.
         # They go inert once run() returns, so a script abandoned by the
@@ -122,7 +125,7 @@ class LuaEngine:
                 entity_id = ctx.get("entity", {}).get("id", "")
                 state_tbl = _build_ctx(lua, ctx, entity_id, intents, queries)
 
-                lua.execute(source)
+                result["return_value"] = _lua_to_python(lua.execute(source))
 
                 # Capture any mutations the script made to ctx.state
                 result["state_updates"] = _read_lua_table(state_tbl)
@@ -149,7 +152,12 @@ class LuaEngine:
         if result["error"]:
             return RunResult(intents=[], state_updates={}, error=result["error"])
 
-        return RunResult(intents=list(intents), state_updates=result["state_updates"], error=None)
+        return RunResult(
+            intents=list(intents),
+            state_updates=result["state_updates"],
+            error=None,
+            return_value=result["return_value"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +262,8 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     ctx_tbl["state"]    = state_tbl
     ctx_tbl["query"]    = query_tbl
     ctx_tbl["action"]   = action_tbl
+    if ctx.get("op"):
+        ctx_tbl["op"] = _to_lua_table(ctx["op"])
 
     lua.globals().ctx = ctx_tbl
 
