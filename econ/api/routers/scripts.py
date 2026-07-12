@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import ScriptCreate, ScriptRead, ScriptUpdate, ScriptValidateResult
 from econ.lua_engine import LuaEngine
-from econ.models import Script, User
+from econ.models import Entity, Script, User
 from econ.models.script import ScriptType
 
 router = APIRouter(prefix="/admin/scripts", tags=["scripts"])
@@ -18,6 +18,17 @@ _MOCK_CTX = {
     "accounts": [{"id": "mock-account", "currency": "USD", "balance": "1000.0000"}],
     "events": [],
     "state": {},
+    # lets HOOK/VALIDATOR scripts that read ctx.op be dry-run too
+    "op": {
+        "type": "transfer",
+        "entity_id": "mock-entity",
+        "from_account_id": "mock-account",
+        "to_account_id": "mock-account-2",
+        "amount": "100.0000",
+        "currency": "USD",
+        "reference": "mock",
+        "transaction_ids": ["mock-tx-1", "mock-tx-2"],
+    },
 }
 
 
@@ -42,12 +53,15 @@ def create_script(
     session: Session = Depends(get_session),
     _: User = Depends(require_admin),
 ):
+    if body.entity_id is not None and session.get(Entity, body.entity_id) is None:
+        raise HTTPException(status_code=400, detail="Entity not found")
     script = Script(
         name=body.name,
         description=body.description,
         script_type=body.script_type,
         source=body.source,
         timeout_ms=body.timeout_ms,
+        entity_id=body.entity_id,
     )
     session.add(script)
     session.commit()
@@ -87,6 +101,10 @@ def update_script(
         script.is_active = body.is_active
     if body.timeout_ms is not None:
         script.timeout_ms = body.timeout_ms
+    if body.entity_id is not None:
+        if session.get(Entity, body.entity_id) is None:
+            raise HTTPException(status_code=400, detail="Entity not found")
+        script.entity_id = body.entity_id
     session.commit()
     session.refresh(script)
     return script
@@ -125,4 +143,15 @@ def validate_script(
         ok=result.error is None,
         error=result.error,
         intents=[asdict(i) for i in result.intents],
+        return_value=_jsonable(result.return_value),
     )
+
+
+def _jsonable(value):
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)  # e.g. a Lua function object

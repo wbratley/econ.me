@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, field_serializer
 
@@ -130,6 +130,7 @@ class ScriptCreate(BaseModel):
     script_type: ScriptType
     source: str
     timeout_ms: int = 100
+    entity_id: Optional[str] = None
 
 
 class ScriptRead(BaseModel):
@@ -140,6 +141,8 @@ class ScriptRead(BaseModel):
     source: str
     is_active: bool
     timeout_ms: int
+    entity_id: Optional[str] = None
+    state: dict = {}
     created_at: datetime
     updated_at: datetime
 
@@ -152,9 +155,21 @@ class ScriptUpdate(BaseModel):
     source: Optional[str] = None
     is_active: Optional[bool] = None
     timeout_ms: Optional[int] = None
+    entity_id: Optional[str] = None
 
 
 class ScriptValidateResult(BaseModel):
     ok: bool
     error: Optional[str] = None
     intents: list[dict] = []
+    return_value: Any = None
+
+
+class TickRead(BaseModel):
+    id: str
+    number: int
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    events: list[dict] = []
+
+    model_config = {"from_attributes": True}

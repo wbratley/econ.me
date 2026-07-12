@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
 
+from . import scripting
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.transaction import Transaction, TransactionType
@@ -47,6 +48,8 @@ def deposit(
 ) -> Transaction:
     if amount <= 0:
         raise ValueError("amount must be positive")
+    op = _op("deposit", account, amount, reference)
+    scripting.fire_validators(session, op)
     tx = Transaction(
         account=account,
         date=date or datetime.now(timezone.utc),
@@ -58,6 +61,7 @@ def deposit(
     account.balance += amount
     session.add(tx)
     session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [tx.id]})
     return tx
 
 
@@ -74,6 +78,8 @@ def withdraw(
         raise InsufficientFundsError(
             f"account {account.id} has {account.balance} {account.currency}, need {amount}"
         )
+    op = _op("withdraw", account, amount, reference)
+    scripting.fire_validators(session, op)
     tx = Transaction(
         account=account,
         date=date or datetime.now(timezone.utc),
@@ -85,6 +91,7 @@ def withdraw(
     account.balance -= amount
     session.add(tx)
     session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [tx.id]})
     return tx
 
 
@@ -106,6 +113,16 @@ def transfer(
         raise InsufficientFundsError(
             f"account {from_account.id} has {from_account.balance} {from_account.currency}, need {amount}"
         )
+    op = {
+        "type": "transfer",
+        "entity_id": from_account.entity_id,
+        "from_account_id": from_account.id,
+        "to_account_id": to_account.id,
+        "amount": str(amount),
+        "currency": from_account.currency,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
     ts = date or datetime.now(timezone.utc)
     debit = Transaction(
         account=from_account,
@@ -129,6 +146,7 @@ def transfer(
     to_account.balance += amount
     session.add_all([debit, credit])
     session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [debit.id, credit.id]})
     return debit, credit
 
 
@@ -145,6 +163,8 @@ def issue_money(
         )
     if amount <= 0:
         raise ValueError("amount must be positive")
+    op = _op("issue_money", account, amount, reference)
+    scripting.fire_validators(session, op)
     tx = Transaction(
         account=account,
         date=date or datetime.now(timezone.utc),
@@ -156,6 +176,7 @@ def issue_money(
     account.balance += amount
     session.add(tx)
     session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [tx.id]})
     return tx
 
 
@@ -176,6 +197,8 @@ def retire_money(
         raise InsufficientFundsError(
             f"account {account.id} has {account.balance} {account.currency}, need {amount}"
         )
+    op = _op("retire_money", account, amount, reference)
+    scripting.fire_validators(session, op)
     tx = Transaction(
         account=account,
         date=date or datetime.now(timezone.utc),
@@ -187,4 +210,16 @@ def retire_money(
     account.balance -= amount
     session.add(tx)
     session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [tx.id]})
     return tx
+
+
+def _op(op_type: str, account: Account, amount: Decimal, reference: str) -> dict:
+    return {
+        "type": op_type,
+        "entity_id": account.entity_id,
+        "account_id": account.id,
+        "amount": str(amount),
+        "currency": account.currency,
+        "reference": reference,
+    }
