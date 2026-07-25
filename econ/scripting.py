@@ -119,6 +119,7 @@ def _op_ctx(session: Session, script: Script, op: dict) -> dict:
 
 def build_queries(session: Session) -> dict:
     """ctx.query.* — read-only, string results so Lua sees exact decimals."""
+    from . import markets  # deferred: markets imports this module
 
     def balance(account_id):
         acct = session.get(Account, str(account_id))
@@ -132,13 +133,25 @@ def build_queries(session: Session) -> dict:
         return str(total)
 
     def market_price(symbol):
-        return None  # no markets yet
+        market = markets.get_market(session, str(symbol))
+        if market is None or market.last_price is None:
+            return None
+        return str(market.last_price)
 
-    return {"balance": balance, "total_supply": total_supply, "market_price": market_price}
+    def holding(entity_id, symbol):
+        h = markets.get_holding(session, str(entity_id), str(symbol).upper())
+        return str(h.quantity) if h else "0"
+
+    return {
+        "balance": balance,
+        "total_supply": total_supply,
+        "market_price": market_price,
+        "holding": holding,
+    }
 
 
 def resolve_intent(session: Session, intent: Intent) -> dict:
-    from . import services  # deferred: services imports this module
+    from . import markets, services  # deferred: both import this module
 
     event = {
         "type": intent.intent_type,
@@ -150,12 +163,14 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
     def rejected(reason: str) -> dict:
         return {**event, "status": "rejected", "reason": reason}
 
-    try:
-        amount = Decimal(intent.params["amount"])
-    except (InvalidOperation, KeyError, TypeError):
-        return rejected("invalid amount")
+    def amount_of(key: str) -> Decimal:
+        try:
+            return Decimal(intent.params[key])
+        except (InvalidOperation, KeyError, TypeError):
+            raise ValueError(f"invalid {key}")
 
     reference = intent.params.get("reference", "")
+    extra: dict = {}
 
     try:
         if intent.intent_type == "transfer":
@@ -166,7 +181,7 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             if from_account.entity_id != intent.entity_id:
                 return rejected("entity does not own source account")
             with session.begin_nested():
-                services.transfer(session, from_account, to_account, amount, reference)
+                services.transfer(session, from_account, to_account, amount_of("amount"), reference)
 
         elif intent.intent_type in ("issue_money", "retire_money"):
             account = session.get(Account, intent.params.get("account_id"))
@@ -176,14 +191,32 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 return rejected("entity does not own account")
             op = services.issue_money if intent.intent_type == "issue_money" else services.retire_money
             with session.begin_nested():
-                op(session, account, amount, reference)
+                op(session, account, amount_of("amount"), reference)
+
+        elif intent.intent_type == "place_order":
+            with session.begin_nested():
+                order = markets.place_order(
+                    session,
+                    intent.entity_id,
+                    symbol=intent.params.get("symbol", ""),
+                    side=intent.params.get("side", ""),
+                    quantity=amount_of("quantity"),
+                    limit_price=amount_of("limit_price"),
+                    account_id=intent.params.get("account_id", ""),
+                    reference=reference,
+                )
+            extra["order_id"] = order.id  # scripts need this to cancel later
+
+        elif intent.intent_type == "cancel_order":
+            with session.begin_nested():
+                markets.cancel_order(session, intent.params.get("order_id", ""), intent.entity_id)
 
         else:
             return rejected(f"unknown intent type {intent.intent_type!r}")
 
     except ValueError as exc:
         # InsufficientFunds / CurrencyMismatch / NotMonetaryAuthority /
-        # OperationVetoed / bad amount
+        # OperationVetoed / InsufficientHoldings / MarketInactive / bad amount
         return rejected(str(exc))
 
-    return {**event, "status": "applied"}
+    return {**event, "status": "applied", **extra}

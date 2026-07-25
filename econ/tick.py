@@ -10,8 +10,12 @@ run_tick():
   4. resolves all queued intents in priority order through the service layer
      (policy intents come first on priority ties), inside a savepoint each,
      so one bad intent cannot poison the rest
-  5. records every outcome (applied / rejected / script_error) as an event
-     on a new Tick row — those events feed ctx.events next tick
+  5. clears every active commodity market in a uniform-price call auction —
+     orders placed this tick (by scripts or via the API since the last tick)
+     participate in this tick's auction
+  6. records every outcome (applied / rejected / script_error / trade /
+     order_cancelled / auction) as an event on a new Tick row — those events
+     feed ctx.events next tick
 
 An intent may only move money out of accounts owned by the entity whose
 script queued it; the service layer additionally enforces monetary-authority
@@ -23,8 +27,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import markets
 from .lua_engine import Intent, LuaEngine
-from .models import Entity, Script, ScriptType, Tick
+from .models import Entity, Holding, Script, ScriptType, Tick
 from .scripting import build_queries, resolve_intent
 
 
@@ -69,6 +74,8 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     for intent in intents:
         events.append(resolve_intent(session, intent))
 
+    events.extend(markets.run_auctions(session, tick_number=number))
+
     tick = Tick(
         number=number,
         started_at=started_at,
@@ -103,6 +110,12 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
         "accounts": [
             {"id": a.id, "currency": a.currency, "balance": str(a.balance)}
             for a in entity.accounts
+        ],
+        "holdings": [
+            {"symbol": h.symbol, "quantity": str(h.quantity)}
+            for h in session.execute(
+                select(Holding).where(Holding.entity_id == entity.id).order_by(Holding.symbol)
+            ).scalars()
         ],
         "events": entity_events,
         "state": dict(script.state or {}),

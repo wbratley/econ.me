@@ -7,6 +7,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, field_serializer
 
 from econ.models.entity import EntityType
+from econ.models.order import OrderSide, OrderStatus
 from econ.models.transaction import TransactionType
 from econ.models.script import ScriptType
 
@@ -171,5 +172,100 @@ class TickRead(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime] = None
     events: list[dict] = []
+
+    model_config = {"from_attributes": True}
+
+
+class MarketCreate(BaseModel):
+    symbol: str
+    currency: str
+    name: str = ""
+
+
+class MarketUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class MarketRead(BaseModel):
+    id: str
+    symbol: str
+    name: str
+    currency: str
+    last_price: Optional[Decimal] = None
+    is_active: bool
+    created_at: datetime
+
+    @field_serializer("last_price")
+    def _last_price(self, v: Optional[Decimal]) -> Optional[str]:
+        return None if v is None else str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class HoldingRead(BaseModel):
+    id: str
+    entity_id: str
+    symbol: str
+    quantity: Decimal
+
+    @field_serializer("quantity")
+    def _quantity(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class HoldingGrant(BaseModel):
+    entity_id: str
+    symbol: str
+    delta: str  # signed; the goods faucet
+
+
+class OrderCreate(BaseModel):
+    symbol: str
+    side: OrderSide
+    quantity: str
+    limit_price: str
+    account_id: str
+    reference: str = ""
+
+
+class OrderRead(BaseModel):
+    id: str
+    market_id: str
+    entity_id: str
+    account_id: str
+    side: OrderSide
+    quantity: Decimal
+    remaining: Decimal
+    limit_price: Decimal
+    status: OrderStatus
+    reference: str
+    cancel_reason: str
+    created_at: datetime
+
+    @field_serializer("quantity", "remaining", "limit_price")
+    def _decimals(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class TradeRead(BaseModel):
+    id: str
+    market_id: str
+    tick_number: int
+    buy_order_id: str
+    sell_order_id: str
+    buyer_entity_id: str
+    seller_entity_id: str
+    price: Decimal
+    quantity: Decimal
+    executed_at: datetime
+
+    @field_serializer("price", "quantity")
+    def _decimals(self, v: Decimal) -> str:
+        return str(v)
 
     model_config = {"from_attributes": True}
