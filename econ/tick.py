@@ -2,20 +2,23 @@
 Tick engine — advances the simulation one step.
 
 run_tick():
-  1. runs active POLICY scripts (attached to an entity, e.g. a central bank)
+  1. completes every production process due this tick — outputs are
+     credited BEFORE scripts run, so a script can sell fresh goods in this
+     tick's auction
+  2. runs active POLICY scripts (attached to an entity, e.g. a central bank)
      first — they see ALL of the previous tick's events
-  2. then runs active BEHAVIOUR scripts, which see only the previous tick's
+  3. then runs active BEHAVIOUR scripts, which see only the previous tick's
      events for their own entity
-  3. persists each successful script's ctx.state mutations
-  4. resolves all queued intents in priority order through the service layer
+  4. persists each successful script's ctx.state mutations
+  5. resolves all queued intents in priority order through the service layer
      (policy intents come first on priority ties), inside a savepoint each,
      so one bad intent cannot poison the rest
-  5. clears every active commodity market in a uniform-price call auction —
+  6. clears every active commodity market in a uniform-price call auction —
      orders placed this tick (by scripts or via the API since the last tick)
      participate in this tick's auction
-  6. records every outcome (applied / rejected / script_error / trade /
-     order_cancelled / auction) as an event on a new Tick row — those events
-     feed ctx.events next tick
+  7. records every outcome (applied / rejected / script_error / trade /
+     order_cancelled / auction / process_completed) as an event on a new
+     Tick row — those events feed ctx.events next tick
 
 An intent may only move money out of accounts owned by the entity whose
 script queued it; the service layer additionally enforces monetary-authority
@@ -27,9 +30,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import markets
+from . import markets, production
 from .lua_engine import Intent, LuaEngine
-from .models import Entity, Holding, Script, ScriptType, Tick
+from .models import Entity, Holding, Process, ProcessStatus, Script, ScriptType, Tick
 from .scripting import build_queries, resolve_intent
 
 
@@ -43,7 +46,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     number = prev.number + 1 if prev else 1
     prev_events = list(prev.events or []) if prev else []
 
-    events: list[dict] = []
+    events: list[dict] = list(production.complete_processes(session, tick_number=number))
     intents: list[Intent] = []
 
     # POLICY scripts run first and see every event from the previous tick;
@@ -115,6 +118,19 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             {"symbol": h.symbol, "quantity": str(h.quantity)}
             for h in session.execute(
                 select(Holding).where(Holding.entity_id == entity.id).order_by(Holding.symbol)
+            ).scalars()
+        ],
+        "processes": [
+            {
+                "id": p.id,
+                "recipe": p.recipe.code,
+                "started_tick": p.started_tick,
+                "completes_tick": p.completes_tick,
+            }
+            for p in session.execute(
+                select(Process)
+                .where(Process.entity_id == entity.id, Process.status == ProcessStatus.RUNNING)
+                .order_by(Process.created_at, Process.id)
             ).scalars()
         ],
         "events": entity_events,

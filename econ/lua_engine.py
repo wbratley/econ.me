@@ -7,6 +7,7 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
   ctx.entity        read-only entity info
   ctx.accounts      read-only account list
   ctx.holdings      read-only commodity holdings list
+  ctx.processes     read-only running-production list
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
   ctx.op            the service operation being validated/hooked (HOOK and
@@ -212,6 +213,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     entity_tbl  = _to_lua_table(ctx.get("entity", {}))
     accounts_tbl = _to_lua_list(ctx.get("accounts", []))
     holdings_tbl = _to_lua_list(ctx.get("holdings", []))
+    processes_tbl = _to_lua_list(ctx.get("processes", []))
     events_tbl  = _to_lua_list(ctx.get("events", []))
     state_tbl   = _to_lua_table(ctx.get("state", {}))
 
@@ -272,16 +274,37 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _start_process(recipe, priority=100):
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="start_process",
+            params={"recipe": str(recipe)},
+            resource_ids=[str(recipe)],
+            priority=int(priority),
+        ))
+
+    def _cancel_process(process_id, priority=100):
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="cancel_process",
+            params={"process_id": str(process_id)},
+            resource_ids=[str(process_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
+    action_tbl["start_process"] = _start_process
+    action_tbl["cancel_process"] = _cancel_process
 
     ctx_tbl = lua.table()
     ctx_tbl["entity"]   = entity_tbl
     ctx_tbl["accounts"] = accounts_tbl
     ctx_tbl["holdings"] = holdings_tbl
+    ctx_tbl["processes"] = processes_tbl
     ctx_tbl["events"]   = events_tbl
     ctx_tbl["state"]    = state_tbl
     ctx_tbl["query"]    = query_tbl

@@ -9,6 +9,8 @@ from .market import Market
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
+from .recipe import Recipe, RecipeInput, RecipeOutput
+from .process import Process, ProcessStatus
 
 __all__ = [
     "Base",
@@ -28,4 +30,9 @@ __all__ = [
     "OrderSide",
     "OrderStatus",
     "Trade",
+    "Recipe",
+    "RecipeInput",
+    "RecipeOutput",
+    "Process",
+    "ProcessStatus",
 ]
