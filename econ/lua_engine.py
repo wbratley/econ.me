@@ -6,6 +6,7 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
 
   ctx.entity        read-only entity info
   ctx.accounts      read-only account list
+  ctx.holdings      read-only commodity holdings list
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
   ctx.op            the service operation being validated/hooked (HOOK and
@@ -210,12 +211,13 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
 
     entity_tbl  = _to_lua_table(ctx.get("entity", {}))
     accounts_tbl = _to_lua_list(ctx.get("accounts", []))
+    holdings_tbl = _to_lua_list(ctx.get("holdings", []))
     events_tbl  = _to_lua_list(ctx.get("events", []))
     state_tbl   = _to_lua_table(ctx.get("state", {}))
 
     # --- queries (caller-provided callables; missing ones return nil) ---
     query_tbl = lua.table()
-    for name in ("balance", "total_supply", "market_price"):
+    for name in ("balance", "total_supply", "market_price", "holding"):
         query_tbl[name] = queries.get(name) or (lambda *args: None)
     for name, fn in queries.items():
         query_tbl[name] = fn
@@ -251,13 +253,35 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _place_order(symbol, side, quantity, limit_price, account_id, priority=100):
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="place_order",
+            params={"symbol": str(symbol), "side": str(side), "quantity": str(quantity),
+                    "limit_price": str(limit_price), "account_id": str(account_id)},
+            resource_ids=[str(account_id), str(symbol)],
+            priority=int(priority),
+        ))
+
+    def _cancel_order(order_id, priority=100):
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="cancel_order",
+            params={"order_id": str(order_id)},
+            resource_ids=[str(order_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
+    action_tbl["place_order"] = _place_order
+    action_tbl["cancel_order"] = _cancel_order
 
     ctx_tbl = lua.table()
     ctx_tbl["entity"]   = entity_tbl
     ctx_tbl["accounts"] = accounts_tbl
+    ctx_tbl["holdings"] = holdings_tbl
     ctx_tbl["events"]   = events_tbl
     ctx_tbl["state"]    = state_tbl
     ctx_tbl["query"]    = query_tbl
