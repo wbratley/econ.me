@@ -9,10 +9,11 @@ One reusable **economy engine**, consumed by (at least) three products:
 1. **econ.me** — the current FastAPI app: entities, ledgers, monetary
    authorities, sandboxed Lua scripts, commodity markets. It doubles as the
    engine's proving ground.
-2. **The sandbox platform** ("democratic Roblox") — a social sandbox where
-   each world's rules are decided by its players through periodic votes, and
-   worlds can fork into new ones. Different games emerge from governance
-   rather than from a single developer.
+2. **The sandbox platform** ("democratic Roblox") — a *navigable* social
+   sandbox: players walk around a real world, farm, build, and trade, and
+   each world's rules are decided by its players through periodic votes,
+   with worlds able to fork into new ones. Different games emerge from
+   governance rather than from a single developer.
 3. **Economic modelling software** — a general simulator for running
    economic experiments: seed a genesis state, script agent behaviour and
    policy, run ticks, measure outcomes.
@@ -44,6 +45,14 @@ The engine's invariants are the things no vote or script may break:
 - **Bounded computation** — scripts run in a capability-limited Lua VM with
   in-VM timeout enforcement and a memory cap; per-entity compute budgets are
   the platform-level extension of the same idea.
+- **Unpaced** — a tick is a function call; the engine never waits on
+  wall-clock time and measures every duration in ticks, never seconds.
+  A real-time world paces ticks externally (e.g. one per hour); the
+  modelling product fast-forwards at as many ticks per second as hardware
+  allows. Both must always be possible against the same engine. (This is
+  true today — `run_tick(session)` — and must stay true; script timeouts
+  are the one wall-clock exception, as a compute bound rather than
+  simulation time.)
 
 Everything content-like — what a WHEAT is, what technologies exist, what a
 person needs to eat — is data, editable by admins today and by votes on the
@@ -80,7 +89,8 @@ A **Recipe** is a data row describing a transformation:
 - outputs: quantities of holdings credited at completion
 - duration: number of ticks
 - requirements: unlocks the entity must hold (§ tech), labor inputs
-  (§ labor), and later facility/land requirements
+  (§ labor), and a parcel/facility requirement (§ parcels) — e.g. GROW_WHEAT
+  requires a FIELD parcel the entity controls
 
 A `start_process` intent atomically consumes the inputs and creates a
 **Process** (work-in-progress) row; the tick engine completes it
@@ -136,6 +146,39 @@ platform's quality-of-life metrics. *Consequences* of unmet needs
 (productivity loss, migration pressure, death?) are policy — scripts and
 votable parameters — not engine code.
 
+#### Parcels and facilities (land)
+
+Land is a first-class engine primitive, not a holding symbol, because the
+platform builds a real navigable world on top (§4.4) and fork petitions can
+copy regions as terrain.
+
+A **Parcel** is a non-fungible asset: an owner (entity), a region id, a
+coarse spatial extent (the world layer defines the geometry; the engine
+stores the reference and grants), and a zoning/type tag (FIELD, LOT, …).
+A **Facility** is a built improvement on a parcel (FARM, SMITHY, MARKET
+HALL), itself produced by a recipe whose output is a facility rather than
+goods. Recipes may require a facility of a given type, which is how
+production becomes *located*: you farm on your field, smelt at a forge.
+
+A **Deposit** is a natural resource dotted onto the map: a parcel/region
+carries deposit rows (IRON, TIMBER, fertile soil as a FIELD quality tier)
+with a remaining quantity and optionally a regeneration rate. Extraction
+recipes (MINE_IRON, FELL_TIMBER) require a parcel with the matching deposit
+and draw it down — geography *is* the resource distribution, so where
+things are found drives where industry, transport, and settlement emerge.
+Deposit placement is genesis data (hand-placed, procedurally generated, or
+derived from real-world geodata if a world uses a real map as terrain).
+
+Engine invariants: parcel ownership moves only by the owner's intent (sale,
+grant) or by explicitly-declared policy (land taxes, expropriation votes —
+which are data/policy, not mechanism); deposits deplete only through
+extraction recipes. Land *grants* — who may claim what — are votable policy
+from day one, per the concept.
+
+The engine deliberately knows nothing about meters or meshes: it stores
+who controls which parcel and what stands on it. Continuous space belongs
+to the world layer.
+
 #### Later: contracts (recurring obligations)
 
 A generalized "A pays B x per tick in exchange for y per tick, until
@@ -179,26 +222,98 @@ the engine module.
 - Leaving costs your full material stake (possessions, land, holdings —
   all world-scoped). You can return later, but as a newcomer.
 
-### 4.3 Identity and the meta-layer
+### 4.3 The spatial world (the world layer)
+
+The platform is a *real navigable world*: players walk about, farm, build.
+This is a second simulator with different physics from the economy engine,
+and the two must stay separate systems with a narrow boundary:
+
+| | World layer | Economy engine |
+|---|---|---|
+| Time | Continuous, real-time (10–60Hz) | Discrete ticks |
+| Space | Meters, terrain, collision | Parcels and region ids |
+| Authority over | Where things *are*; movement, physics, interaction range | Who *owns* what; value, production, governance |
+| State | Positions, terrain, animations | Ledger, holdings, orders, processes |
+
+The world server is a **client of the economy engine** — the third
+consumer, alongside the HTTP API and the Lua scripts, speaking the same
+intent protocol. Spatial verbs map to economic intents at the boundary:
+
+- Walk to your field and plant → world server checks you're standing on
+  your FIELD parcel, fires a `start_process` intent (GROW_WHEAT recipe
+  bound to that parcel). The crop growing over ticks is an engine Process;
+  its visible growth stages are world-layer state *derived from* the
+  process. Harvest → process completion credits WHEAT holdings.
+- Hand an item to someone / put goods on a cart → transfer intents; the
+  world layer may require physical proximity or transport, the engine
+  records the ownership change.
+- Build a smithy → construction recipe whose output is a Facility on the
+  parcel; the world layer renders it and gates interaction by distance.
+
+Consequences worth designing for from the start:
+
+- **Located resources.** Deposits (§ parcels) are dotted across the map,
+  so extraction happens where the resources are: mines at ore, mills at
+  forests, farms on fertile soil. Combined with local markets this makes
+  geography the economic terrain — settlement patterns and trade routes
+  emerge from where things are found.
+- **Local markets and logistics.** Markets gain an optional location
+  (a MARKET HALL facility); goods must be physically present to be sold
+  there, so transport, trade routes, and regional price differences become
+  gameplay. Global-vs-local markets is a votable parameter per world.
+- **Physics-level votes** (gravity, movement, damage) live in the world
+  layer's parameter surface, mirroring the engine's: same mechanism/data/
+  policy split, same enactment-day pipeline, one proposal system spanning
+  both.
+- **Terrain and fork copies.** "Copy a region as starting terrain" means
+  copying world-layer terrain chunks plus the engine's parcel records for
+  that region. A chunked (voxel or tile) terrain representation makes this
+  nearly free; a continuous mesh makes it hard. This argues strongly for
+  chunked terrain.
+- **Position never enters the engine.** Player coordinates at 20Hz stay in
+  the world server; the engine sees at most "entity E is at parcel P" when
+  an intent requires it. This keeps the engine deterministic, auditable,
+  and reusable for the modelling product, which has no world layer at all.
+
+Build-vs-reuse: a from-scratch multiplayer 3D server is the biggest lift in
+the whole project. **Luanti** (formerly Minetest — open-source, C++,
+server-authoritative voxel engine with a Lua modding API) is a serious
+candidate for the world layer: chunked voxel terrain (cheap region copies),
+farming/building affordances out of the box, and its Lua-first modding
+model matches the sandboxed-Lua rule layer almost exactly. The alternative
+is a custom server with a Godot client. Decide by prototyping the farming
+loop on Luanti against the engine's API first — it's the cheapest possible
+test of the whole boundary design.
+
+### 4.4 Identity and the meta-layer
 
 - Identity, name, and reputation are **platform-scoped** and persist across
   worlds; property (accounts, holdings, land) is **world-scoped**.
 - Worlds form a visible family tree — a phylogeny of games — browsable by
   ancestry, popularity, and rule drift.
 
-### 4.4 What this demands of the engine
+### 4.5 What this demands of the engine
 
 - **World scoping**: cleanest as one database/schema per world (isolation
   for free, and fork = snapshot copy), rather than a `world_id` column on
   every table. Decide before extraction.
 - **Snapshot/fork support**: copy a world's state (optionally filtered to a
-  region) into a new instance. With per-world DBs this is a file/schema
-  copy plus a manifest.
+  region via parcel records) into a new instance, paired with the world
+  layer's terrain-chunk copy. With per-world DBs this is a file/schema copy
+  plus a manifest.
+- **Parcels as the spatial join key**: region ids and parcel references are
+  the only spatial vocabulary the engine speaks; the world layer owns
+  geometry. Getting this boundary right is what keeps the engine usable by
+  the modelling product (which has no world layer).
 - **Parameter surface**: every votable number/definition must be a data row
   the platform can edit through a single audited path — no engine constants
-  that matter to gameplay.
+  that matter to gameplay. The world layer needs the same discipline for
+  its physics parameters.
 - **Compute budgets**: per-entity/per-proposal script budgets on top of the
   existing per-script timeout and memory cap.
+- **An intent API for machine clients**: the world server needs a faster,
+  authenticated intent/query channel than the human HTTP API — same
+  resolver underneath.
 
 ## 5. Engine extraction (modularity plan)
 
@@ -233,10 +348,17 @@ step-commit → PR → squash-merge workflow.
    `need_unmet` events; NPC behaviour scripts that respond to them.
 4. **Unlocks + tech tree** — Technology DAG, research recipes, recipe
    gating.
-5. **Engine extraction** — package split per §5, econ.me becomes consumer
+5. **Parcels + facilities** — land ownership, construction recipes,
+   parcel-bound production. Engine-side only; no world layer needed yet.
+6. **Engine extraction** — package split per §5, econ.me becomes consumer
    #1.
-6. **Platform vertical slice** — one world, proposals + voting + enactment
-   day over the parameter surface; trials; then forking and the meta-layer.
+7. **World-layer prototype** — the farming loop on Luanti (or a custom
+   server) against the engine's intent API: walk, claim a parcel, plant,
+   wait ticks, harvest, sell at a market hall. This is the go/no-go test
+   of the world/engine boundary and of Luanti itself.
+8. **Platform vertical slice** — one world, proposals + voting + enactment
+   day over both parameter surfaces (engine + world physics); trials; then
+   forking and the meta-layer.
 
 ## 7. Open questions
 
@@ -252,10 +374,20 @@ step-commit → PR → squash-merge workflow.
   simpler socially).
 - **Time structure** — ratio of engine ticks to enactment cycles; whether
   worlds can vote their own tick rate within engine-imposed bounds.
-- **Land/space** — the concept references land grants and regions; the
-  engine has no spatial model yet. Decide whether land is just another
-  holding symbol per region (cheap, fits today) or a real spatial primitive
-  (needed for terrain copy on fork).
+- **World layer engine** — Luanti vs. custom server + Godot client; decide
+  by prototyping the farming loop (§6 step 7). Related: voxel resolution,
+  parcel size/granularity, and whether parcels are grid-aligned claims
+  (Minecraft-style chunks) or free-form regions.
+- **Real-world maps** — "resources dotted on top of a real map" can mean
+  procedurally generated terrain or actual Earth geodata (elevation, soil,
+  mineral surveys) as genesis input. Real geodata is a compelling default
+  world and cheap to support if deposits are just genesis data — but
+  licensing and scale (how much of Earth per world?) need a look.
+- **Fast-forward performance target** — the modelling product wants max
+  ticks/second; per-tick cost is dominated by script runs (fresh Lua VM
+  per script per tick) and auction clearing. Decide the target
+  (thousands of entities × hundreds of ticks in minutes?) and profile
+  before the engine extraction locks in interfaces.
 - **Population** — are all persons players, or are there NPC persons run by
   behaviour scripts? (The engine supports both today; the needs system
   makes NPCs meaningful.)
