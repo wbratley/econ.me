@@ -4,7 +4,9 @@ Commodity markets — holdings, limit orders, and the per-tick call auction.
 Orders are limit-only and good-til-cancelled; partial fills stay OPEN with
 `remaining` decremented. There is no escrow: funds and holdings are checked
 live at settlement, and an order that cannot cover a fill is CANCELLED with
-a reason. Settlement money moves through services.transfer under
+a reason. Holdings reserved as good-requirements of running processes
+(reserved_quantity) are unavailable to settlement — you cannot sell the
+oven mid-bake. Settlement money moves through services.transfer under
 scripting._suppressed(), so validators cannot veto individual fills
 mid-auction and hooks cannot recurse — the clearing price was computed from
 the whole book and must settle atomically. Policies observe markets through
@@ -14,11 +16,14 @@ the `trade` / `auction` tick events instead.
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import services
-from .models import Account, Entity, Holding, Market, Order, OrderSide, OrderStatus, Trade
+from .models import (
+    Account, Entity, Holding, Market, Order, OrderSide, OrderStatus,
+    Process, ProcessStatus, Recipe, RecipeGoodRequirement, Trade,
+)
 from .scripting import _suppressed
 from .services import CurrencyMismatchError
 
@@ -56,6 +61,26 @@ def get_holding(session: Session, entity_id: str, symbol: str) -> Holding | None
             Holding.entity_id == entity_id, Holding.symbol == str(symbol).upper()
         )
     ).scalar_one_or_none()
+
+
+def reserved_quantity(session: Session, entity_id: str, symbol: str) -> Decimal:
+    """The symbol's good-requirements summed across the entity's RUNNING
+    processes — machinery backing work in progress. A query against running
+    processes, not an escrow: nothing is moved or locked, but reserved
+    quantities are unavailable to settlement (you cannot sell the oven
+    mid-bake) and to further reservation at start_process."""
+    total = session.execute(
+        select(func.coalesce(func.sum(RecipeGoodRequirement.quantity), 0))
+        .select_from(Process)
+        .join(Recipe, Process.recipe_id == Recipe.id)
+        .join(RecipeGoodRequirement, RecipeGoodRequirement.recipe_id == Recipe.id)
+        .where(
+            Process.entity_id == entity_id,
+            Process.status == ProcessStatus.RUNNING,
+            RecipeGoodRequirement.symbol == str(symbol).upper(),
+        )
+    ).scalar_one()
+    return Decimal(total)
 
 
 def adjust_holding(session: Session, entity: Entity, symbol: str, delta: Decimal) -> Holding:
@@ -255,7 +280,11 @@ def _settle(
             continue
 
         seller_holding = get_holding(session, sell.entity_id, market.symbol)
-        if seller_holding is None or seller_holding.quantity < qty:
+        available = (
+            seller_holding.quantity - reserved_quantity(session, sell.entity_id, market.symbol)
+            if seller_holding else Decimal("0")
+        )
+        if available < qty:
             events.append(_cancel_at_auction(sell, market, "insufficient holdings at auction"))
             si += 1
             continue

@@ -7,6 +7,8 @@ run_tick():
      tick's auction
   2. auto-issues goods (top-up to each Good's quantity) — also before
      scripts, so fresh labor is sellable in this tick's auction
+  2b. regenerates deposits (regen_per_tick toward capacity) — also before
+     scripts, so an extraction script sees the replenished deposit
   3. runs active POLICY scripts (attached to an entity, e.g. a central bank)
      first — they see ALL of the previous tick's events
   4. then runs active BEHAVIOUR scripts, which see only the previous tick's
@@ -40,10 +42,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import goods, markets, needs, production, rng, tech
+from . import goods, markets, needs, parcels, production, rng, tech
 from .lua_engine import Intent, LuaEngine
 from .models import (
-    Entity, Holding, Need, NeedState, Process, ProcessStatus, Script, ScriptType, Tick,
+    Entity, Holding, Need, NeedState, Parcel, Process, ProcessStatus, Script,
+    ScriptType, Tick,
 )
 from .scripting import build_queries, resolve_intent
 
@@ -60,6 +63,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
 
     events: list[dict] = list(production.complete_processes(session, tick_number=number))
     events.extend(goods.auto_issue(session, tick_number=number))
+    events.extend(parcels.regen_deposits(session, tick_number=number))
     intents: list[Intent] = []
 
     # POLICY scripts run first and see every event from the previous tick;
@@ -141,6 +145,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             {
                 "id": p.id,
                 "recipe": p.recipe.code,
+                "parcel_id": p.parcel_id,
                 "started_tick": p.started_tick,
                 "completes_tick": p.completes_tick,
             }
@@ -148,6 +153,20 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
                 select(Process)
                 .where(Process.entity_id == entity.id, Process.status == ProcessStatus.RUNNING)
                 .order_by(Process.created_at, Process.id)
+            ).scalars()
+        ],
+        "parcels": [
+            {
+                "id": p.id,
+                "parcel_type": p.parcel_type,
+                "region_id": p.region_id,
+                "facilities": [f.facility_type for f in p.facilities],
+                "deposits": {d.symbol: str(d.quantity) for d in p.deposits},
+            }
+            for p in session.execute(
+                select(Parcel)
+                .where(Parcel.owner_id == entity.id)
+                .order_by(Parcel.created_at, Parcel.id)
             ).scalars()
         ],
         "needs": _entity_needs(session, entity),

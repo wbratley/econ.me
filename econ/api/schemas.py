@@ -294,6 +294,10 @@ class RecipeCreate(BaseModel):
     branches: list[RecipeBranchCreate] = []  # outcome table; excludes outputs
     requires: list[str] = []      # technology codes gating the recipe
     unlocks: list[str] = []       # technology codes granted on completion
+    good_requirements: dict[str, str] = {}  # held-but-not-consumed (machinery)
+    deposit_inputs: dict[str, str] = {}     # drawn from the bound parcel's deposits
+    requires_facility: Optional[str] = None  # facility type on the bound parcel
+    builds_facility: Optional[str] = None    # construction: erected at completion
 
 
 class RecipeUpdate(BaseModel):
@@ -307,9 +311,13 @@ class RecipeRead(BaseModel):
     name: str
     duration_ticks: int
     is_active: bool
+    requires_facility: Optional[str] = None
+    builds_facility: Optional[str] = None
     inputs: list[RecipeItemRead] = []
     outputs: list[RecipeItemRead] = []
     branches: list[RecipeBranchRead] = []
+    good_requirements: list[RecipeItemRead] = []
+    deposit_inputs: list[RecipeItemRead] = []
     # the ORM relationship is named `requirements`; the API field is `requires`
     requires: list[str] = Field(default=[], validation_alias=AliasChoices("requires", "requirements"))
     unlocks: list[str] = []
@@ -326,12 +334,14 @@ class RecipeRead(BaseModel):
 class ProcessCreate(BaseModel):
     entity_id: str
     recipe: str
+    parcel_id: Optional[str] = None  # required for parcel-bound recipes
 
 
 class ProcessRead(BaseModel):
     id: str
     recipe_id: str
     entity_id: str
+    parcel_id: Optional[str] = None
     started_tick: int
     completes_tick: int
     status: ProcessStatus
@@ -486,3 +496,65 @@ class TradeRead(BaseModel):
         return str(v)
 
     model_config = {"from_attributes": True}
+
+
+class FacilityRead(BaseModel):
+    id: str
+    facility_type: str
+    built_tick: Optional[int] = None  # null = genesis placement
+
+    model_config = {"from_attributes": True}
+
+
+class DepositRead(BaseModel):
+    symbol: str
+    quantity: Decimal
+    capacity: Optional[Decimal] = None
+    regen_per_tick: Decimal
+
+    @field_serializer("quantity", "capacity", "regen_per_tick")
+    def _decimals(self, v: Optional[Decimal]) -> Optional[str]:
+        return None if v is None else str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class ParcelCreate(BaseModel):
+    parcel_type: str  # zoning tag, e.g. FIELD, LOT
+    name: str = ""
+    region_id: str = ""
+    extent_ref: str = ""  # opaque world-layer geometry reference
+    owner_entity_id: Optional[str] = None  # null = unclaimed
+
+
+class ParcelRead(BaseModel):
+    id: str
+    name: str
+    parcel_type: str
+    region_id: str
+    extent_ref: str
+    owner_id: Optional[str] = None
+    facilities: list[FacilityRead] = []
+    deposits: list[DepositRead] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ParcelTransfer(BaseModel):
+    to_entity_id: str
+
+
+class ParcelGrant(BaseModel):
+    to_entity_id: Optional[str] = None  # null revokes to unclaimed
+
+
+class FacilityCreate(BaseModel):
+    facility_type: str  # genesis placement, admin only
+
+
+class DepositCreate(BaseModel):
+    symbol: str
+    quantity: str
+    capacity: Optional[str] = None  # required if regen_per_tick > 0
+    regen_per_tick: str = "0"

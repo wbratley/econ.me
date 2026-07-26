@@ -216,6 +216,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     accounts_tbl = _to_lua_list(ctx.get("accounts", []))
     holdings_tbl = _to_lua_list(ctx.get("holdings", []))
     processes_tbl = _to_lua_list(ctx.get("processes", []))
+    parcels_tbl = _to_lua_list(ctx.get("parcels", []))
     needs_tbl   = _to_lua_list(ctx.get("needs", []))
     unlocks_tbl = _to_lua_list(ctx.get("unlocks", []))
     events_tbl  = _to_lua_list(ctx.get("events", []))
@@ -278,11 +279,14 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
-    def _start_process(recipe, priority=100):
+    def _start_process(recipe, parcel_id=None, priority=100):
+        params = {"recipe": str(recipe)}
+        if parcel_id is not None:
+            params["parcel_id"] = str(parcel_id)
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="start_process",
-            params={"recipe": str(recipe)},
+            params=params,
             resource_ids=[str(recipe)],
             priority=int(priority),
         ))
@@ -296,6 +300,15 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _transfer_parcel(parcel_id, to_entity_id, priority=100):
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="transfer_parcel",
+            params={"parcel_id": str(parcel_id), "to_entity_id": str(to_entity_id)},
+            resource_ids=[str(parcel_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
@@ -303,12 +316,14 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process
     action_tbl["cancel_process"] = _cancel_process
+    action_tbl["transfer_parcel"] = _transfer_parcel
 
     ctx_tbl = lua.table()
     ctx_tbl["entity"]   = entity_tbl
     ctx_tbl["accounts"] = accounts_tbl
     ctx_tbl["holdings"] = holdings_tbl
     ctx_tbl["processes"] = processes_tbl
+    ctx_tbl["parcels"]  = parcels_tbl
     ctx_tbl["needs"]    = needs_tbl
     ctx_tbl["unlocks"]  = unlocks_tbl
     ctx_tbl["events"]   = events_tbl

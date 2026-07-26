@@ -103,8 +103,10 @@ The **manufacturing tree is not code** — it emerges from which recipes
 exist, the same way the market list emerges from Market rows. Conservation
 is the engine invariant: a recipe transforms exactly what it declares.
 
-*Status: inputs/outputs/duration shipped (Step 7); requirements land with
-parcels & facilities, which need the identical check.*
+*Status: shipped — inputs/outputs/duration (Step 7); requirements with
+reservation (Step 12, § parcels): good requirements reserve against the
+entity's running processes and are unavailable to settlement, facility
+requirements reserve per parcel.*
 
 **Machinery, wear, and reservation.** A good-type requirement means "hold
 ≥ N of SYMBOL while this runs" — checked at start, never consumed.
@@ -357,6 +359,14 @@ from day one, per the concept.
 The engine deliberately knows nothing about meters or meshes: it stores
 who controls which parcel and what stands on it. Continuous space belongs
 to the world layer.
+
+*Status: shipped (Step 12) — parcels/facilities/deposits with per-tick
+regeneration toward capacity; construction (`builds_facility`) and
+extraction (`deposit_inputs`) recipes; requirements with reservation for
+machinery and facilities; a parcel with running processes bound to it
+cannot change hands. Scripts see `ctx.parcels` and act via parcel-bound
+`start_process` and `transfer_parcel` intents. Land claims stay
+admin/genesis (`grant_parcel`) until grant policy becomes votable.*
 
 #### Later: contracts (recurring obligations)
 

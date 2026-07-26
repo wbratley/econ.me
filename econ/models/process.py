@@ -22,6 +22,9 @@ class Process(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(36), ForeignKey("entities.id"), nullable=False)
+    # parcel-bound production: set when the recipe requires a facility, draws
+    # a deposit, or builds a facility; the parcel was controlled at start
+    parcel_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("parcels.id"), nullable=True)
     # ints, not FKs: processes reference ticks that may not have flushed yet
     started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
     completes_tick: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -39,6 +42,7 @@ class Process(Base):
 
     recipe: Mapped["Recipe"] = relationship("Recipe")
     entity: Mapped["Entity"] = relationship("Entity")
+    parcel: Mapped["Parcel"] = relationship("Parcel")
 
     def __repr__(self) -> str:
         return f"<Process recipe={self.recipe_id} entity={self.entity_id} [{self.status.value}] completes={self.completes_tick}>"

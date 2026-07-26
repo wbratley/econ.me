@@ -77,6 +77,10 @@ def create_recipe(
             requires=body.requires,
             unlocks=body.unlocks,
             branches=branches,
+            good_requirements=_parse_quantities(body.good_requirements, "good_requirements"),
+            deposit_inputs=_parse_quantities(body.deposit_inputs, "deposit_inputs"),
+            requires_facility=body.requires_facility,
+            builds_facility=body.builds_facility,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -116,7 +120,9 @@ def start_process(
     if entity is None or entity.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Entity not found")
     try:
-        process = production.start_process(session, entity, body.recipe)
+        process = production.start_process(
+            session, entity, body.recipe, parcel_id=body.parcel_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     session.commit()

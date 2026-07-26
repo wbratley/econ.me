@@ -17,6 +17,12 @@ class Recipe(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. BAKE_BREAD
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     duration_ticks: Mapped[int] = mapped_column(Integer, nullable=False)  # 0 = completes at start
+    # parcel-bound production: the process must be bound to a controlled parcel
+    # carrying a facility of this type ("smelt at a forge"); NULL = unlocated
+    requires_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # construction: completion erects a facility of this type on the bound
+    # parcel — the output is a facility rather than goods
+    builds_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -36,6 +42,14 @@ class Recipe(Base):
     )
     unlocks: Mapped[list["RecipeUnlock"]] = relationship(
         "RecipeUnlock", back_populates="recipe", cascade="all, delete-orphan"
+    )
+    good_requirements: Mapped[list["RecipeGoodRequirement"]] = relationship(
+        "RecipeGoodRequirement", back_populates="recipe", cascade="all, delete-orphan",
+        order_by="RecipeGoodRequirement.symbol",
+    )
+    deposit_inputs: Mapped[list["RecipeDepositInput"]] = relationship(
+        "RecipeDepositInput", back_populates="recipe", cascade="all, delete-orphan",
+        order_by="RecipeDepositInput.symbol",
     )
 
     def __repr__(self) -> str:
@@ -95,6 +109,39 @@ class RecipeBranchOutput(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
 
     branch: Mapped["RecipeBranch"] = relationship("RecipeBranch", back_populates="outputs")
+
+
+class RecipeGoodRequirement(Base):
+    """Present but not consumed: 'hold ≥ quantity of symbol while this runs'
+    (machinery, tools). Checked at start, never consumed — and *reserved*: a
+    symbol's requirements summed across an entity's running processes may not
+    exceed its holding, and reserved quantities are unavailable to market
+    settlement (you cannot sell the oven mid-bake)."""
+
+    __tablename__ = "recipe_good_requirements"
+    __table_args__ = (UniqueConstraint("recipe_id", "symbol"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="good_requirements")
+
+
+class RecipeDepositInput(Base):
+    """Extraction: quantity drawn from the bound parcel's matching deposit at
+    start (MINE_IRON, FELL_TIMBER). Deposits deplete only through these."""
+
+    __tablename__ = "recipe_deposit_inputs"
+    __table_args__ = (UniqueConstraint("recipe_id", "symbol"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="deposit_inputs")
 
 
 class RecipeRequirement(Base):
