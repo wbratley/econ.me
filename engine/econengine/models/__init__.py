@@ -1,4 +1,4 @@
-from .base import Base, engine
+from .base import Base
 from .user import User
 from .entity import Entity, EntityType
 from .account import Account
@@ -21,7 +21,6 @@ from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
 
 __all__ = [
     "Base",
-    "engine",
     "User",
     "Entity",
     "EntityType",

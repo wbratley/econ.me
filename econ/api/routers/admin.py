@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from econ import services
+from econengine import services
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import AdminEntityCreate, EntityRead, EntityUpdate, UserRead, UserUpdate
-from econ.models import Entity, User
+from econengine.models import Entity, User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

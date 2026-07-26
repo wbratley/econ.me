@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import TickRead
-from econ.models import Tick, User
-from econ.tick import run_tick
+from econengine.models import Tick, User
+from econengine.tick import run_tick
 
 router = APIRouter(prefix="/admin/ticks", tags=["ticks"])
 

@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from econ.markets import (
+from econengine.markets import (
     InsufficientHoldingsError,
     MarketInactiveError,
     adjust_holding,
@@ -12,8 +12,8 @@ from econ.markets import (
     create_market,
     place_order,
 )
-from econ.models import Base, EntityType, OrderSide, OrderStatus
-from econ.services import CurrencyMismatchError, create_account, create_entity
+from econengine.models import Base, EntityType, OrderSide, OrderStatus
+from econengine.services import CurrencyMismatchError, create_account, create_entity
 
 
 @pytest.fixture

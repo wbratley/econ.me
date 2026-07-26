@@ -3,12 +3,12 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from econ import services
+from econengine import services
 from econ.api.deps import get_current_user, get_session
 from econ.api.schemas import (
     AccountCreate, AccountRead, EntityCreate, EntityRead, HoldingRead, NeedStateRead, TransactionRead,
 )
-from econ.models import Account, Entity, Holding, NeedState, User
+from econengine.models import Account, Entity, Holding, NeedState, User
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 

@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import ScriptCreate, ScriptRead, ScriptUpdate, ScriptValidateResult
-from econ.lua_engine import LuaEngine
-from econ.models import Entity, Script, User
-from econ.models.script import ScriptType
+from econengine.lua_engine import LuaEngine
+from econengine.models import Entity, Script, User
+from econengine.models.script import ScriptType
 
 router = APIRouter(prefix="/admin/scripts", tags=["scripts"])
 

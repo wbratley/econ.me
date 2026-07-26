@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econ import goods
+from econengine import goods
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.schemas import GoodCreate, GoodRead, GoodUpdate
-from econ.models import Good, User
+from econengine.models import Good, User
 
 router = APIRouter(tags=["goods"])
 

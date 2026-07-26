@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econ import parcels
+from econengine import parcels
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.schemas import (
     DepositCreate, FacilityCreate, ParcelCreate, ParcelGrant, ParcelRead,
     ParcelTransfer,
 )
-from econ.models import Entity, Parcel, User
+from econengine.models import Entity, Parcel, User
 
 router = APIRouter(tags=["parcels"])
 

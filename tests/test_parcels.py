@@ -8,11 +8,11 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.markets import (
+from econengine.markets import (
     InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity,
 )
-from econ.models import Base, EntityType, Facility, ProcessStatus
-from econ.parcels import (
+from econengine.models import Base, EntityType, Facility, ProcessStatus
+from econengine.parcels import (
     InsufficientDepositError,
     add_deposit,
     add_facility,
@@ -24,14 +24,14 @@ from econ.parcels import (
     reserved_facilities,
     transfer_parcel,
 )
-from econ.production import (
+from econengine.production import (
     cancel_process,
     complete_processes,
     create_recipe,
     recipe_needs_parcel,
     start_process,
 )
-from econ.services import create_entity
+from econengine.services import create_entity
 
 
 @pytest.fixture

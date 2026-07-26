@@ -6,12 +6,12 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.goods import create_good
-from econ.markets import adjust_holding, create_market, get_holding
-from econ.models import Base, EntityType, Script, ScriptType
-from econ.needs import create_need
-from econ.services import create_account, create_entity
-from econ.tick import run_tick
+from econengine.goods import create_good
+from econengine.markets import adjust_holding, create_market, get_holding
+from econengine.models import Base, EntityType, Script, ScriptType
+from econengine.needs import create_need
+from econengine.services import create_account, create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture

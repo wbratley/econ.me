@@ -3,9 +3,9 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.models import Base, EntityType
-from econ.models.transaction import TransactionType
-from econ.services import (
+from econengine.models import Base, EntityType
+from econengine.models.transaction import TransactionType
+from econengine.services import (
     create_entity,
     create_account,
     deposit,

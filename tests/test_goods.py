@@ -7,10 +7,10 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.goods import apply_decay, auto_issue, create_good, get_good
-from econ.markets import adjust_holding, get_holding
-from econ.models import Base, EntityType
-from econ.services import create_entity
+from econengine.goods import apply_decay, auto_issue, create_good, get_good
+from econengine.markets import adjust_holding, get_holding
+from econengine.models import Base, EntityType
+from econengine.services import create_entity
 
 
 @pytest.fixture

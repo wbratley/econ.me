@@ -3,7 +3,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from econ.api.auth import decode_token
-from econ.models import User, engine
+from econengine.models import User
+
+from econ.db import engine
 
 bearer_scheme = HTTPBearer()
 

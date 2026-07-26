@@ -4,9 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from econ.markets import InsufficientHoldingsError, adjust_holding, get_holding
-from econ.models import Base, EntityType, ProcessStatus
-from econ.production import (
+from econengine.markets import InsufficientHoldingsError, adjust_holding, get_holding
+from econengine.models import Base, EntityType, ProcessStatus
+from econengine.production import (
     cancel_process,
     complete_processes,
     create_recipe,
@@ -14,7 +14,7 @@ from econ.production import (
     next_tick_number,
     start_process,
 )
-from econ.services import create_entity
+from econengine.services import create_entity
 
 
 @pytest.fixture

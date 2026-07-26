@@ -506,22 +506,23 @@ test of the whole boundary design.
 
 ## 5. Engine extraction (modularity plan)
 
-Current state is already close: `econ/api/` imports the core; the core
-(`models`, `services`, `markets`, `scripting`, `lua_engine`, `tick`) never
-imports the API, and the whole engine runs against a plain SQLAlchemy
-session (proven by the non-HTTP test suite).
+*Done (§6 step 7).* The split is live in this repo:
 
-To extract when the time comes:
+- `engine/econengine/` — the core (`models`, `services`, `markets`,
+  `scripting`, `lua_engine`, `tick`, and the domain passes), its own
+  distribution (`engine/pyproject.toml`, deps: SQLAlchemy + lupa only).
+  The core is session-in only: it never creates engines or sessions, and
+  `econengine.models.base` defines just `Base`.
+- `econ/` — the econ.me FastAPI app, consumer #1. It owns DB config
+  (`econ/db.py`: `DATABASE_URL`, engine, sqlite `check_same_thread`
+  handling) and Alembic. Future consumers (platform, modelling tool) own
+  theirs the same way.
+- The intent/resolver seam stays the integration point: products define
+  extra intent types and validators; the core owns invariants.
 
-1. Parameterize the module-level `engine` in `econ/models/base.py` — the
-   engine takes a session factory; products own DB config and Alembic.
-2. Split packages: `econengine` (core) and `econ.me` (FastAPI app that
-   imports it). The platform later imports the same core.
-3. Keep the intent/resolver seam as the integration point: products define
-   extra intent types and validators; the core owns invariants.
-
-Not urgent — the one-way dependency rule is the thing to protect until
-then. Trigger for actually extracting: the second consumer starts.
+Dev setup: `pip install -e ./engine` (the app package imports resolve from
+the repo root as before). The one-way rule still holds — `econengine`
+never imports `econ`.
 
 ## 6. Build order
 

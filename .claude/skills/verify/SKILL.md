@@ -19,7 +19,8 @@ SCRATCH=<scratchpad dir>
 # seed schema + users, mint tokens (prints ADMIN/USER JWTs)
 DATABASE_URL="sqlite:///$SCRATCH/verify.db" .venv/bin/python - <<'EOF'
 from sqlalchemy.orm import Session
-from econ.models import Base, engine, User
+from econengine.models import Base, User
+from econ.db import engine
 from econ.api.auth import create_token
 Base.metadata.create_all(engine)
 with Session(engine) as s:

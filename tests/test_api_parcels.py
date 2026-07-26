@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
-from econ.models import Base, User
+from econengine.models import Base, User
 
 
 @pytest.fixture

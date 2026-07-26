@@ -6,11 +6,11 @@ from decimal import Decimal
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from econ.markets import adjust_holding, get_holding
-from econ.models import Base, EntityType, TechScope, Unlock
-from econ.production import create_recipe, start_process
-from econ.services import create_entity
-from econ.tech import (
+from econengine.markets import adjust_holding, get_holding
+from econengine.models import Base, EntityType, TechScope, Unlock
+from econengine.production import create_recipe, start_process
+from econengine.services import create_entity
+from econengine.tech import (
     create_technology, entity_unlocks, get_technology, grant_unlock, has_unlock,
 )
 

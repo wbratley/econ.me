@@ -7,7 +7,7 @@ from fractions import Fraction
 
 import pytest
 
-from econ.rng import GENESIS_HASH, hash_events, outcome_roll, weighted_index
+from econengine.rng import GENESIS_HASH, hash_events, outcome_roll, weighted_index
 
 
 def test_hash_events_is_canonical():
