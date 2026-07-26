@@ -12,7 +12,11 @@ run_tick():
   3. runs active POLICY scripts (attached to an entity, e.g. a central bank)
      first — they see ALL of the previous tick's events
   4. then runs active BEHAVIOUR scripts, which see only the previous tick's
-     events for their own entity
+     events for their own entity. If entity_tick_compute_budget_ms is set
+     (world_settings, votable data — get_/set_compute_budget_ms), an
+     entity's POLICY+BEHAVIOUR scripts stop running for the rest of this
+     tick once their cumulative elapsed_ms meets the budget; skipped runs
+     emit compute_budget_exceeded instead of executing. Unset = unlimited.
   5. persists each successful script's ctx.state mutations
   6. resolves all queued intents in priority order through the service layer
      (policy intents come first on priority ties), inside a savepoint each,
@@ -30,10 +34,11 @@ run_tick():
      recovery counts before thresholds are read; entities holding an
      incapacitating condition at threshold are deactivated and the
      world's estate rule is applied (conditions.py)
- 10. records every outcome (applied / rejected / script_error / trade /
-     order_cancelled / auction / process_completed / auto_issue /
-     need_satisfied / need_unmet / decay / entity_incapacitated) as an
-     event on a new Tick row — those events feed ctx.events next tick
+ 10. records every outcome (applied / rejected / script_error /
+     compute_budget_exceeded / trade / order_cancelled / auction /
+     process_completed / auto_issue / need_satisfied / need_unmet / decay /
+     entity_incapacitated) as an event on a new Tick row — those events
+     feed ctx.events next tick
 
 Incapacitated entities take no part in any pass: no auto-issue, no
 consumption, their scripts do not run, and start_process / place_order
@@ -54,9 +59,37 @@ from . import conditions, goods, markets, needs, parcels, production, rng, tech
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
-    ProcessStatus, Script, ScriptType, Tick,
+    ProcessStatus, Script, ScriptType, Tick, WorldSetting,
 )
 from .scripting import build_queries, resolve_intent
+
+# Votable data (world_settings): max total ms of Lua execution an entity's
+# tick-scripts (POLICY + BEHAVIOUR) may consume in a single tick. Missing/None
+# means unlimited — budgets are opt-in so existing worlds are unaffected.
+COMPUTE_BUDGET_KEY = "entity_tick_compute_budget_ms"
+
+
+def get_compute_budget_ms(session: Session) -> int | None:
+    setting = session.get(WorldSetting, COMPUTE_BUDGET_KEY)
+    if setting is None or not isinstance(setting.value, (int, float)):
+        return None
+    return int(setting.value)
+
+
+def set_compute_budget_ms(session: Session, budget_ms: int | None) -> WorldSetting | None:
+    setting = session.get(WorldSetting, COMPUTE_BUDGET_KEY)
+    if budget_ms is None:
+        if setting is not None:
+            session.delete(setting)
+            session.flush()
+        return None
+    if setting is None:
+        setting = WorldSetting(key=COMPUTE_BUDGET_KEY, value=budget_ms)
+        session.add(setting)
+    else:
+        setting.value = budget_ms
+    session.flush()
+    return setting
 
 
 def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
@@ -74,6 +107,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     events.extend(parcels.regen_deposits(session, tick_number=number))
     intents: list[Intent] = []
 
+    budget_ms = get_compute_budget_ms(session)
+    used_ms: dict[str, float] = {}
+
     # POLICY scripts run first and see every event from the previous tick;
     # BEHAVIOUR scripts see only their own entity's events.
     for script_type in (ScriptType.POLICY, ScriptType.BEHAVIOUR):
@@ -81,12 +117,20 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
             entity = session.get(Entity, script.entity_id)
             if entity is None or entity.status != EntityStatus.ACTIVE:
                 continue
+            if budget_ms is not None and used_ms.get(entity.id, 0.0) >= budget_ms:
+                events.append({
+                    "type": "compute_budget_exceeded",
+                    "entity_id": entity.id,
+                    "script_id": script.id,
+                })
+                continue
             entity_events = (
                 prev_events if script_type == ScriptType.POLICY
                 else [e for e in prev_events if e.get("entity_id") == entity.id]
             )
             ctx = _build_script_ctx(session, entity, script, entity_events)
             result = lua_engine.run(script.source, ctx, timeout_ms=script.timeout_ms)
+            used_ms[entity.id] = used_ms.get(entity.id, 0.0) + result.elapsed_ms
             if result.error:
                 events.append({
                     "type": "script_error",

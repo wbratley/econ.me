@@ -709,7 +709,16 @@ test of the whole boundary design.
   that matter to gameplay. The world layer needs the same discipline for
   its physics parameters.
 - **Compute budgets**: per-entity/per-proposal script budgets on top of the
-  existing per-script timeout and memory cap.
+  existing per-script timeout and memory cap. *Status: shipped (per-entity
+  only) — `RunResult.elapsed_ms` (lua_engine.py) makes a script call's real
+  wall-clock cost canonical; `run_tick` accumulates it per entity across
+  that tick's POLICY+BEHAVIOUR scripts and skips (not runs) further scripts
+  for an entity once `entity_tick_compute_budget_ms` (votable world_settings
+  data, `tick.get_/set_compute_budget_ms`, `GET/PUT /admin/compute-budget`)
+  is met, emitting `compute_budget_exceeded`. Unset = unlimited (today's
+  behavior, unchanged). Per-proposal budgets remain future work — proposals
+  don't exist as a model yet (§4.1). HOOK/VALIDATOR (operation-triggered,
+  not tick-driven) are deliberately not covered by this pass.*
 - **An intent API for machine clients**: the world server needs a faster,
   authenticated intent/query channel than the human HTTP API — same
   resolver underneath.

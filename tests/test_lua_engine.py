@@ -160,6 +160,19 @@ while true do s = s .. s end
     assert "timed out" not in result.error
 
 
+def test_elapsed_ms_recorded_on_success():
+    result = engine.run("-- no-op", _CTX)
+    assert result.error is None
+    assert result.elapsed_ms >= 0
+    assert result.elapsed_ms < 500
+
+
+def test_elapsed_ms_recorded_on_timeout():
+    result = engine.run("while true do end", _CTX, timeout_ms=100)
+    assert result.error is not None
+    assert result.elapsed_ms > 0
+
+
 def test_intents_discarded_on_timeout():
     src = """
 ctx.action.issue_money("acct-1", "999", "before loop")

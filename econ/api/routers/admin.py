@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from econengine import conditions, services
+from econengine import conditions, services, tick
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import (
-    AdminEntityCreate, EntityRead, EntityUpdate, EstateRuleRead, EstateRuleUpdate,
-    UserRead, UserUpdate,
+    AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, EntityRead,
+    EntityUpdate, EstateRuleRead, EstateRuleUpdate, UserRead, UserUpdate,
 )
 from econengine.models import Entity, User
 
@@ -97,6 +97,22 @@ def set_estate_rule(
         policy=setting.value["policy"],
         treasury_entity_id=setting.value.get("treasury_entity_id"),
     )
+
+
+@router.get("/compute-budget", response_model=ComputeBudgetRead)
+def get_compute_budget(session: Session = Depends(get_session), _: User = Depends(require_admin)):
+    return ComputeBudgetRead(budget_ms=tick.get_compute_budget_ms(session))
+
+
+@router.put("/compute-budget", response_model=ComputeBudgetRead)
+def set_compute_budget(
+    body: ComputeBudgetUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    tick.set_compute_budget_ms(session, body.budget_ms)
+    session.commit()
+    return ComputeBudgetRead(budget_ms=body.budget_ms)
 
 
 @router.get("/users", response_model=list[UserRead])

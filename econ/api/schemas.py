@@ -456,6 +456,14 @@ class EstateRuleRead(BaseModel):
     treasury_entity_id: Optional[str] = None
 
 
+class ComputeBudgetUpdate(BaseModel):
+    budget_ms: Optional[int] = None  # null clears the budget (unlimited)
+
+
+class ComputeBudgetRead(BaseModel):
+    budget_ms: Optional[int] = None
+
+
 class NeedStateRead(BaseModel):
     need: str
     satisfaction: Decimal
