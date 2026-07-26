@@ -224,7 +224,8 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 return rejected("unknown entity")
             with session.begin_nested():
                 process = production.start_process(
-                    session, entity, intent.params.get("recipe", "")
+                    session, entity, intent.params.get("recipe", ""),
+                    parcel_id=intent.params.get("parcel_id"),
                 )
             extra["process_id"] = process.id  # scripts need this to cancel later
 
@@ -232,6 +233,17 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             with session.begin_nested():
                 production.cancel_process(
                     session, intent.params.get("process_id", ""), intent.entity_id
+                )
+
+        elif intent.intent_type == "transfer_parcel":
+            from . import parcels
+            to_entity = session.get(Entity, intent.params.get("to_entity_id"))
+            if to_entity is None:
+                return rejected("unknown recipient entity")
+            with session.begin_nested():
+                parcels.transfer_parcel(
+                    session, intent.params.get("parcel_id", ""),
+                    intent.entity_id, to_entity,
                 )
 
         else:

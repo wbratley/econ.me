@@ -107,7 +107,7 @@ def test_recipe_validates_technology_codes(session):
     with pytest.raises(ValueError, match="no technology"):
         create_recipe(session, "FORGE", {}, {"SWORD": Decimal("1")}, 1,
                       requires=["SMITHING"])
-    with pytest.raises(ValueError, match="output, branch, or unlock"):
+    with pytest.raises(ValueError, match="output, branch, unlock, or built facility"):
         create_recipe(session, "NOTHING", {"ORE": Decimal("1")}, {}, 1)
 
     create_technology(session, "SMITHING")

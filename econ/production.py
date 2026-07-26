@@ -37,17 +37,36 @@ rather than goods. Both gates are checked at start: requirements, and the
 prerequisites of every technology the recipe grants (unlocks are never
 revoked, so what is satisfiable at start is still satisfiable at
 completion).
+
+REQUIREMENTS are the present-but-not-consumed check (design.md § recipes):
+one mechanism serving machinery ("hold 1 OVEN" — good_requirements) and
+facilities ("a SMITHY you control" — requires_facility) alike. Checked at
+start, never consumed, and *reserving*: a symbol's requirements summed
+across the entity's running processes may not exceed its holding (one
+hammer cannot back unlimited concurrent workshops), inputs may only consume
+the unreserved balance, and market settlement treats reserved quantities as
+unavailable (markets.reserved_quantity). Facilities reserve per parcel the
+same way: each bound running process occupies one facility of the required
+type.
+
+Parcels make production LOCATED (see parcels.py). A recipe that requires a
+facility, draws a deposit (deposit_inputs, drawn from the bound parcel at
+start), or builds a facility (builds_facility, erected on the bound parcel
+at completion) must be started bound to a parcel the entity controls —
+checked at start like the tech gates; a parcel with bound running processes
+cannot change hands, so the binding stays valid through completion.
 """
 
 from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import rng, tech
-from .markets import adjust_holding
+from . import parcels, rng, tech
+from .markets import InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity
 from .models import (
-    Entity, Process, ProcessStatus, Recipe, RecipeBranch, RecipeBranchOutput,
-    RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock, Tick,
+    Entity, Parcel, Process, ProcessStatus, Recipe, RecipeBranch, RecipeBranchOutput,
+    RecipeDepositInput, RecipeGoodRequirement, RecipeInput, RecipeOutput,
+    RecipeRequirement, RecipeUnlock, Tick,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -70,6 +89,10 @@ def create_recipe(
     requires: list[str] | None = None,
     unlocks: list[str] | None = None,
     branches: list[dict] | None = None,
+    good_requirements: dict[str, Decimal] | None = None,
+    deposit_inputs: dict[str, Decimal] | None = None,
+    requires_facility: str | None = None,
+    builds_facility: str | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -79,8 +102,10 @@ def create_recipe(
         raise ValueError("duration_ticks must be >= 0")
     if branches and outputs:
         raise ValueError("recipe declares either outputs or branches, not both")
-    if not outputs and not branches and not unlocks:
-        raise ValueError("recipe must declare at least one output, branch, or unlock")
+    if not outputs and not branches and not unlocks and not builds_facility:
+        raise ValueError(
+            "recipe must declare at least one output, branch, unlock, or built facility"
+        )
 
     def rows(cls, quantities: dict) -> list:
         out = []
@@ -116,11 +141,15 @@ def create_recipe(
         code=code.upper(),
         name=name,
         duration_ticks=duration_ticks,
+        requires_facility=requires_facility.upper() if requires_facility else None,
+        builds_facility=builds_facility.upper() if builds_facility else None,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
         requirements=tech_rows(RecipeRequirement, requires),
         unlocks=tech_rows(RecipeUnlock, unlocks),
+        good_requirements=rows(RecipeGoodRequirement, good_requirements or {}),
+        deposit_inputs=rows(RecipeDepositInput, deposit_inputs or {}),
     )
     session.add(recipe)
     session.flush()
@@ -133,10 +162,27 @@ def get_recipe(session: Session, code: str) -> Recipe | None:
     ).scalar_one_or_none()
 
 
-def start_process(session: Session, entity: Entity, recipe_code: str) -> Process:
-    """Consume the recipe's inputs from the entity's holdings and create a
-    Process. Raises InsufficientHoldingsError if any input is short (all
-    consumption rolls back with the caller's savepoint)."""
+def recipe_needs_parcel(recipe: Recipe) -> bool:
+    return bool(recipe.requires_facility or recipe.builds_facility or recipe.deposit_inputs)
+
+
+def _available_quantity(session: Session, entity: Entity, symbol: str) -> Decimal:
+    """Held minus reserved-by-running-processes — what requirements, inputs,
+    and market settlement may draw on."""
+    holding = get_holding(session, entity.id, symbol)
+    held = holding.quantity if holding else Decimal("0")
+    return held - reserved_quantity(session, entity.id, symbol)
+
+
+def start_process(
+    session: Session, entity: Entity, recipe_code: str, parcel_id: str | None = None
+) -> Process:
+    """Consume the recipe's inputs from the entity's holdings (and its
+    deposit_inputs from the bound parcel) and create a Process. Raises
+    InsufficientHoldingsError if any input or requirement is short (all
+    consumption rolls back with the caller's savepoint). Requirements and
+    inputs may only draw on the unreserved balance — holdings backing other
+    running processes are unavailable."""
     recipe = get_recipe(session, recipe_code)
     if recipe is None:
         raise ValueError(f"no recipe {str(recipe_code).upper()!r}")
@@ -156,13 +202,49 @@ def start_process(session: Session, entity: Entity, recipe_code: str) -> Process
                 f"technology {u.technology.code} requires {', '.join(unmet)}"
             )
 
+    parcel = None
+    if parcel_id is not None:
+        parcel = parcels.get_parcel(session, parcel_id)
+        if parcel is None:
+            raise ValueError("unknown parcel")
+        if parcel.owner_id != entity.id:
+            raise ValueError("entity does not control parcel")
+    elif recipe_needs_parcel(recipe):
+        raise ValueError(f"recipe {recipe.code} must be bound to a parcel")
+
+    if recipe.requires_facility:
+        free = (
+            parcels.facility_count(session, parcel.id, recipe.requires_facility)
+            - parcels.reserved_facilities(session, parcel.id, recipe.requires_facility)
+        )
+        if free < 1:
+            raise ValueError(
+                f"parcel has no free {recipe.requires_facility} facility"
+            )
+
+    for req in recipe.good_requirements:
+        available = _available_quantity(session, entity, req.symbol)
+        if available < req.quantity:
+            raise InsufficientHoldingsError(
+                f"entity {entity.id} has {available} {req.symbol} unreserved, "
+                f"recipe {recipe.code} requires {req.quantity}"
+            )
+
     for item in recipe.inputs:
+        if _available_quantity(session, entity, item.symbol) < item.quantity:
+            raise InsufficientHoldingsError(
+                f"entity {entity.id} has insufficient unreserved {item.symbol} "
+                f"for recipe {recipe.code} input {item.quantity}"
+            )
         adjust_holding(session, entity, item.symbol, -item.quantity)
+    for item in recipe.deposit_inputs:
+        parcels.draw_deposit(session, parcel, item.symbol, item.quantity)
 
     tick = next_tick_number(session)
     process = Process(
         recipe=recipe,
         entity=entity,
+        parcel=parcel,
         started_tick=tick,
         completes_tick=tick + recipe.duration_ticks,
     )
@@ -245,6 +327,10 @@ def _completed_event(process: Process, granted: list) -> dict:
         "recipe": recipe.code,
         "outputs": {o.symbol: str(o.quantity) for o in outputs},
     }
+    if process.parcel_id is not None:
+        event["parcel_id"] = process.parcel_id
+    if recipe.builds_facility:
+        event["facility"] = recipe.builds_facility
     if branch is not None:
         event["branch"] = branch.position
         event["roll"] = process.outcome_roll
@@ -257,8 +343,9 @@ def _completed_event(process: Process, granted: list) -> dict:
 
 def _complete(session: Session, process: Process, seed: str) -> list:
     """Credit outputs — rolling the outcome branch first if the recipe is
-    stochastic — and grant the recipe's unlocks; returns the Unlock rows
-    actually created (technology-code order, already-held ones skipped)."""
+    stochastic — erect the built facility, and grant the recipe's unlocks;
+    returns the Unlock rows actually created (technology-code order,
+    already-held ones skipped)."""
     recipe = process.recipe
     outputs = recipe.outputs
     if recipe.branches:
@@ -269,6 +356,11 @@ def _complete(session: Session, process: Process, seed: str) -> list:
         outputs = recipe.branches[process.outcome_branch].outputs
     for item in outputs:
         adjust_holding(session, process.entity, item.symbol, item.quantity)
+    if recipe.builds_facility:
+        parcels.add_facility(
+            session, process.parcel, recipe.builds_facility,
+            built_tick=process.completes_tick,
+        )
     granted = []
     for u in sorted(recipe.unlocks, key=lambda u: u.technology.code):
         unlock = tech.grant_unlock(

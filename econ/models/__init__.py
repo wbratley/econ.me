@@ -10,10 +10,11 @@ from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
 from .recipe import (
-    Recipe, RecipeBranch, RecipeBranchOutput, RecipeInput, RecipeOutput,
-    RecipeRequirement, RecipeUnlock,
+    Recipe, RecipeBranch, RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement,
+    RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock,
 )
 from .process import Process, ProcessStatus
+from .parcel import Parcel, Facility, Deposit
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
 from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
@@ -39,12 +40,17 @@ __all__ = [
     "Recipe",
     "RecipeBranch",
     "RecipeBranchOutput",
+    "RecipeDepositInput",
+    "RecipeGoodRequirement",
     "RecipeInput",
     "RecipeOutput",
     "RecipeRequirement",
     "RecipeUnlock",
     "Process",
     "ProcessStatus",
+    "Parcel",
+    "Facility",
+    "Deposit",
     "Good",
     "Need",
     "NeedSatisfier",
