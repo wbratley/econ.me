@@ -11,6 +11,7 @@ from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
 from .recipe import Recipe, RecipeInput, RecipeOutput
 from .process import Process, ProcessStatus
+from .good import Good
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "RecipeOutput",
     "Process",
     "ProcessStatus",
+    "Good",
 ]

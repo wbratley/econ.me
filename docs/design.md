@@ -161,6 +161,14 @@ Holdings gain two optional, data-driven properties per symbol
 decays at a rate) and *auto-issued* (entities of a given type receive N
 units per tick).
 
+Auto-issue is a **top-up** — `holding = max(holding, N)` — not an
+addition: it prevents issuer-side hoarding without age-tracked inventory
+lots and never destroys stock an entity bought. Buyer-side banking is the
+accepted v1 trade-off; worlds can vote decay onto `LABOR` if they want it
+gone. In the tick, auto-issue runs *before* scripts (fresh labor sells the
+same tick) and decay runs *after* the auction (unsold perishables rot);
+both emit one summary event per good, never per-entity.
+
 Labor then needs **no new market mechanism**: each person auto-issues N
 units of perishable `LABOR` (or `LABOR-<SKILL>`) per tick, which trades on
 the existing call auction, and recipes list labor among their inputs.

@@ -307,6 +307,37 @@ class ProcessRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class GoodCreate(BaseModel):
+    symbol: str
+    name: str = ""
+    decay_per_tick: str = "0"
+    auto_issue_quantity: str = "0"
+    auto_issue_entity_type: Optional[EntityType] = None
+
+
+class GoodUpdate(BaseModel):
+    name: Optional[str] = None
+    decay_per_tick: Optional[str] = None
+    auto_issue_quantity: Optional[str] = None
+    auto_issue_entity_type: Optional[EntityType] = None  # explicit null clears it
+
+
+class GoodRead(BaseModel):
+    id: str
+    symbol: str
+    name: str
+    decay_per_tick: Decimal
+    auto_issue_quantity: Decimal
+    auto_issue_entity_type: Optional[EntityType] = None
+    created_at: datetime
+
+    @field_serializer("decay_per_tick", "auto_issue_quantity")
+    def _decimals(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
 class TradeRead(BaseModel):
     id: str
     market_id: str
