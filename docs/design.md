@@ -173,9 +173,97 @@ Labor then needs **no new market mechanism**: each person auto-issues N
 units of perishable `LABOR` (or `LABOR-<SKILL>`) per tick, which trades on
 the existing call auction, and recipes list labor among their inputs.
 Wages, labor scarcity, and skill premiums all emerge from the mechanisms
-already built. Skills slot in later as unlocks on the person.
+already built. Skills get a full treatment in the next section.
 
 Perishability doubles as food spoilage and prevents labor hoarding.
+
+#### Skills and stochastic production
+
+Skills feel like machinery ("you need X to do Y") but attach to the
+wrong entity for the requirements mechanism: a requirement binds to the
+*producing* entity, and in a market economy that is usually a business
+buying labor from persons. If `FORGE_SWORD` required a SMITHING unlock
+on the entity running it, a smithy could never hire smiths. So **skill
+must travel inside the labor good** — the only thing that crosses the
+market boundary between person and firm. Skilled work is a distinct
+symbol (`LABOR-SMITH`), recipes simply consume it, the firm pays for
+skill on a market rather than holding it, and the skill premium is
+literally the price gap between the `LABOR` and `LABOR-SMITH` auctions.
+
+What stops the unskilled selling `LABOR-SMITH` is conservation: gate the
+recipe that *produces* it. Persons auto-issue only plain `LABOR` (one
+labor budget each); a skilled person runs a duration-0 conversion recipe
+`WORK_AS_SMITH: 1 LABOR → 1 LABOR-SMITH` — consuming plain hours keeps
+the budget conserved, and which hours to convert is the person's script,
+policy where it belongs. Convert-and-sell works in one tick with current
+intent ordering.
+
+**Skill is continuous, and it is a holding**: your `SKILL-SMITH`
+quantity is your skill level. The engine never computes on that number —
+it only ever asks the question requirements already ask ("hold ≥ N"), so
+*milestones* are thresholds in recipe data: `WORK_AS_SMITH` requires ≥ 1
+`SKILL-SMITH`, `WORK_AS_MASTER_SMITH` requires ≥ 10 — the
+production-methods pattern again (fine-grained curves are the
+generator's job). Acquisition is declared, not mechanised:
+learning-by-doing is a byproduct output (`… → 1 SWORD + 0.02
+SKILL-SMITH`), atrophy is `decay_per_tick` on the skill symbol, and
+because decay is proportional while practice gain is constant, every
+working cadence has an equilibrium skill level (gain ÷ decay) — skill
+plateaus unless you work more or study. Formal education is an industry,
+not a mechanism: schools turn teachers' skilled labor into
+`EDUCATION-SMITH` goods, tuition is a market purchase (money never
+enters recipes; it buys inputs), and a training recipe consumes
+education plus time — apprentices' forgone wages emerge as real
+opportunity cost. Permanent *rank* layers on via the tech tree: a
+certification recipe requiring ≥ N current skill outputs a JOURNEYMAN
+unlock, which persists while skill decays underneath it — a lapsed
+master is credentialed but rusty, and recipe variants may demand both.
+Skills-as-goods are tradeable only if a world opens a market for them;
+whether you can buy mastery is policy, not mechanism.
+
+**Stochastic recipes.** Failure, catastrophe, and variable yield need
+one genuinely new mechanism: a recipe may declare **outcome branches** —
+alternative output sets with fixed weights, sampled once at completion:
+
+```
+FORGE_SWORD: 2 IRON + 4 LABOR-SMITH + 1 FORGE →
+  70%: 1 SWORD + 1 FORGE + 0.02 SKILL-SMITH
+  25%: 1 SCRAP + 1 FORGE + 0.03 SKILL-SMITH   (ruined the blank)
+   5%: 1 SCRAP                                 (wrecked the forge)
+```
+
+Branch tables are loot tables, not formulas: odds are constant *within*
+a variant and a player reads the row and knows them exactly; skill
+selects which variant you may run and never enters a probability
+function. Equipment the dice can eat is a **catalyst input** — consumed
+at start, re-emitted by the branches that spare it — so catastrophic
+loss is a branch that keeps the forge (requirements + reservation remain
+for equipment not at risk; steady wear remains a fractional input).
+Because risk is declared and readable, insurers can price it and
+policies can tax it. The same mechanism covers harvest yields,
+prospecting, and research breakthroughs.
+
+**Auditable randomness.** Ticks must stay replayable and verifiable
+(determinism is an engine invariant), and a roller must not be able to
+cancel bad rolls: inputs are consumed at start, but cancellation exists,
+so a predictable outcome would be cherry-picked. The tick structure
+supplies a commit-reveal: a process completing at tick N can last be
+cancelled during tick N−1's intent pass, and the hash of tick N−1's full
+event list is not determined until after that pass. So
+
+```
+outcome_roll = H(hash(tick N−1 events), process_id)
+```
+
+is unknowable at the final cancellation opportunity, reproducible by any
+auditor afterwards, and needs no oracle — the entropy is the economy
+itself.
+
+*Status: everything here except branch tables and the RNG is data on
+mechanisms already built or planned (requirements, tech tree, decay);
+those two land as their own build-order step. Implementation note:
+symbol columns are `String(12)` today — widen to fit `LABOR-<TRADE>` /
+`SKILL-<TRADE>` before then.*
 
 #### Needs and consumption (demand)
 
@@ -398,17 +486,20 @@ step-commit → PR → squash-merge workflow.
    `need_unmet` events; NPC behaviour scripts that respond to them.
 4. **Unlocks + tech tree** — Technology DAG, research recipes, recipe
    gating.
-5. **Parcels + facilities** — land ownership, construction recipes,
+5. **Stochastic recipes** — outcome branch tables + the event-hash RNG;
+   skill ladders, at-risk equipment, and yield risk become pure data
+   (§ skills and stochastic production).
+6. **Parcels + facilities** — land ownership, construction recipes,
    parcel-bound production, and recipe *requirements* with reservation
    (machinery and facilities share the mechanism). Engine-side only; no
    world layer needed yet.
-6. **Engine extraction** — package split per §5, econ.me becomes consumer
+7. **Engine extraction** — package split per §5, econ.me becomes consumer
    #1.
-7. **World-layer prototype** — the farming loop on Luanti (or a custom
+8. **World-layer prototype** — the farming loop on Luanti (or a custom
    server) against the engine's intent API: walk, claim a parcel, plant,
    wait ticks, harvest, sell at a market hall. This is the go/no-go test
    of the world/engine boundary and of Luanti itself.
-8. **Platform vertical slice** — one world, proposals + voting + enactment
+9. **Platform vertical slice** — one world, proposals + voting + enactment
    day over both parameter surfaces (engine + world physics); trials; then
    forking and the meta-layer.
 
@@ -423,7 +514,9 @@ step-commit → PR → squash-merge workflow.
   denominated in world currency, which the economy engine already models).
 - **Tech scope default** — per-entity vs. world-shared unlocks as the
   genesis default (per-entity is more interesting economically; shared is
-  simpler socially).
+  simpler socially). Skills argue for scope as a per-Technology column
+  rather than a single default: a smithing rank is per-person even in
+  worlds where physics is shared.
 - **Time structure** — ratio of engine ticks to enactment cycles; whether
   worlds can vote their own tick rate within engine-imposed bounds.
 - **World layer engine** — Luanti vs. custom server + Godot client; decide
