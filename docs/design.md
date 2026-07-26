@@ -495,6 +495,79 @@ identically at one tick per hour and ten thousand ticks per second.
 That is the unpaced invariant doing its job; no simulation parameter
 may ever be wall-clock.
 
+#### Military and contests (ownership transfer by force)
+
+In real economies ownership is not natural law — it is a social
+contract enforced by whoever holds local force, usually a government.
+The engine's **ownership invariant** ("assets move only by the owner's
+intent") is therefore not neutral physics: it is the engine playing the
+role of a perfectly effective, incorruptible state. That is the right
+default, and for many worlds (and the whole modelling product) the
+final word. But a platform about governance should be *able* to model
+the thing governance actually rests on — so the engine supports
+**ownership transfer by force**, even though its existence in any world
+is purely rule-based: enabled, shaped, and priced entirely by votable
+data, default off.
+
+Force cannot be script policy, for the same three walls as § conditions:
+the ownership invariant (looting is by definition moving someone else's
+assets — only the engine may ever do that), fixed-odds branches (recipe
+branch weights are constant loot tables, but combat odds must be a
+function of *both sides'* committed strength), and the entity lifecycle
+(casualties need incapacity). And there is the same economic wall in
+mirror image: without a taking mechanism, a rational actor buys zero
+weapons and any arms industry is a state-subsidized ornament. Conflict
+is to weapons what consequences are to needs — the thing that makes the
+demand real. It also makes *defense* real: a garrison's strength is
+readable data, so deterrence becomes an economic calculation rather
+than flavor text.
+
+Most of a military is already pure data on shipped mechanisms:
+
+- **Procurement**: weapons are goods (IRON → SWORD recipes, SMITHY
+  facilities, market prices); an army is a government entity running
+  payroll — buying LABOR-SOLDIER and weapons on the open market. The
+  fiscal sink is real and circulates with zero new engine code.
+- **Military technology**: a branch of the Technology DAG gating weapon
+  recipes; SKILL-SOLDIER rides the stochastic training ladders.
+- **Standing readiness**: a garrison is a running process bound to a
+  FORT facility, consuming labor per tick and producing nothing — pure
+  cost, which is exactly what a standing army is. Stockpiles rust via
+  `decay_per_tick`.
+- **Casualties**: condition credits (§ conditions) — COND-INJURED from
+  an outcome branch, death via `incapacitates_at` and the estate rule.
+  Death in battle is the same engine state as death by starvation.
+
+One mechanism is genuinely new: the **contest**. An attacker declares
+by intent at tick N, committing declared assets (weapons, labor —
+soldiers are *holdings*, not entities; armies are payroll, not
+population); the contest resolves at tick N+1. The one-tick gap is the
+commit-reveal window doing double duty: no withdrawal once the seed is
+knowable (same rule as process cancellation), and the defender's
+scripts see the declaration — one tick to reinforce, negotiate, or
+move liquid assets out. Fixed assets cannot flee, which is what makes
+land warfare about land. Strength is a votable schedule (symbol →
+weight, with defender bonuses for facilities like a FORT); odds are a
+votable curve over relative strength, sampled through the events-hash
+RNG like any outcome roll. Effects are bounded by votable rules: loot
+capped at a fraction of holdings and symbol-filtered — non-transferables
+(conditions, skills) can never be taken, you can take a man's sword but
+not his swordsmanship — parcel conquest as ownership transfer with
+facilities standing, casualties on both sides, attrition of committed
+weapons catalyst-style (branches decide what survives).
+
+The invariant, restated for the age of war: assets move by the owner's
+intent, or by engine mechanism under explicitly-declared votable rules —
+estate transfer at incapacity, enacted policy (taxes, expropriation),
+and contest outcomes. Never by another entity's script directly. Rules
+of engagement — whether contests exist at all, who may declare on whom,
+what declaration costs, cooldowns — live in world settings beside the
+estate rule; peace treaties and tribute are future § contracts.
+
+*Status: designed, not built; unscheduled — platform-era (needs
+multiple polities to matter). Deliberately designed before contracts
+and transfer intents so nothing built earlier closes the door.*
+
 #### Later: contracts (recurring obligations)
 
 A generalized "A pays B x per tick in exchange for y per tick, until
@@ -698,6 +771,16 @@ step-commit → PR → squash-merge workflow.
   first discovery") remains future work.*
 - **Time structure** — ratio of engine ticks to enactment cycles; whether
   worlds can vote their own tick rate within engine-imposed bounds.
+- **Enforcement vs. arms** (§ military) — once armies exist, "the vote
+  enacts by engine magic" is a choice, not a given: does a military
+  world let enactment be resisted by force (civil war as mechanism), or
+  does enactment stay magical with contests confined to inter-entity
+  raids? The former is the deepest possible governance sandbox and the
+  biggest griefing vector.
+- **Conquest vs. forking** (§ military) — forking is the peaceful exit;
+  a world where conquest is cheaper than forking will get conquest.
+  Whether declaration costs and fork thresholds need engine-imposed
+  relative bounds, or data suffices, is unresolved.
 - **World layer engine** — Luanti vs. custom server + Godot client; decide
   by prototyping the farming loop (§6 step 7). Related: voxel resolution,
   parcel size/granularity, and whether parcels are grid-aligned claims
