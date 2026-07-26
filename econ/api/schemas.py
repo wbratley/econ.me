@@ -464,6 +464,26 @@ class ComputeBudgetRead(BaseModel):
     budget_ms: Optional[int] = None
 
 
+class IntentRequest(BaseModel):
+    """A machine client's request for the shared intent resolver (§4.5
+    'an intent API for machine clients' — same resolver as scripts use)."""
+    entity_id: str
+    type: str  # one of resolve_intent's dispatched intent_type values
+    params: dict[str, str]
+    priority: int = 100
+
+
+class IntentResult(BaseModel):
+    type: str
+    entity_id: str
+    params: dict
+    idempotency_key: str
+    status: str  # "applied" | "rejected"
+    reason: Optional[str] = None
+    order_id: Optional[str] = None    # present for place_order
+    process_id: Optional[str] = None  # present for start_process
+
+
 class NeedStateRead(BaseModel):
     need: str
     satisfaction: Decimal

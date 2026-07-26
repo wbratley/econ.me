@@ -721,7 +721,15 @@ test of the whole boundary design.
   not tick-driven) are deliberately not covered by this pass.*
 - **An intent API for machine clients**: the world server needs a faster,
   authenticated intent/query channel than the human HTTP API — same
-  resolver underneath.
+  resolver underneath. *Status: shipped — `POST /intents` (a batch of
+  `{entity_id, type, params, priority}`) resolves each item through the
+  exact `scripting.resolve_intent` dispatcher tick.py and hooks already
+  share, after an entity-ownership check; unrecognized intent types and
+  per-item failures come back as an ordinary `rejected` result (each intent
+  already runs inside its own nested savepoint) rather than failing the
+  batch. Existing per-action human routers are unchanged — this is an
+  additive, thinner alternative path, still authenticated via the same
+  JWT bearer scheme (no new auth mechanism needed).*
 
 ## 5. Engine extraction (modularity plan)
 
