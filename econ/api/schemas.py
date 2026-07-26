@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_serializer
 
 from econ.models.entity import EntityType
 from econ.models.order import OrderSide, OrderStatus
+from econ.models.process import ProcessStatus
 from econ.models.transaction import TransactionType
 from econ.models.script import ScriptType
 
@@ -248,6 +249,60 @@ class OrderRead(BaseModel):
     @field_serializer("quantity", "remaining", "limit_price")
     def _decimals(self, v: Decimal) -> str:
         return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class RecipeItemRead(BaseModel):
+    symbol: str
+    quantity: Decimal
+
+    @field_serializer("quantity")
+    def _quantity(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class RecipeCreate(BaseModel):
+    code: str
+    name: str = ""
+    duration_ticks: int
+    inputs: dict[str, str] = {}   # symbol -> quantity
+    outputs: dict[str, str]
+
+
+class RecipeUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class RecipeRead(BaseModel):
+    id: str
+    code: str
+    name: str
+    duration_ticks: int
+    is_active: bool
+    inputs: list[RecipeItemRead] = []
+    outputs: list[RecipeItemRead] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProcessCreate(BaseModel):
+    entity_id: str
+    recipe: str
+
+
+class ProcessRead(BaseModel):
+    id: str
+    recipe_id: str
+    entity_id: str
+    started_tick: int
+    completes_tick: int
+    status: ProcessStatus
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

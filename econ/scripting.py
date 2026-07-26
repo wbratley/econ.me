@@ -151,7 +151,7 @@ def build_queries(session: Session) -> dict:
 
 
 def resolve_intent(session: Session, intent: Intent) -> dict:
-    from . import markets, services  # deferred: both import this module
+    from . import markets, production, services  # deferred: all import this module
 
     event = {
         "type": intent.intent_type,
@@ -210,6 +210,22 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
         elif intent.intent_type == "cancel_order":
             with session.begin_nested():
                 markets.cancel_order(session, intent.params.get("order_id", ""), intent.entity_id)
+
+        elif intent.intent_type == "start_process":
+            entity = session.get(Entity, intent.entity_id)
+            if entity is None:
+                return rejected("unknown entity")
+            with session.begin_nested():
+                process = production.start_process(
+                    session, entity, intent.params.get("recipe", "")
+                )
+            extra["process_id"] = process.id  # scripts need this to cancel later
+
+        elif intent.intent_type == "cancel_process":
+            with session.begin_nested():
+                production.cancel_process(
+                    session, intent.params.get("process_id", ""), intent.entity_id
+                )
 
         else:
             return rejected(f"unknown intent type {intent.intent_type!r}")

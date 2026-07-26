@@ -83,24 +83,63 @@ content they operate on is data.
 
 #### Recipes and processes (production)
 
-A **Recipe** is a data row describing a transformation:
+A **Recipe** is a data row describing a transformation. Its full
+vocabulary is three lists:
 
-- inputs: quantities of holdings (and optionally money) consumed at start
-- outputs: quantities of holdings credited at completion
-- duration: number of ticks
-- requirements: unlocks the entity must hold (§ tech), labor inputs
-  (§ labor), and a parcel/facility requirement (§ parcels) — e.g. GROW_WHEAT
-  requires a FIELD parcel the entity controls
+- **inputs** — quantities of holdings consumed at start
+- **requirements** — things that must be *present but are not consumed*:
+  held goods (machinery, tools), a facility on a controlled parcel
+  (§ parcels), unlocks (§ tech)
+- **outputs** — quantities of holdings credited at completion (possibly
+  none — see waste below)
 
-A `start_process` intent atomically consumes the inputs and creates a
-**Process** (work-in-progress) row; the tick engine completes it
-`duration` ticks later and credits the outputs, emitting
+plus a duration in ticks. A `start_process` intent atomically consumes the
+inputs and creates a **Process** (work-in-progress) row; the tick engine
+completes it `duration` ticks later and credits the outputs, emitting
 `process_started` / `process_completed` events. Cancellation policy
 (refund or forfeit inputs) is a votable parameter.
 
 The **manufacturing tree is not code** — it emerges from which recipes
 exist, the same way the market list emerges from Market rows. Conservation
 is the engine invariant: a recipe transforms exactly what it declares.
+
+*Status: inputs/outputs/duration shipped (Step 7); requirements land with
+parcels & facilities, which need the identical check.*
+
+**Machinery, wear, and reservation.** A good-type requirement means "hold
+≥ N of SYMBOL while this runs" — checked at start, never consumed.
+Requirements **reserve**: at `start_process`, the sum of a symbol's
+requirements across the entity's RUNNING processes must not exceed its
+holding, so one hammer cannot back unlimited concurrent workshops; and
+settlement's live holdings check must treat reserved quantities as
+unavailable, so you cannot sell the oven mid-bake. This is a query against
+running processes, not an escrow — nothing is moved or locked, exactly
+like the markets' no-escrow stance. Machinery *wear* needs no mechanism at
+all: it is a fractional input (`0.01 OVEN` per bake ⇒ an oven survives
+~100 bakes), and since machines are themselves recipe outputs, a
+capital-goods industry emerges from data alone.
+
+**Better machinery = recipe variants, not modifiers.** Equipment that
+shortens duration or cuts input use is expressed as separate recipe rows —
+`BAKE_BREAD_HAND` (5 ticks, more labor) vs `BAKE_BREAD_OVEN` (2 ticks,
+requires OVEN, consumes 0.01 OVEN) — with the better variant gated behind
+an unlock (Victoria 3's "production methods" pattern). The engine never
+evaluates efficiency formulas: a formula-in-mechanism would break
+auditability (a player could no longer read a recipe and know what it
+does) and put arithmetic policy where votes can't safely amend it. Which
+variant to run is a script's choice — policy, in Lua. If a world wants so
+many quality tiers that hand-written rows get silly, the answer is a
+*generator* emitting recipe rows at proposal time (formula lives in
+tooling/votes; the engine still sees only plain declared recipes).
+
+**Waste is just an output.** `SMELT_IRON: 2 ORE + 1 COAL → 1 IRON +
+1 SLAG` — the engine has no product/waste distinction. Waste-ness is
+economic (nobody bids for SLAG) and policy (a dumping tax, a validator
+blocking TOXIN transfers). Because conservation forbids goods vanishing,
+waste accumulates until dealt with — so pollution, disposal industries,
+and environmental politics *emerge* rather than being designed. The one
+allowance: zero-output disposal recipes (`BURY_SLAG: 5 SLAG + 1 LABOR →
+nothing`) — destruction stays conservation-legal because it is declared.
 
 #### Unlocks and the tech tree (research)
 
@@ -159,6 +198,9 @@ A **Facility** is a built improvement on a parcel (FARM, SMITHY, MARKET
 HALL), itself produced by a recipe whose output is a facility rather than
 goods. Recipes may require a facility of a given type, which is how
 production becomes *located*: you farm on your field, smelt at a forge.
+This step is where recipe **requirements** (§ recipes) get built — the
+present-but-not-consumed check with reservation is one mechanism serving
+facilities ("a SMITHY you control") and machinery ("hold 1 OVEN") alike.
 
 A **Deposit** is a natural resource dotted onto the map: a parcel/region
 carries deposit rows (IRON, TIMBER, fertile soil as a FIELD quality tier)
@@ -349,7 +391,9 @@ step-commit → PR → squash-merge workflow.
 4. **Unlocks + tech tree** — Technology DAG, research recipes, recipe
    gating.
 5. **Parcels + facilities** — land ownership, construction recipes,
-   parcel-bound production. Engine-side only; no world layer needed yet.
+   parcel-bound production, and recipe *requirements* with reservation
+   (machinery and facilities share the mechanism). Engine-side only; no
+   world layer needed yet.
 6. **Engine extraction** — package split per §5, econ.me becomes consumer
    #1.
 7. **World-layer prototype** — the farming loop on Luanti (or a custom
