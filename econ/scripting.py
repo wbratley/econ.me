@@ -119,7 +119,7 @@ def _op_ctx(session: Session, script: Script, op: dict) -> dict:
 
 def build_queries(session: Session) -> dict:
     """ctx.query.* — read-only, string results so Lua sees exact decimals."""
-    from . import markets  # deferred: markets imports this module
+    from . import markets, tech  # deferred: markets imports this module
 
     def balance(account_id):
         acct = session.get(Account, str(account_id))
@@ -142,11 +142,18 @@ def build_queries(session: Session) -> dict:
         h = markets.get_holding(session, str(entity_id), str(symbol).upper())
         return str(h.quantity) if h else "0"
 
+    def has_unlock(entity_id, code):
+        technology = tech.get_technology(session, str(code))
+        if technology is None:
+            return False
+        return tech.has_unlock(session, str(entity_id), technology)
+
     return {
         "balance": balance,
         "total_supply": total_supply,
         "market_price": market_price,
         "holding": holding,
+        "has_unlock": has_unlock,
     }
 
 

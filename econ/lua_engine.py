@@ -9,6 +9,7 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
   ctx.holdings      read-only commodity holdings list
   ctx.processes     read-only running-production list
   ctx.needs         read-only need list with current satisfaction scores
+  ctx.unlocks       read-only technology codes the entity can use (own + world)
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
   ctx.op            the service operation being validated/hooked (HOOK and
@@ -216,6 +217,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     holdings_tbl = _to_lua_list(ctx.get("holdings", []))
     processes_tbl = _to_lua_list(ctx.get("processes", []))
     needs_tbl   = _to_lua_list(ctx.get("needs", []))
+    unlocks_tbl = _to_lua_list(ctx.get("unlocks", []))
     events_tbl  = _to_lua_list(ctx.get("events", []))
     state_tbl   = _to_lua_table(ctx.get("state", {}))
 
@@ -308,6 +310,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     ctx_tbl["holdings"] = holdings_tbl
     ctx_tbl["processes"] = processes_tbl
     ctx_tbl["needs"]    = needs_tbl
+    ctx_tbl["unlocks"]  = unlocks_tbl
     ctx_tbl["events"]   = events_tbl
     ctx_tbl["state"]    = state_tbl
     ctx_tbl["query"]    = query_tbl

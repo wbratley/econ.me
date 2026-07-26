@@ -4,13 +4,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_serializer, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_serializer, field_validator
 
 from econ.models.entity import EntityType
 from econ.models.order import OrderSide, OrderStatus
 from econ.models.process import ProcessStatus
 from econ.models.transaction import TransactionType
 from econ.models.script import ScriptType
+from econ.models.technology import TechScope
 
 
 class EntityCreate(BaseModel):
@@ -269,7 +270,9 @@ class RecipeCreate(BaseModel):
     name: str = ""
     duration_ticks: int
     inputs: dict[str, str] = {}   # symbol -> quantity
-    outputs: dict[str, str]
+    outputs: dict[str, str] = {}  # may be empty for pure research recipes
+    requires: list[str] = []      # technology codes gating the recipe
+    unlocks: list[str] = []       # technology codes granted on completion
 
 
 class RecipeUpdate(BaseModel):
@@ -285,7 +288,15 @@ class RecipeRead(BaseModel):
     is_active: bool
     inputs: list[RecipeItemRead] = []
     outputs: list[RecipeItemRead] = []
+    # the ORM relationship is named `requirements`; the API field is `requires`
+    requires: list[str] = Field(default=[], validation_alias=AliasChoices("requires", "requirements"))
+    unlocks: list[str] = []
     created_at: datetime
+
+    @field_validator("requires", "unlocks", mode="before")
+    @classmethod
+    def _technology_codes(cls, v):
+        return sorted(t if isinstance(t, str) else t.technology.code for t in v)
 
     model_config = {"from_attributes": True}
 
@@ -386,6 +397,52 @@ class NeedStateRead(BaseModel):
     @field_serializer("satisfaction")
     def _satisfaction(self, v: Decimal) -> str:
         return str(v)
+
+
+class TechnologyCreate(BaseModel):
+    code: str
+    name: str = ""
+    scope: TechScope = TechScope.ENTITY
+    prerequisites: list[str] = []  # codes of existing technologies
+
+
+class TechnologyUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TechnologyRead(BaseModel):
+    id: str
+    code: str
+    name: str
+    scope: TechScope
+    is_active: bool
+    prerequisites: list[str] = []
+    created_at: datetime
+
+    @field_validator("prerequisites", mode="before")
+    @classmethod
+    def _prerequisite_codes(cls, v):
+        return sorted(p if isinstance(p, str) else p.prerequisite.code for p in v)
+
+    model_config = {"from_attributes": True}
+
+
+class UnlockGrant(BaseModel):
+    entity_id: str
+
+
+class UnlockRead(BaseModel):
+    technology: str  # code
+    entity_id: Optional[str] = None  # null = the whole world holds it
+    unlocked_tick: int
+
+    @field_validator("technology", mode="before")
+    @classmethod
+    def _technology_code(cls, v):
+        return v if isinstance(v, str) else v.code
+
+    model_config = {"from_attributes": True}
 
 
 class TradeRead(BaseModel):

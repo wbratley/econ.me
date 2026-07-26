@@ -40,7 +40,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import goods, markets, needs, production
+from . import goods, markets, needs, production, tech
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, Holding, Need, NeedState, Process, ProcessStatus, Script, ScriptType, Tick,
@@ -149,6 +149,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             ).scalars()
         ],
         "needs": _entity_needs(session, entity),
+        "unlocks": tech.entity_unlocks(session, entity.id),
         "events": entity_events,
         "state": dict(script.state or {}),
         "queries": build_queries(session),

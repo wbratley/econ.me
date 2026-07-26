@@ -150,9 +150,26 @@ rather than goods. Recipes may require unlocks; the engine mechanism is
 only "does this entity's (or world's) unlock set contain the recipe's
 requirements?".
 
-Deliberately votable/configurable: whether unlocks are per-entity, shared
-world-wide, or diffuse over time (e.g. become public N ticks after first
-discovery); research costs; the shape of the DAG itself.
+**Scope is a per-Technology column** (`entity` or `world`), not a single
+world default: a smithing rank is per-person even in worlds where physics
+knowledge is shared. An `entity`-scoped unlock belongs to the entity that
+completed the research; a `world`-scoped one is held by everyone the
+moment anyone first discovers it. The DAG is **acyclic by construction** —
+prerequisites are fixed at creation and must already exist as rows, so a
+technology can never reference itself or a later one. Prerequisites are
+enforced at *grant* time (research and admin grants alike), recipe
+requirements at *process start*; both checks happen at start for research
+recipes, which is sufficient because **unlocks are never revoked** — what
+is satisfiable at start stays satisfiable at completion. A completion
+that would duplicate an existing unlock grants (and emits) nothing;
+re-running research wastes the inputs, and whether that is stupid is the
+script's problem. Completion emits one `unlocked` event per technology
+actually granted, attributed to the discovering entity even at world
+scope.
+
+Deliberately votable/configurable: each technology's scope; diffusion
+variants (e.g. become public N ticks after first discovery) as a future
+mechanism; research costs; the shape of the DAG itself.
 
 #### Perishable holdings and the labor market
 
@@ -528,11 +545,11 @@ step-commit → PR → squash-merge workflow.
 - **Proposal spam** — rate-limit vs. cost (deposit refunded if the proposal
   clears some support floor is the classic answer; note the deposit is
   denominated in world currency, which the economy engine already models).
-- **Tech scope default** — per-entity vs. world-shared unlocks as the
-  genesis default (per-entity is more interesting economically; shared is
-  simpler socially). Skills argue for scope as a per-Technology column
-  rather than a single default: a smithing rank is per-person even in
-  worlds where physics is shared.
+- ~~**Tech scope default**~~ — *resolved (§ tech tree): scope is a
+  per-Technology column (`entity` / `world`), defaulting to `entity` —
+  skills settled the argument, since a smithing rank is per-person even
+  in worlds where physics is shared. Diffusion ("public N ticks after
+  first discovery") remains future work.*
 - **Time structure** — ratio of engine ticks to enactment cycles; whether
   worlds can vote their own tick rate within engine-imposed bounds.
 - **World layer engine** — Luanti vs. custom server + Godot client; decide
