@@ -24,8 +24,8 @@ Unlike the goods passes, events here are PER ENTITY — exactly one
 need_satisfied or need_unmet event per (need, matching entity) each tick —
 because they are the signal behaviour scripts react to, and behaviour
 scripts see only their own entity's events. Consequences of unmet needs
-(productivity loss, migration, death) are policy — scripts and votable
-parameters — never engine code.
+are the conditions system (docs/design.md § conditions, not yet built):
+decision rules are votable data, effect mechanisms are engine.
 """
 
 from decimal import Decimal, ROUND_DOWN
