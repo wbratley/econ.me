@@ -5,20 +5,23 @@ run_tick():
   1. completes every production process due this tick — outputs are
      credited BEFORE scripts run, so a script can sell fresh goods in this
      tick's auction
-  2. runs active POLICY scripts (attached to an entity, e.g. a central bank)
+  2. auto-issues goods (top-up to each Good's quantity) — also before
+     scripts, so fresh labor is sellable in this tick's auction
+  3. runs active POLICY scripts (attached to an entity, e.g. a central bank)
      first — they see ALL of the previous tick's events
-  3. then runs active BEHAVIOUR scripts, which see only the previous tick's
+  4. then runs active BEHAVIOUR scripts, which see only the previous tick's
      events for their own entity
-  4. persists each successful script's ctx.state mutations
-  5. resolves all queued intents in priority order through the service layer
+  5. persists each successful script's ctx.state mutations
+  6. resolves all queued intents in priority order through the service layer
      (policy intents come first on priority ties), inside a savepoint each,
      so one bad intent cannot poison the rest
-  6. clears every active commodity market in a uniform-price call auction —
+  7. clears every active commodity market in a uniform-price call auction —
      orders placed this tick (by scripts or via the API since the last tick)
      participate in this tick's auction
-  7. records every outcome (applied / rejected / script_error / trade /
-     order_cancelled / auction / process_completed) as an event on a new
-     Tick row — those events feed ctx.events next tick
+  8. decays perishable goods — AFTER the auction, so unsold perishables rot
+  9. records every outcome (applied / rejected / script_error / trade /
+     order_cancelled / auction / process_completed / auto_issue / decay)
+     as an event on a new Tick row — those events feed ctx.events next tick
 
 An intent may only move money out of accounts owned by the entity whose
 script queued it; the service layer additionally enforces monetary-authority
@@ -30,7 +33,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import markets, production
+from . import goods, markets, production
 from .lua_engine import Intent, LuaEngine
 from .models import Entity, Holding, Process, ProcessStatus, Script, ScriptType, Tick
 from .scripting import build_queries, resolve_intent
@@ -47,6 +50,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     prev_events = list(prev.events or []) if prev else []
 
     events: list[dict] = list(production.complete_processes(session, tick_number=number))
+    events.extend(goods.auto_issue(session, tick_number=number))
     intents: list[Intent] = []
 
     # POLICY scripts run first and see every event from the previous tick;
@@ -78,6 +82,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
         events.append(resolve_intent(session, intent))
 
     events.extend(markets.run_auctions(session, tick_number=number))
+    events.extend(goods.apply_decay(session, tick_number=number))
 
     tick = Tick(
         number=number,
