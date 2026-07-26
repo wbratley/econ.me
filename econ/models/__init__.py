@@ -9,10 +9,11 @@ from .market import Market
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
-from .recipe import Recipe, RecipeInput, RecipeOutput
+from .recipe import Recipe, RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock
 from .process import Process, ProcessStatus
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
+from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
 
 __all__ = [
     "Base",
@@ -35,10 +36,16 @@ __all__ = [
     "Recipe",
     "RecipeInput",
     "RecipeOutput",
+    "RecipeRequirement",
+    "RecipeUnlock",
     "Process",
     "ProcessStatus",
     "Good",
     "Need",
     "NeedSatisfier",
     "NeedState",
+    "Technology",
+    "TechnologyPrerequisite",
+    "TechScope",
+    "Unlock",
 ]

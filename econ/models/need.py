@@ -44,7 +44,7 @@ class NeedSatisfier(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     need_id: Mapped[str] = mapped_column(String(36), ForeignKey("needs.id"), nullable=False)
-    symbol: Mapped[str] = mapped_column(String(12), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
 
     need: Mapped["Need"] = relationship("Need", back_populates="satisfiers")
 

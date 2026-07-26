@@ -14,7 +14,7 @@ class Good(Base):
     __tablename__ = "goods"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    symbol: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)  # uppercase, e.g. LABOR
+    symbol: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. LABOR-SMITH
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     decay_per_tick: Mapped[Decimal] = mapped_column(
         Numeric(precision=5, scale=4), nullable=False, default=Decimal("0")

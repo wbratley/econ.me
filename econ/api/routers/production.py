@@ -63,6 +63,8 @@ def create_recipe(
             outputs=_parse_quantities(body.outputs, "outputs"),
             duration_ticks=body.duration_ticks,
             name=body.name,
+            requires=body.requires,
+            unlocks=body.unlocks,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

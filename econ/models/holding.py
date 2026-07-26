@@ -11,7 +11,7 @@ class Holding(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_id: Mapped[str] = mapped_column(String(36), ForeignKey("entities.id"), nullable=False)
-    symbol: Mapped[str] = mapped_column(String(12), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     # invariant quantity >= 0 is enforced in the service layer (adjust_holding)
     quantity: Mapped[Decimal] = mapped_column(
         Numeric(precision=18, scale=4), nullable=False, default=Decimal("0")

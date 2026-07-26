@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey
+from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -28,6 +28,12 @@ class Recipe(Base):
     outputs: Mapped[list["RecipeOutput"]] = relationship(
         "RecipeOutput", back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeOutput.symbol"
     )
+    requirements: Mapped[list["RecipeRequirement"]] = relationship(
+        "RecipeRequirement", back_populates="recipe", cascade="all, delete-orphan"
+    )
+    unlocks: Mapped[list["RecipeUnlock"]] = relationship(
+        "RecipeUnlock", back_populates="recipe", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Recipe {self.code} duration={self.duration_ticks}>"
@@ -38,7 +44,7 @@ class RecipeInput(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
-    symbol: Mapped[str] = mapped_column(String(12), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
 
     recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="inputs")
@@ -49,7 +55,37 @@ class RecipeOutput(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
-    symbol: Mapped[str] = mapped_column(String(12), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
 
     recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="outputs")
+
+
+class RecipeRequirement(Base):
+    """The recipe may only be started by an entity whose unlock set (own +
+    world) contains this technology — the whole of recipe gating."""
+
+    __tablename__ = "recipe_requirements"
+    __table_args__ = (UniqueConstraint("recipe_id", "technology_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    technology_id: Mapped[str] = mapped_column(String(36), ForeignKey("technologies.id"), nullable=False)
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="requirements")
+    technology: Mapped["Technology"] = relationship("Technology")
+
+
+class RecipeUnlock(Base):
+    """Completing the recipe grants this technology (research: the output is
+    an unlock rather than goods)."""
+
+    __tablename__ = "recipe_unlocks"
+    __table_args__ = (UniqueConstraint("recipe_id", "technology_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    technology_id: Mapped[str] = mapped_column(String(36), ForeignKey("technologies.id"), nullable=False)
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="unlocks")
+    technology: Mapped["Technology"] = relationship("Technology")
