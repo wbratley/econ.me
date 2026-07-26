@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from . import services
 from .models import (
-    Account, Entity, Holding, Market, Order, OrderSide, OrderStatus,
+    Account, Entity, EntityStatus, Holding, Market, Order, OrderSide, OrderStatus,
     Process, ProcessStatus, Recipe, RecipeGoodRequirement, Trade,
 )
 from .scripting import _suppressed
@@ -114,6 +114,12 @@ def place_order(
         raise ValueError(f"no market for symbol {str(symbol).upper()!r}")
     if not market.is_active:
         raise MarketInactiveError(f"market {market.symbol} is inactive")
+
+    entity = session.get(Entity, entity_id)
+    if entity is None:
+        raise ValueError("unknown entity")
+    if entity.status != EntityStatus.ACTIVE:
+        raise ValueError("entity is incapacitated")
 
     if isinstance(side, str):
         try:

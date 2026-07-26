@@ -413,7 +413,17 @@ makes needs economically real — but whether spirals are *escapable*
 lives entirely in curve data (decay rates, factors, thresholds).
 Genesis configs must ship with recoverable defaults.
 
-*Status: designed, not built; not yet scheduled in the build order.*
+*Status: shipped (Step 14) — needs declare `condition_symbol` /
+`condition_quantity` and the consumption pass credits the condition scaled
+by the shortfall; goods declare `modifies` (pattern + factor, read at
+exactly the two designed sites: recipe requirement checks and auto-issue
+targets) and `incapacitates_at`; the incapacity pass (after decay, so this
+tick's recovery counts) deactivates the entity, cancels its orders and
+processes, and applies the estate rule — burn / heir / treasury, votable
+in the new `world_settings` table, with condition holdings always burned
+and fallback to burn when no valid recipient exists. Incapacitated
+entities are skipped by every pass and refused by `start_process` and
+`place_order`.*
 
 #### Parcels and facilities (land)
 
@@ -674,11 +684,14 @@ step-commit → PR → squash-merge workflow.
    world layer needed yet.
 7. **Engine extraction** — package split per §5, econ.me becomes consumer
    #1.
-8. **World-layer prototype** — the farming loop on Luanti (or a custom
+8. **Conditions** — unmet-need consequences per § conditions: condition
+   accrual, effective-quantity modifiers, incapacity and the estate rule.
+   Makes demand inelastic before NPC behaviour gets tuned against it.
+9. **World-layer prototype** — the farming loop on Luanti (or a custom
    server) against the engine's intent API: walk, claim a parcel, plant,
    wait ticks, harvest, sell at a market hall. This is the go/no-go test
    of the world/engine boundary and of Luanti itself.
-9. **Platform vertical slice** — one world, proposals + voting + enactment
+10. **Platform vertical slice** — one world, proposals + voting + enactment
    day over both parameter surfaces (engine + world physics); trials; then
    forking and the meta-layer.
 

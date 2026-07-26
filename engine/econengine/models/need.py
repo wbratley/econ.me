@@ -25,6 +25,13 @@ class Need(Base):
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # lower = more essential; consumed first when needs share a satisfying good
+    # Unmet-tick consequence (docs/design.md § conditions): the consumption
+    # pass credits condition_symbol scaled by the shortfall — the memory of
+    # deprivation lives in the holding, NeedState stays instantaneous.
+    condition_symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    condition_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=False, default=Decimal("0")
+    )  # granted per fully-unmet tick; scaled by (1 - satisfaction)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
