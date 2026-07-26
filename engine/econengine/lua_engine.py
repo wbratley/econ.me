@@ -55,6 +55,7 @@ class RunResult:
     state_updates: dict # mutations the script made to ctx.state
     error: str | None   # set if the script raised an error or timed out
     return_value: object = None  # the chunk's return value (validator verdicts)
+    elapsed_ms: float = 0.0  # wall-clock cost of this call, for compute budgets
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,7 @@ class LuaEngine:
                     # the exception type so the error check stays truthy.
                     result["error"] = str(exc) or type(exc).__name__
 
+        call_start = time.monotonic()
         thread = threading.Thread(target=_execute, daemon=True)
         thread.start()
         # The debug hook kills the script at the deadline from inside the VM.
@@ -148,19 +150,21 @@ class LuaEngine:
         # fire; if we hit it the thread is abandoned as a last resort.
         thread.join(timeout=timeout_ms / 1000.0 + 1.0)
         finished["flag"] = True
+        elapsed_ms = (time.monotonic() - call_start) * 1000
 
         if thread.is_alive():
             intents.clear()
-            return RunResult(intents=[], state_updates={}, error=f"script timed out after {timeout_ms}ms")
+            return RunResult(intents=[], state_updates={}, error=f"script timed out after {timeout_ms}ms", elapsed_ms=elapsed_ms)
 
         if result["error"]:
-            return RunResult(intents=[], state_updates={}, error=result["error"])
+            return RunResult(intents=[], state_updates={}, error=result["error"], elapsed_ms=elapsed_ms)
 
         return RunResult(
             intents=list(intents),
             state_updates=result["state_updates"],
             error=None,
             return_value=result["return_value"],
+            elapsed_ms=elapsed_ms,
         )
 
 

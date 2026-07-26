@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from econengine.models import Base, EntityType, Script, ScriptType
 from econengine.services import create_account, create_entity
-from econengine.tick import run_tick
+from econengine.tick import get_compute_budget_ms, run_tick, set_compute_budget_ms
 
 
 @pytest.fixture
@@ -221,3 +221,74 @@ def test_unattached_behaviour_script_skipped(session):
 
     tick = run_tick(session)
     assert tick.events == []
+
+
+# ---------------------------------------------------------------------------
+# Compute budgets (entity_tick_compute_budget_ms, votable data)
+# ---------------------------------------------------------------------------
+
+_SLOW_SOURCE = """
+local s = 0
+for i = 1, 4000 do
+  for j = 1, 4000 do
+    s = s + i * j
+  end
+end
+"""
+
+
+def test_compute_budget_defaults_to_unlimited(session):
+    assert get_compute_budget_ms(session) is None
+
+
+def test_compute_budget_zero_skips_entitys_scripts(world):
+    session, alice, bob, cb, a, b, c = world
+    set_compute_budget_ms(session, 0)
+    make_script(session, "pay-bob", f"ctx.action.transfer('{a.id}', '{b.id}', '100', 'rent')", alice)
+
+    tick = run_tick(session)
+
+    assert tick.events[0]["type"] == "compute_budget_exceeded"
+    assert tick.events[0]["entity_id"] == alice.id
+    assert a.balance == Decimal("1000")
+    assert b.balance == Decimal("0")
+
+
+def test_compute_budget_unset_runs_normally(world):
+    """Control: no world_setting row means unlimited — existing behavior is unaffected."""
+    session, alice, bob, cb, a, b, c = world
+    assert get_compute_budget_ms(session) is None
+    make_script(session, "pay-bob", f"ctx.action.transfer('{a.id}', '{b.id}', '100', 'rent')", alice)
+
+    run_tick(session)
+
+    assert a.balance == Decimal("900")
+    assert b.balance == Decimal("100")
+
+
+def test_compute_budget_accumulates_across_entitys_scripts(world):
+    session, alice, bob, cb, a, b, c = world
+    set_compute_budget_ms(session, 5)
+    make_script(session, "slow", _SLOW_SOURCE, alice, timeout_ms=5000)
+    make_script(session, "pay-bob", f"ctx.action.transfer('{a.id}', '{b.id}', '100', 'rent')", alice)
+
+    tick = run_tick(session)
+
+    kinds = [e["type"] for e in tick.events]
+    assert "compute_budget_exceeded" in kinds
+    assert a.balance == Decimal("1000")  # pay-bob was skipped, never queued
+    assert b.balance == Decimal("0")
+
+
+def test_compute_budget_is_isolated_per_entity(world):
+    """One entity blowing its budget must not affect another entity's scripts this tick."""
+    session, alice, bob, cb, a, b, c = world
+    set_compute_budget_ms(session, 5)
+    make_script(session, "alice-slow", _SLOW_SOURCE, alice, timeout_ms=5000)
+    make_script(session, "cb-issue", f"ctx.action.issue_money('{c.id}', '10', 'note')", cb)
+
+    tick = run_tick(session)
+
+    applied = {(e["entity_id"], e["type"]) for e in tick.events if e.get("status") == "applied"}
+    assert (cb.id, "issue_money") in applied
+    assert c.balance == Decimal("10")
