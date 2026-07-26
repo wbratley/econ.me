@@ -238,7 +238,11 @@ certification recipe requiring ≥ N current skill outputs a JOURNEYMAN
 unlock, which persists while skill decays underneath it — a lapsed
 master is credentialed but rusty, and recipe variants may demand both.
 Skills-as-goods are tradeable only if a world opens a market for them;
-whether you can buy mastery is policy, not mechanism.
+whether you can buy mastery is policy, not mechanism. Skills are also
+the template for a family of entity-attached goods: an *attribute*
+(STRENGTH as a holding, if a world wants one) and a *condition*
+(§ conditions) are the same pattern — non-market holdings distinguished
+only by their data.
 
 **Stochastic recipes.** Failure, catastrophe, and variable yield need
 one genuinely new mechanism: a recipe may declare **outcome branches** —
@@ -318,11 +322,98 @@ production just accumulates inventory and prices collapse. Satisfaction
 scores are also the natural inputs for NPC behaviour scripts ("if food
 satisfaction < 0.5, bid up for BREAD"), for win conditions, and for the
 platform's quality-of-life metrics. *Consequences* of unmet needs
-(productivity loss, migration pressure, death?) are policy — scripts and
-votable parameters — not engine code.
+(productivity loss, migration pressure, death?) get their own treatment
+(§ conditions): their decision rules — thresholds, rates, curves — are
+votable data, but their effect mechanisms cannot be pure script policy,
+because the ownership invariant stops any script docking another
+entity's labor and no script can end an entity.
 
 *Status: shipped (Step 9) — `ctx.needs` exposes each entity's applicable
 needs with current satisfaction to its scripts.*
+
+#### Conditions (consequences of unmet needs)
+
+The original stance — "consequences of unmet needs are policy, never
+engine code" — survives only for its *decision rules*. Three walls stop
+consequences being pure script policy: the **ownership invariant** (no
+script can dock a starving entity's labor or seize an estate — intents
+move only the queueing entity's assets), the absence of any **entity
+lifecycle** (nothing today can end an entity), and satisfaction having
+**no memory** (`NeedState` is rewritten every tick — one missed meal
+reads the same as a hundred ticks of starvation). There is an economic
+wall too: while `need_unmet` is only a log line, a rational script
+ignores needs entirely and the demand sink is voluntary. Consequences
+are what make demand *inelastic* — and the need priority hierarchy only
+means anything when consequences differ by need.
+
+So the split: the engine owns **effect mechanisms**, data owns
+**decision rules** — every threshold, rate, and curve stays votable,
+preserving the spirit of the original stance.
+
+Consequences flow **deficit → condition → effect**, and a **condition
+is a Good** — the third member of the entity-attached family after
+skills and attributes. The indirection decouples causes from effects:
+starvation and plague both grant `COND-WEAK`, and the labor throttle
+only has to read `COND-WEAK`, instead of every cause wiring to every
+effect pairwise.
+
+Most of the system already exists:
+
+- **Accumulation**: on an unmet tick the consumption pass credits the
+  need's declared condition symbol (quantity scaled by the shortfall) —
+  a small extension to the pass, and the only new *cause* mechanism.
+  `NeedState` stays instantaneous; the memory lives in the holding.
+- **Stochastic injury**: an outcome branch that outputs `COND-INJURED`
+  — branches already credit goods.
+- **Natural recovery**: `decay_per_tick`. Note the skill-plateau math
+  runs in reverse: proportional decay against a constant grant means a
+  starving entity's condition converges to grant ÷ decay, so any
+  threshold must sit *below* that equilibrium or it never fires.
+- **Healing as an industry**: a recipe consuming `COND-SICK + MEDICINE`
+  — inputs are consumed atomically at start, so medicine has a market
+  price and doctors emerge as entities holding `SKILL-MEDICINE`.
+- **Non-tradability**: market absence gates it, same as skills — and a
+  condition cannot be dumped on you, because goods move only through
+  auctions and a sale requires the buyer's own bid. (When the world
+  layer's goods-transfer intent lands, non-transferability becomes an
+  explicit Good flag.)
+
+Two effect mechanisms are genuinely new:
+
+- **Effective-quantity modifiers** — what "conditions modify skills or
+  attributes" actually requires. A temporary fever halving your
+  smithing must not draw down the `SKILL-SMITH` holding (that is
+  atrophy's job, and it would be permanent); it needs a computed
+  overlay: a condition Good declares `modifies: {pattern, factor}`, and
+  *effective* quantity = held quantity × applicable factors.
+  Multiplication commutes, so determinism is free. Scope it to exactly
+  two read sites — recipe requirement checks and auto-issue quantity
+  (which is how productivity loss reaches the labor market: auto-issue
+  runs at the top of the tick, so tick N's labor is throttled by tick
+  N−1's conditions with no ordering changes) — and it must not touch
+  markets or consumption.
+- **Incapacity and the estate** — a Good property (`incapacitates_at:
+  50`) plus an entity lifecycle state. Hold ≥ the threshold and the
+  engine deactivates the entity and applies the world's **estate rule**
+  (burn / heir / world treasury — the choice is votable data, the
+  transfer is engine, because no script may move a dead entity's
+  assets). The engine state is *incapacitated*; permanent death is
+  world policy layered on top — at one tick per hour, a week's holiday
+  is 168 ticks of starvation, and worlds decide how harsh to be with
+  player entities.
+
+**Migration stays pure policy**: the pressure signal (satisfaction and
+conditions) already reaches behaviour scripts, and the entity moves
+*itself* once the world layer gives it somewhere to go.
+
+One tuning caution, not a mechanism gap: this system expresses death
+spirals (starving → `COND-WEAK` → less labor → less income → more
+starving). That is correct — it is the poverty trap, and it is what
+makes needs economically real — but whether spirals are *escapable*
+lives entirely in curve data (decay rates, factors, thresholds).
+Genesis configs must ship with recoverable defaults.
+
+*Status: designed, not built; not yet scheduled in the build order.*
 
 #### Parcels and facilities (land)
 
@@ -367,6 +458,42 @@ machinery and facilities; a parcel with running processes bound to it
 cannot change hands. Scripts see `ctx.parcels` and act via parcel-bound
 `start_process` and `transfer_parcel` intents. Land claims stay
 admin/genesis (`grant_parcel`) until grant policy becomes votable.*
+
+#### Fast-forward (tick throughput)
+
+Fast-forward is already solved semantically — and cannot be solved any
+other way. The unpaced invariant (§2) makes it `run_tick` in a loop,
+and *skipping* ticks is impossible by design: the events-hash
+commit-reveal chain and script state make tick N depend on tick N−1,
+so there is no analytical "jump ahead 1000 ticks". Fast-forward is a
+throughput and product-surface question, never a semantics one.
+
+What matters at modelling scale (say 10k ticks × 1k entities):
+
+- **N+1 queries are the hot path.** The consumption pass queries one
+  Holding per (entity, satisfier), auto-issue one per (good, entity),
+  the script-ctx build ~5 per script. Correct-first was right;
+  bulk-load per pass when it matters.
+- **Event storage dominates long runs.** `events_hash` is kept forever
+  (RNG auditability), but only the *previous* tick's event bodies are
+  ever read in the hot path (`ctx.events`) — bodies can carry a
+  retention policy (keep the last K ticks plus sampled snapshots).
+- **Cheap wins already in place**: `LuaEngine` is injectable (one VM
+  across a run); `run_tick` flushes but never commits, so many ticks
+  can share a transaction; pure simulations run on in-memory SQLite.
+- **The modelling product's real feature is snapshot/branch**, not raw
+  speed: run 500 ticks, fork the state, compare two policies — with
+  SQLite a fork is a file copy. Surface: `run_ticks(n)` /
+  run-until-predicate, metric sampling instead of materializing
+  everything, forkable snapshots.
+- **Real-time worlds get catch-up free**: a server down ten hours runs
+  ten ticks on restart; durations are tick-denominated, so wall-clock
+  drift is harmless.
+
+Everything tick-denominated — consequence curves included — behaves
+identically at one tick per hour and ten thousand ticks per second.
+That is the unpaced invariant doing its job; no simulation parameter
+may ever be wall-clock.
 
 #### Later: contracts (recurring obligations)
 
