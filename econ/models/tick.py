@@ -15,6 +15,9 @@ class Tick(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # sha256 of the canonical JSON of `events` — the entropy source for the
+    # next tick's outcome rolls (see econ/rng.py), and an audit commitment
+    events_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     def __repr__(self) -> str:
         return f"<Tick number={self.number} events={len(self.events or [])}>"

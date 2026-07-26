@@ -28,6 +28,11 @@ class Process(Base):
     status: Mapped[ProcessStatus] = mapped_column(
         SAEnum(ProcessStatus), nullable=False, default=ProcessStatus.RUNNING
     )
+    # stochastic recipes only: the audit trail of the completion roll —
+    # outcome_roll = H(prev tick's events_hash ":" process id), outcome_branch
+    # the selected row's position. NULL until completed / for plain recipes.
+    outcome_branch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_roll: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

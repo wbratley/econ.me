@@ -9,7 +9,10 @@ from .market import Market
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
-from .recipe import Recipe, RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock
+from .recipe import (
+    Recipe, RecipeBranch, RecipeBranchOutput, RecipeInput, RecipeOutput,
+    RecipeRequirement, RecipeUnlock,
+)
 from .process import Process, ProcessStatus
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
@@ -34,6 +37,8 @@ __all__ = [
     "OrderStatus",
     "Trade",
     "Recipe",
+    "RecipeBranch",
+    "RecipeBranchOutput",
     "RecipeInput",
     "RecipeOutput",
     "RecipeRequirement",

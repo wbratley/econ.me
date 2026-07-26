@@ -55,6 +55,17 @@ def create_recipe(
 ):
     if production.get_recipe(session, body.code) is not None:
         raise HTTPException(status_code=409, detail="Recipe already exists")
+    branches = []
+    for position, branch in enumerate(body.branches):
+        try:
+            weight = Decimal(branch.weight)
+        except InvalidOperation:
+            raise HTTPException(status_code=422, detail=f"Invalid weight in branch {position}")
+        branches.append({
+            "weight": weight,
+            "outputs": _parse_quantities(branch.outputs, f"branch {position} outputs"),
+            "label": branch.label,
+        })
     try:
         recipe = production.create_recipe(
             session,
@@ -65,6 +76,7 @@ def create_recipe(
             name=body.name,
             requires=body.requires,
             unlocks=body.unlocks,
+            branches=branches,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

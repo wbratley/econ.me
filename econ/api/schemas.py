@@ -174,6 +174,7 @@ class TickRead(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime] = None
     events: list[dict] = []
+    events_hash: Optional[str] = None  # sha256 commitment over `events`
 
     model_config = {"from_attributes": True}
 
@@ -265,12 +266,32 @@ class RecipeItemRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RecipeBranchCreate(BaseModel):
+    weight: str                   # relative odds; need not sum to 1
+    outputs: dict[str, str] = {}  # may be empty: a total-loss branch
+    label: str = ""
+
+
+class RecipeBranchRead(BaseModel):
+    position: int
+    weight: Decimal
+    label: str
+    outputs: list[RecipeItemRead] = []
+
+    @field_serializer("weight")
+    def _weight(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
 class RecipeCreate(BaseModel):
     code: str
     name: str = ""
     duration_ticks: int
     inputs: dict[str, str] = {}   # symbol -> quantity
     outputs: dict[str, str] = {}  # may be empty for pure research recipes
+    branches: list[RecipeBranchCreate] = []  # outcome table; excludes outputs
     requires: list[str] = []      # technology codes gating the recipe
     unlocks: list[str] = []       # technology codes granted on completion
 
@@ -288,6 +309,7 @@ class RecipeRead(BaseModel):
     is_active: bool
     inputs: list[RecipeItemRead] = []
     outputs: list[RecipeItemRead] = []
+    branches: list[RecipeBranchRead] = []
     # the ORM relationship is named `requirements`; the API field is `requires`
     requires: list[str] = Field(default=[], validation_alias=AliasChoices("requires", "requirements"))
     unlocks: list[str] = []
@@ -313,6 +335,8 @@ class ProcessRead(BaseModel):
     started_tick: int
     completes_tick: int
     status: ProcessStatus
+    outcome_branch: Optional[int] = None  # stochastic recipes, once completed
+    outcome_roll: Optional[str] = None    # the audited hash, ditto
     created_at: datetime
 
     model_config = {"from_attributes": True}

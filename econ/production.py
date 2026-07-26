@@ -14,7 +14,20 @@ during tick N (by script intent, or via the API before tick N runs)
 completes at tick N + duration; duration 0 completes immediately at start.
 
 Cancellation forfeits the consumed inputs (refund policy is a future
-votable parameter, not engine mechanism).
+votable parameter, not engine mechanism). The window closes one tick early:
+a process due at tick N can last be cancelled during tick N-1 — once tick
+N-1 has run, its events hash (the seed of every tick-N outcome roll, see
+rng.py) is committed, and allowing cancellation after the seed is knowable
+would let a roller cherry-pick outcomes. The rule applies to every recipe,
+stochastic or not, so the window never depends on recipe shape.
+
+A recipe may instead declare OUTCOME BRANCHES — alternative output sets
+with fixed weights, sampled once at completion (a loot table, not a
+formula: odds are constant and readable). Equipment the dice can eat is a
+catalyst input — consumed at start, re-emitted by the branches that spare
+it. Branches carry goods only; a stochastic research breakthrough is a
+lucky branch yielding a marker good that a duration-0 research recipe
+converts into the unlock — composition, not mechanism.
 
 Recipes are where the tech tree touches the economy (see tech.py). A recipe
 may REQUIRE technologies — start_process refuses unless the entity's unlock
@@ -30,11 +43,11 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import tech
+from . import rng, tech
 from .markets import adjust_holding
 from .models import (
-    Entity, Process, ProcessStatus, Recipe, RecipeInput, RecipeOutput,
-    RecipeRequirement, RecipeUnlock, Tick,
+    Entity, Process, ProcessStatus, Recipe, RecipeBranch, RecipeBranchOutput,
+    RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock, Tick,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -56,11 +69,18 @@ def create_recipe(
     name: str = "",
     requires: list[str] | None = None,
     unlocks: list[str] | None = None,
+    branches: list[dict] | None = None,
 ) -> Recipe:
+    """Branches, if given, are the outcome table: each entry is
+    {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
+    order. A branch's outputs may be empty (total loss). Mutually exclusive
+    with plain outputs."""
     if duration_ticks < 0:
         raise ValueError("duration_ticks must be >= 0")
-    if not outputs and not unlocks:
-        raise ValueError("recipe must declare at least one output or unlock")
+    if branches and outputs:
+        raise ValueError("recipe declares either outputs or branches, not both")
+    if not outputs and not branches and not unlocks:
+        raise ValueError("recipe must declare at least one output, branch, or unlock")
 
     def rows(cls, quantities: dict) -> list:
         out = []
@@ -80,12 +100,25 @@ def create_recipe(
             out.append(cls(technology=technology))
         return out
 
+    branch_rows = []
+    for position, branch in enumerate(branches or []):
+        weight = Decimal(branch.get("weight", 0)).quantize(_QUANTUM)
+        if weight <= 0:
+            raise ValueError(f"branch {position} weight must be positive")
+        branch_rows.append(RecipeBranch(
+            position=position,
+            weight=weight,
+            label=str(branch.get("label", "")),
+            outputs=rows(RecipeBranchOutput, branch.get("outputs") or {}),
+        ))
+
     recipe = Recipe(
         code=code.upper(),
         name=name,
         duration_ticks=duration_ticks,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
+        branches=branch_rows,
         requirements=tech_rows(RecipeRequirement, requires),
         unlocks=tech_rows(RecipeUnlock, unlocks),
     )
@@ -134,9 +167,10 @@ def start_process(session: Session, entity: Entity, recipe_code: str) -> Process
         completes_tick=tick + recipe.duration_ticks,
     )
     session.add(process)
+    session.flush()  # assigns process.id, which seeds a duration-0 outcome roll
     if recipe.duration_ticks == 0:
-        _complete(session, process)
-    session.flush()
+        _complete(session, process, prev_events_hash(session))
+        session.flush()
     return process
 
 
@@ -148,34 +182,43 @@ def cancel_process(session: Session, process_id: str, entity_id: str) -> Process
         raise ValueError("entity does not own process")
     if process.status != ProcessStatus.RUNNING:
         raise ValueError(f"process is {process.status.value}, only running processes can be cancelled")
+    if process.completes_tick <= next_tick_number(session):
+        # the seed of the completing tick's outcome rolls is already
+        # committed (commit-reveal, see rng.py) — no post-seed cancellation
+        raise ValueError("process completes next tick; the cancellation window has closed")
     process.status = ProcessStatus.CANCELLED  # inputs are forfeit
     session.flush()
     return process
+
+
+def prev_events_hash(session: Session) -> str:
+    """The events hash of the latest persisted tick — the entropy every
+    outcome roll of the NEXT tick is seeded from. Falls back to hashing the
+    stored events for rows persisted before the hash column existed, and to
+    the genesis constant before the first tick ever."""
+    prev = session.execute(
+        select(Tick).order_by(Tick.number.desc()).limit(1)
+    ).scalar_one_or_none()
+    if prev is None:
+        return rng.GENESIS_HASH
+    return prev.events_hash or rng.hash_events(list(prev.events or []))
 
 
 def complete_processes(session: Session, tick_number: int) -> list[dict]:
     """Complete every due process; returns process_completed tick events,
     plus one unlocked event per technology actually granted (a research
     completion that duplicates an existing unlock grants — and emits —
-    nothing)."""
+    nothing). Stochastic completions record roll and branch in the event."""
     due = session.execute(
         select(Process)
         .where(Process.status == ProcessStatus.RUNNING, Process.completes_tick <= tick_number)
         .order_by(Process.created_at, Process.id)
     ).scalars().all()
+    seed = prev_events_hash(session) if due else None
     events = []
     for process in due:
-        granted = _complete(session, process)
-        event = {
-            "type": "process_completed",
-            "entity_id": process.entity_id,
-            "process_id": process.id,
-            "recipe": process.recipe.code,
-            "outputs": {o.symbol: str(o.quantity) for o in process.recipe.outputs},
-        }
-        if process.recipe.unlocks:
-            event["unlocks"] = sorted(u.technology.code for u in granted)
-        events.append(event)
+        granted = _complete(session, process, seed)
+        events.append(_completed_event(process, granted))
         for unlock in granted:
             events.append({
                 "type": "unlocked",
@@ -188,13 +231,46 @@ def complete_processes(session: Session, tick_number: int) -> list[dict]:
     return events
 
 
-def _complete(session: Session, process: Process) -> list:
-    """Credit outputs and grant the recipe's unlocks; returns the Unlock rows
+def _completed_event(process: Process, granted: list) -> dict:
+    recipe = process.recipe
+    if recipe.branches:
+        branch = recipe.branches[process.outcome_branch]
+        outputs = branch.outputs
+    else:
+        branch, outputs = None, recipe.outputs
+    event = {
+        "type": "process_completed",
+        "entity_id": process.entity_id,
+        "process_id": process.id,
+        "recipe": recipe.code,
+        "outputs": {o.symbol: str(o.quantity) for o in outputs},
+    }
+    if branch is not None:
+        event["branch"] = branch.position
+        event["roll"] = process.outcome_roll
+        if branch.label:
+            event["branch_label"] = branch.label
+    if recipe.unlocks:
+        event["unlocks"] = sorted(u.technology.code for u in granted)
+    return event
+
+
+def _complete(session: Session, process: Process, seed: str) -> list:
+    """Credit outputs — rolling the outcome branch first if the recipe is
+    stochastic — and grant the recipe's unlocks; returns the Unlock rows
     actually created (technology-code order, already-held ones skipped)."""
-    for item in process.recipe.outputs:
+    recipe = process.recipe
+    outputs = recipe.outputs
+    if recipe.branches:
+        process.outcome_roll = rng.outcome_roll(seed, process.id)
+        process.outcome_branch = rng.weighted_index(
+            process.outcome_roll, [b.weight for b in recipe.branches]
+        )
+        outputs = recipe.branches[process.outcome_branch].outputs
+    for item in outputs:
         adjust_holding(session, process.entity, item.symbol, item.quantity)
     granted = []
-    for u in sorted(process.recipe.unlocks, key=lambda u: u.technology.code):
+    for u in sorted(recipe.unlocks, key=lambda u: u.technology.code):
         unlock = tech.grant_unlock(
             session, process.entity, u.technology, tick_number=process.completes_tick
         )
