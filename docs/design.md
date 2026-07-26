@@ -276,11 +276,19 @@ is unknowable at the final cancellation opportunity, reproducible by any
 auditor afterwards, and needs no oracle — the entropy is the economy
 itself.
 
-*Status: everything here except branch tables and the RNG is data on
-mechanisms already built or planned (requirements, tech tree, decay);
-those two land as their own build-order step. Implementation note:
-symbol columns are `String(12)` today — widen to fit `LABOR-<TRADE>` /
-`SKILL-<TRADE>` before then.*
+*Status: built (build-order step 5). Branch tables live on recipes
+(mutually exclusive with plain outputs; a branch may output nothing —
+total loss), each tick persists `events_hash` — the sha256 commitment
+over its canonical event list — and completion rolls are
+`H(events_hash(N−1), process_id)` exactly as above, stored on the
+process (`outcome_roll`, `outcome_branch`) for audit. The cancellation
+window is enforced one tick early for every recipe: once the tick
+before completion has run, its hash — the roll's seed — is committed,
+so cancellation refuses. One composition note: branches carry goods
+only; a stochastic research breakthrough is a lucky branch yielding a
+marker good (`EUREKA-X`) that a duration-0 research recipe converts
+into the unlock — no branch-level unlock mechanism needed. Skill
+ladders, catalyst equipment, and yield risk are now pure data.*
 
 #### Needs and consumption (demand)
 

@@ -40,7 +40,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import goods, markets, needs, production, tech
+from . import goods, markets, needs, production, rng, tech
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, Holding, Need, NeedState, Process, ProcessStatus, Script, ScriptType, Tick,
@@ -99,6 +99,8 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
         started_at=started_at,
         completed_at=datetime.now(timezone.utc),
         events=events,
+        # commit the event list: this hash seeds next tick's outcome rolls
+        events_hash=rng.hash_events(events),
     )
     session.add(tick)
     session.flush()

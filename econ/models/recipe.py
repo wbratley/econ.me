@@ -28,6 +28,9 @@ class Recipe(Base):
     outputs: Mapped[list["RecipeOutput"]] = relationship(
         "RecipeOutput", back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeOutput.symbol"
     )
+    branches: Mapped[list["RecipeBranch"]] = relationship(
+        "RecipeBranch", back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeBranch.position"
+    )
     requirements: Mapped[list["RecipeRequirement"]] = relationship(
         "RecipeRequirement", back_populates="recipe", cascade="all, delete-orphan"
     )
@@ -59,6 +62,39 @@ class RecipeOutput(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
 
     recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="outputs")
+
+
+class RecipeBranch(Base):
+    """One row of a stochastic recipe's outcome table: an alternative output
+    set with a fixed weight, sampled once at completion. A recipe declares
+    either plain outputs or branches, never both. Odds are constant within a
+    recipe — a player reads the table and knows them exactly."""
+
+    __tablename__ = "recipe_branches"
+    __table_args__ = (UniqueConstraint("recipe_id", "position"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)  # table order; selection walks positions
+    weight: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False, default="")  # e.g. "ruined the blank"
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="branches")
+    outputs: Mapped[list["RecipeBranchOutput"]] = relationship(
+        "RecipeBranchOutput", back_populates="branch", cascade="all, delete-orphan",
+        order_by="RecipeBranchOutput.symbol",
+    )
+
+
+class RecipeBranchOutput(Base):
+    __tablename__ = "recipe_branch_outputs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    branch_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipe_branches.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+
+    branch: Mapped["RecipeBranch"] = relationship("RecipeBranch", back_populates="outputs")
 
 
 class RecipeRequirement(Base):
