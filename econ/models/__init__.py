@@ -12,6 +12,7 @@ from .trade import Trade
 from .recipe import Recipe, RecipeInput, RecipeOutput
 from .process import Process, ProcessStatus
 from .good import Good
+from .need import Need, NeedSatisfier, NeedState
 
 __all__ = [
     "Base",
@@ -37,4 +38,7 @@ __all__ = [
     "Process",
     "ProcessStatus",
     "Good",
+    "Need",
+    "NeedSatisfier",
+    "NeedState",
 ]

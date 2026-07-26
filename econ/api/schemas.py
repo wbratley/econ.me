@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, field_serializer, field_validator
 
 from econ.models.entity import EntityType
 from econ.models.order import OrderSide, OrderStatus
@@ -336,6 +336,56 @@ class GoodRead(BaseModel):
         return str(v)
 
     model_config = {"from_attributes": True}
+
+
+class NeedCreate(BaseModel):
+    code: str
+    name: str = ""
+    entity_type: Optional[EntityType] = None  # null = every entity
+    quantity_per_tick: str
+    priority: int = 0
+    satisfiers: list[str]
+
+
+class NeedUpdate(BaseModel):
+    name: Optional[str] = None
+    quantity_per_tick: Optional[str] = None
+    priority: Optional[int] = None
+    is_active: Optional[bool] = None
+    satisfiers: Optional[list[str]] = None  # replaces the whole list
+
+
+class NeedRead(BaseModel):
+    id: str
+    code: str
+    name: str
+    entity_type: Optional[EntityType] = None
+    quantity_per_tick: Decimal
+    priority: int
+    is_active: bool
+    satisfiers: list[str]
+    created_at: datetime
+
+    @field_validator("satisfiers", mode="before")
+    @classmethod
+    def _satisfier_symbols(cls, v):
+        return [s if isinstance(s, str) else s.symbol for s in v]
+
+    @field_serializer("quantity_per_tick")
+    def _quantity(self, v: Decimal) -> str:
+        return str(v)
+
+    model_config = {"from_attributes": True}
+
+
+class NeedStateRead(BaseModel):
+    need: str
+    satisfaction: Decimal
+    updated_tick: int
+
+    @field_serializer("satisfaction")
+    def _satisfaction(self, v: Decimal) -> str:
+        return str(v)
 
 
 class TradeRead(BaseModel):
