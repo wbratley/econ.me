@@ -1,0 +1,16 @@
+[project]
+name = "econengine"
+version = "0.1.0"
+description = "Economy engine core: models, markets, production, scripting, tick. Session-in only — consumers own DB config and migrations."
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "lupa>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["econengine*"]

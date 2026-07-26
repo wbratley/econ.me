@@ -6,12 +6,12 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.markets import adjust_holding
-from econ.models import Base, EntityType, Script, ScriptType, TechScope
-from econ.production import create_recipe
-from econ.services import create_entity
-from econ.tech import create_technology, entity_unlocks
-from econ.tick import run_tick
+from econengine.markets import adjust_holding
+from econengine.models import Base, EntityType, Script, ScriptType, TechScope
+from econengine.production import create_recipe
+from econengine.services import create_entity
+from econengine.tech import create_technology, entity_unlocks
+from econengine.tick import run_tick
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def test_ctx_exposes_unlocks_and_query(session):
     create_technology(session, "SMITHING")
     alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
     bob = create_entity(session, "Bob", EntityType.INDIVIDUAL)
-    from econ.tech import get_technology, grant_unlock
+    from econengine.tech import get_technology, grant_unlock
     grant_unlock(session, alice, get_technology(session, "FIRE"), tick_number=1)
     grant_unlock(session, alice, get_technology(session, "SMITHING"), tick_number=1)
 

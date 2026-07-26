@@ -7,12 +7,12 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.markets import adjust_holding, create_market, get_holding, place_order
-from econ.models import Base, EntityType, Script, ScriptType
-from econ.parcels import add_deposit, add_facility, create_parcel, get_deposit
-from econ.production import create_recipe, start_process
-from econ.services import create_account, create_entity
-from econ.tick import run_tick
+from econengine.markets import adjust_holding, create_market, get_holding, place_order
+from econengine.models import Base, EntityType, Script, ScriptType
+from econengine.parcels import add_deposit, add_facility, create_parcel, get_deposit
+from econengine.production import create_recipe, start_process
+from econengine.services import create_account, create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture

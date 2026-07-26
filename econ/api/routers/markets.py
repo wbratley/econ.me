@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econ import markets as market_services
+from econengine import markets as market_services
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.schemas import (
     HoldingGrant,
@@ -16,7 +16,7 @@ from econ.api.schemas import (
     OrderRead,
     TradeRead,
 )
-from econ.models import Account, Entity, Holding, Market, Order, Trade, User
+from econengine.models import Account, Entity, Holding, Market, Order, Trade, User
 
 router = APIRouter(tags=["markets"])
 

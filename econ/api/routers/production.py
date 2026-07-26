@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econ import production
+from econengine import production
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.schemas import ProcessCreate, ProcessRead, RecipeCreate, RecipeRead, RecipeUpdate
-from econ.models import Entity, Process, Recipe, User
+from econengine.models import Entity, Process, Recipe, User
 
 router = APIRouter(tags=["production"])
 

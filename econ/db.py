@@ -1,6 +1,9 @@
+"""Product-owned database configuration. The engine core (econengine) is
+session-in only — it never creates engines or sessions; each consumer owns
+its own DB config and migrations."""
 import os
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///econ.db")
 
@@ -10,7 +13,3 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///econ.db")
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
-
-
-class Base(DeclarativeBase):
-    pass

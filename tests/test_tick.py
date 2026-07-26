@@ -3,9 +3,9 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.models import Base, EntityType, Script, ScriptType
-from econ.services import create_account, create_entity
-from econ.tick import run_tick
+from econengine.models import Base, EntityType, Script, ScriptType
+from econengine.services import create_account, create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture

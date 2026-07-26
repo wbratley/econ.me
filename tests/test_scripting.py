@@ -3,10 +3,10 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ.models import Base, EntityType, Script, ScriptType
-from econ.scripting import OperationVetoedError
-from econ.services import create_account, create_entity, deposit, transfer
-from econ.tick import run_tick
+from econengine.models import Base, EntityType, Script, ScriptType
+from econengine.scripting import OperationVetoedError
+from econengine.services import create_account, create_entity, deposit, transfer
+from econengine.tick import run_tick
 
 
 @pytest.fixture

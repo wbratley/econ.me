@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from econ.api.auth import SUPPORTED_PROVIDERS, create_token, oauth
 from econ.api.deps import get_current_user, get_session
 from econ.api.schemas import TokenResponse, UserRead
-from econ.models import User
+from econengine.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

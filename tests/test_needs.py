@@ -5,10 +5,10 @@ from decimal import Decimal
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from econ.markets import adjust_holding, get_holding
-from econ.models import Base, EntityType, NeedState
-from econ.needs import create_need, get_need, run_consumption
-from econ.services import create_entity
+from econengine.markets import adjust_holding, get_holding
+from econengine.models import Base, EntityType, NeedState
+from econengine.needs import create_need, get_need, run_consumption
+from econengine.services import create_entity
 
 
 @pytest.fixture

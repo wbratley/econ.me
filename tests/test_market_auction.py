@@ -3,8 +3,8 @@ from decimal import Decimal
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from econ.markets import adjust_holding, create_market, place_order, run_auctions
-from econ.models import (
+from econengine.markets import adjust_holding, create_market, place_order, run_auctions
+from econengine.models import (
     Base,
     EntityType,
     OrderStatus,
@@ -14,8 +14,8 @@ from econ.models import (
     Transaction,
     TransactionType,
 )
-from econ.services import create_account, create_entity
-from econ.tick import run_tick
+from econengine.services import create_account, create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def sell(session, entity, account, qty, price):
 
 
 def holding_qty(session, entity, symbol="WHEAT"):
-    from econ.markets import get_holding
+    from econengine.markets import get_holding
     h = get_holding(session, entity.id, symbol)
     return h.quantity if h else Decimal("0")
 

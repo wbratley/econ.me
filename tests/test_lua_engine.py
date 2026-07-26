@@ -1,5 +1,5 @@
 import pytest
-from econ.lua_engine import LuaEngine, Intent
+from econengine.lua_engine import LuaEngine, Intent
 
 engine = LuaEngine()
 

@@ -6,12 +6,12 @@ from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, field_serializer, field_validator
 
-from econ.models.entity import EntityType
-from econ.models.order import OrderSide, OrderStatus
-from econ.models.process import ProcessStatus
-from econ.models.transaction import TransactionType
-from econ.models.script import ScriptType
-from econ.models.technology import TechScope
+from econengine.models.entity import EntityType
+from econengine.models.order import OrderSide, OrderStatus
+from econengine.models.process import ProcessStatus
+from econengine.models.transaction import TransactionType
+from econengine.models.script import ScriptType
+from econengine.models.technology import TechScope
 
 
 class EntityCreate(BaseModel):

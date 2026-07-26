@@ -8,17 +8,17 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econ import rng
-from econ.markets import adjust_holding, get_holding
-from econ.models import Base, EntityType, ProcessStatus
-from econ.production import (
+from econengine import rng
+from econengine.markets import adjust_holding, get_holding
+from econengine.models import Base, EntityType, ProcessStatus
+from econengine.production import (
     cancel_process,
     complete_processes,
     create_recipe,
     start_process,
 )
-from econ.services import create_entity
-from econ.tick import run_tick
+from econengine.services import create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture
@@ -230,7 +230,7 @@ def test_intent_pass_cancel_is_the_last_opportunity(session):
     """During tick N-1 itself a script may still cancel a process due at
     tick N — the seed (tick N-1's hash) is not determined until after the
     intent pass, which is exactly the design's commit-reveal boundary."""
-    from econ.models import Script, ScriptType
+    from econengine.models import Script, ScriptType
     smith, _ = make_forge_world(session, duration_ticks=1)
     process = start_process(session, smith, "FORGE_SWORD")  # completes tick 2
     run_tick(session)  # tick 1 — window open during the run

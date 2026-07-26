@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econ import tech
+from econengine import tech
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.schemas import TechnologyCreate, TechnologyRead, TechnologyUpdate, UnlockGrant, UnlockRead
-from econ.models import Entity, Technology, Unlock, User
-from econ.production import next_tick_number
+from econengine.models import Entity, Technology, Unlock, User
+from econengine.production import next_tick_number
 
 router = APIRouter(tags=["tech"])
 
