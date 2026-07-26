@@ -66,6 +66,8 @@ def create_need(
             entity_type=body.entity_type,
             priority=body.priority,
             name=body.name,
+            condition_symbol=body.condition_symbol,
+            condition_quantity=_parse_decimal(body.condition_quantity, "condition_quantity"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -98,6 +100,24 @@ def update_need(
         if not symbols:
             raise HTTPException(status_code=422, detail="need must declare at least one satisfier")
         need.satisfiers = [NeedSatisfier(symbol=s) for s in symbols]
+    if "condition_symbol" in body.model_fields_set or "condition_quantity" in body.model_fields_set:
+        symbol = (
+            body.condition_symbol if "condition_symbol" in body.model_fields_set
+            else need.condition_symbol
+        )
+        quantity = (
+            _parse_decimal(body.condition_quantity, "condition_quantity").quantize(_QUANTUM)
+            if body.condition_quantity is not None
+            else (Decimal("0") if "condition_symbol" in body.model_fields_set and symbol is None
+                  else need.condition_quantity)
+        )
+        if (symbol is None) != (quantity <= 0):
+            raise HTTPException(
+                status_code=422,
+                detail="condition_symbol and a positive condition_quantity go together",
+            )
+        need.condition_symbol = symbol.upper() if symbol else None
+        need.condition_quantity = quantity
     session.commit()
     session.refresh(need)
     return need

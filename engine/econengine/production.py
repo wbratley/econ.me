@@ -61,12 +61,12 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import parcels, rng, tech
+from . import conditions, parcels, rng, tech
 from .markets import InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity
 from .models import (
-    Entity, Parcel, Process, ProcessStatus, Recipe, RecipeBranch, RecipeBranchOutput,
-    RecipeDepositInput, RecipeGoodRequirement, RecipeInput, RecipeOutput,
-    RecipeRequirement, RecipeUnlock, Tick,
+    Entity, EntityStatus, Parcel, Process, ProcessStatus, Recipe, RecipeBranch,
+    RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement, RecipeInput,
+    RecipeOutput, RecipeRequirement, RecipeUnlock, Tick,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -166,11 +166,19 @@ def recipe_needs_parcel(recipe: Recipe) -> bool:
     return bool(recipe.requires_facility or recipe.builds_facility or recipe.deposit_inputs)
 
 
-def _available_quantity(session: Session, entity: Entity, symbol: str) -> Decimal:
-    """Held minus reserved-by-running-processes — what requirements, inputs,
-    and market settlement may draw on."""
+def _available_quantity(
+    session: Session, entity: Entity, symbol: str, factor: Decimal = Decimal("1")
+) -> Decimal:
+    """Held (× the caller's condition factor) minus reserved-by-running-
+    processes — what requirements, inputs, and market settlement may draw
+    on. Only requirement checks pass a factor (an effective-quantity read
+    site, docs/design.md § conditions): a fever halves what your SKILL-SMITH
+    counts for without drawing the holding down. Inputs are consumed at face
+    value — conditions scale capability, not matter."""
     holding = get_holding(session, entity.id, symbol)
     held = holding.quantity if holding else Decimal("0")
+    if factor != 1:
+        held = conditions.effective_quantity(held, factor)
     return held - reserved_quantity(session, entity.id, symbol)
 
 
@@ -188,6 +196,8 @@ def start_process(
         raise ValueError(f"no recipe {str(recipe_code).upper()!r}")
     if not recipe.is_active:
         raise ValueError(f"recipe {recipe.code} is inactive")
+    if entity.status != EntityStatus.ACTIVE:
+        raise ValueError("entity is incapacitated")
 
     missing = sorted(
         r.technology.code for r in recipe.requirements
@@ -222,11 +232,15 @@ def start_process(
                 f"parcel has no free {recipe.requires_facility} facility"
             )
 
+    modifiers = (
+        conditions.held_modifiers(session, entity.id) if recipe.good_requirements else []
+    )
     for req in recipe.good_requirements:
-        available = _available_quantity(session, entity, req.symbol)
+        factor = conditions.effective_factor(session, entity.id, req.symbol, modifiers)
+        available = _available_quantity(session, entity, req.symbol, factor)
         if available < req.quantity:
             raise InsufficientHoldingsError(
-                f"entity {entity.id} has {available} {req.symbol} unreserved, "
+                f"entity {entity.id} has {available} {req.symbol} effective unreserved, "
                 f"recipe {recipe.code} requires {req.quantity}"
             )
 

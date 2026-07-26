@@ -65,6 +65,15 @@ def create_good(
             decay_per_tick=_parse_decimal(body.decay_per_tick, "decay_per_tick"),
             auto_issue_quantity=_parse_decimal(body.auto_issue_quantity, "auto_issue_quantity"),
             auto_issue_entity_type=body.auto_issue_entity_type,
+            modifies_pattern=body.modifies_pattern,
+            modifies_factor=(
+                _parse_decimal(body.modifies_factor, "modifies_factor")
+                if body.modifies_factor is not None else None
+            ),
+            incapacitates_at=(
+                _parse_decimal(body.incapacitates_at, "incapacitates_at")
+                if body.incapacitates_at is not None else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -95,6 +104,32 @@ def update_good(
         good.auto_issue_quantity = quantity
     if "auto_issue_entity_type" in body.model_fields_set:
         good.auto_issue_entity_type = body.auto_issue_entity_type
+    if "modifies_pattern" in body.model_fields_set or "modifies_factor" in body.model_fields_set:
+        pattern = (
+            body.modifies_pattern if "modifies_pattern" in body.model_fields_set
+            else good.modifies_pattern
+        )
+        factor = (
+            _parse_decimal(body.modifies_factor, "modifies_factor").quantize(_QUANTUM)
+            if body.modifies_factor is not None
+            else (None if "modifies_factor" in body.model_fields_set else good.modifies_factor)
+        )
+        if (pattern is None) != (factor is None):
+            raise HTTPException(
+                status_code=422, detail="modifies_pattern and modifies_factor go together"
+            )
+        if factor is not None and factor < 0:
+            raise HTTPException(status_code=422, detail="modifies_factor must be >= 0")
+        good.modifies_pattern = pattern.upper() if pattern else None
+        good.modifies_factor = factor
+    if "incapacitates_at" in body.model_fields_set:
+        if body.incapacitates_at is None:
+            good.incapacitates_at = None
+        else:
+            threshold = _parse_decimal(body.incapacitates_at, "incapacitates_at").quantize(_QUANTUM)
+            if threshold <= 0:
+                raise HTTPException(status_code=422, detail="incapacitates_at must be positive")
+            good.incapacitates_at = threshold
     session.commit()
     session.refresh(good)
     return good

@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, field_serializer, field_validator
 
-from econengine.models.entity import EntityType
+from econengine.models.entity import EntityStatus, EntityType
 from econengine.models.order import OrderSide, OrderStatus
 from econengine.models.process import ProcessStatus
 from econengine.models.transaction import TransactionType
@@ -29,6 +29,7 @@ class EntityUpdate(BaseModel):
     name: Optional[str] = None
     entity_type: Optional[EntityType] = None
     is_monetary_authority: Optional[bool] = None
+    heir_id: Optional[str] = None  # explicit null clears it
 
 
 class AccountRead(BaseModel):
@@ -50,6 +51,9 @@ class EntityRead(BaseModel):
     entity_type: EntityType
     owner_id: Optional[str] = None
     is_monetary_authority: bool = False
+    status: EntityStatus = EntityStatus.ACTIVE
+    incapacitated_tick: Optional[int] = None
+    heir_id: Optional[str] = None
     accounts: list[AccountRead] = []
 
     model_config = {"from_attributes": True}
@@ -358,6 +362,9 @@ class GoodCreate(BaseModel):
     decay_per_tick: str = "0"
     auto_issue_quantity: str = "0"
     auto_issue_entity_type: Optional[EntityType] = None
+    modifies_pattern: Optional[str] = None  # condition: glob over symbols
+    modifies_factor: Optional[str] = None  # condition: effective-quantity multiplier
+    incapacitates_at: Optional[str] = None  # condition: deactivation threshold
 
 
 class GoodUpdate(BaseModel):
@@ -365,6 +372,9 @@ class GoodUpdate(BaseModel):
     decay_per_tick: Optional[str] = None
     auto_issue_quantity: Optional[str] = None
     auto_issue_entity_type: Optional[EntityType] = None  # explicit null clears it
+    modifies_pattern: Optional[str] = None  # set with modifies_factor; explicit null clears both
+    modifies_factor: Optional[str] = None
+    incapacitates_at: Optional[str] = None  # explicit null clears it
 
 
 class GoodRead(BaseModel):
@@ -374,11 +384,18 @@ class GoodRead(BaseModel):
     decay_per_tick: Decimal
     auto_issue_quantity: Decimal
     auto_issue_entity_type: Optional[EntityType] = None
+    modifies_pattern: Optional[str] = None
+    modifies_factor: Optional[Decimal] = None
+    incapacitates_at: Optional[Decimal] = None
     created_at: datetime
 
     @field_serializer("decay_per_tick", "auto_issue_quantity")
     def _decimals(self, v: Decimal) -> str:
         return str(v)
+
+    @field_serializer("modifies_factor", "incapacitates_at")
+    def _optional_decimals(self, v: Optional[Decimal]) -> Optional[str]:
+        return None if v is None else str(v)
 
     model_config = {"from_attributes": True}
 
@@ -390,6 +407,8 @@ class NeedCreate(BaseModel):
     quantity_per_tick: str
     priority: int = 0
     satisfiers: list[str]
+    condition_symbol: Optional[str] = None  # credited on unmet ticks
+    condition_quantity: str = "0"  # per fully-unmet tick, scaled by shortfall
 
 
 class NeedUpdate(BaseModel):
@@ -398,6 +417,8 @@ class NeedUpdate(BaseModel):
     priority: Optional[int] = None
     is_active: Optional[bool] = None
     satisfiers: Optional[list[str]] = None  # replaces the whole list
+    condition_symbol: Optional[str] = None  # set with condition_quantity; explicit null clears both
+    condition_quantity: Optional[str] = None
 
 
 class NeedRead(BaseModel):
@@ -409,6 +430,8 @@ class NeedRead(BaseModel):
     priority: int
     is_active: bool
     satisfiers: list[str]
+    condition_symbol: Optional[str] = None
+    condition_quantity: Decimal = Decimal("0")
     created_at: datetime
 
     @field_validator("satisfiers", mode="before")
@@ -416,11 +439,21 @@ class NeedRead(BaseModel):
     def _satisfier_symbols(cls, v):
         return [s if isinstance(s, str) else s.symbol for s in v]
 
-    @field_serializer("quantity_per_tick")
+    @field_serializer("quantity_per_tick", "condition_quantity")
     def _quantity(self, v: Decimal) -> str:
         return str(v)
 
     model_config = {"from_attributes": True}
+
+
+class EstateRuleUpdate(BaseModel):
+    policy: str  # burn | heir | treasury
+    treasury_entity_id: Optional[str] = None
+
+
+class EstateRuleRead(BaseModel):
+    policy: str
+    treasury_entity_id: Optional[str] = None
 
 
 class NeedStateRead(BaseModel):

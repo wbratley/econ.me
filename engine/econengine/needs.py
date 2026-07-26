@@ -23,17 +23,25 @@ id-ascending.
 Unlike the goods passes, events here are PER ENTITY — exactly one
 need_satisfied or need_unmet event per (need, matching entity) each tick —
 because they are the signal behaviour scripts react to, and behaviour
-scripts see only their own entity's events. Consequences of unmet needs
-are the conditions system (docs/design.md § conditions, not yet built):
-decision rules are votable data, effect mechanisms are engine.
+scripts see only their own entity's events.
+
+Consequences of unmet needs are the conditions system (docs/design.md
+§ conditions; decision rules are votable data, effect mechanisms are
+engine). The cause mechanism lives here: a need may declare a condition
+symbol, and an unmet tick credits it scaled by the shortfall —
+condition_quantity × (1 − satisfaction). NeedState stays instantaneous;
+the memory of deprivation lives in the holding, where decay_per_tick is
+natural recovery and a healing recipe can consume it.
 """
 
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Entity, EntityType, Holding, Need, NeedSatisfier, NeedState
+from .models import (
+    Entity, EntityStatus, EntityType, Holding, Need, NeedSatisfier, NeedState,
+)
 
 _QUANTUM = Decimal("0.0001")
 
@@ -46,6 +54,8 @@ def create_need(
     entity_type: EntityType | None = None,
     priority: int = 0,
     name: str = "",
+    condition_symbol: str | None = None,
+    condition_quantity: Decimal = Decimal("0"),
 ) -> Need:
     quantity_per_tick = Decimal(quantity_per_tick).quantize(_QUANTUM)
     if quantity_per_tick <= 0:
@@ -53,6 +63,11 @@ def create_need(
     symbols = sorted({str(s).upper() for s in satisfiers})
     if not symbols:
         raise ValueError("need must declare at least one satisfier")
+    condition_quantity = Decimal(condition_quantity).quantize(_QUANTUM)
+    if (condition_symbol is None) != (condition_quantity <= 0):
+        raise ValueError(
+            "condition_symbol and a positive condition_quantity go together"
+        )
 
     need = Need(
         code=code.upper(),
@@ -60,6 +75,8 @@ def create_need(
         entity_type=entity_type,
         quantity_per_tick=quantity_per_tick,
         priority=priority,
+        condition_symbol=condition_symbol.upper() if condition_symbol else None,
+        condition_quantity=condition_quantity,
         satisfiers=[NeedSatisfier(symbol=s) for s in symbols],
     )
     session.add(need)
@@ -75,14 +92,16 @@ def get_need(session: Session, code: str) -> Need | None:
 
 def run_consumption(session: Session, tick_number: int) -> list[dict]:
     """Draw down satisfying holdings for every active need and rewrite each
-    matching entity's satisfaction score. Returns one need_satisfied or
-    need_unmet event per (need, entity)."""
+    matching entity's satisfaction score; on an unmet tick, credit the
+    need's declared condition scaled by the shortfall. Returns one
+    need_satisfied or need_unmet event per (need, active entity) —
+    incapacitated entities neither eat nor accumulate."""
     events: list[dict] = []
     needs = session.execute(
         select(Need).where(Need.is_active.is_(True)).order_by(Need.priority, Need.code)
     ).scalars().all()
     for need in needs:
-        query = select(Entity).order_by(Entity.id)
+        query = select(Entity).where(Entity.status == EntityStatus.ACTIVE).order_by(Entity.id)
         if need.entity_type is not None:
             query = query.where(Entity.entity_type == need.entity_type)
         required = need.quantity_per_tick
@@ -103,17 +122,47 @@ def run_consumption(session: Session, tick_number: int) -> list[dict]:
                 consumed += take
             satisfaction = _satisfaction(consumed, required)
             _upsert_state(session, entity.id, need, satisfaction, tick_number)
-            events.append({
+            event = {
                 "type": "need_satisfied" if consumed == required else "need_unmet",
                 "entity_id": entity.id,
                 "need": need.code,
                 "consumed": str(consumed.quantize(_QUANTUM)),
                 "required": str(required),
                 "satisfaction": str(satisfaction),
-            })
+            }
+            if consumed < required and need.condition_symbol is not None:
+                granted = _grant_condition(session, entity, need, satisfaction)
+                if granted > 0:
+                    event["condition"] = need.condition_symbol
+                    event["condition_granted"] = str(granted)
+            events.append(event)
     if events:
         session.flush()
     return events
+
+
+def _grant_condition(
+    session: Session, entity: Entity, need: Need, satisfaction: Decimal
+) -> Decimal:
+    """Credit the need's condition symbol by condition_quantity scaled by
+    the shortfall (1 − satisfaction)."""
+    granted = (need.condition_quantity * (Decimal("1") - satisfaction)).quantize(
+        _QUANTUM, rounding=ROUND_HALF_UP
+    )
+    if granted <= 0:
+        return granted
+    holding = session.execute(
+        select(Holding).where(
+            Holding.entity_id == entity.id, Holding.symbol == need.condition_symbol
+        )
+    ).scalar_one_or_none()
+    if holding is None:
+        holding = Holding(
+            entity_id=entity.id, symbol=need.condition_symbol, quantity=Decimal("0")
+        )
+        session.add(holding)
+    holding.quantity += granted
+    return granted
 
 
 def _satisfaction(consumed: Decimal, required: Decimal) -> Decimal:

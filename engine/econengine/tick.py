@@ -26,10 +26,18 @@ run_tick():
      scores, emitting per-entity need_satisfied / need_unmet events
   9. decays perishable goods — AFTER consumption, so entities eat fresh
      stock and only unsold, uneaten perishables rot
+ 9b. runs the incapacity pass — AFTER decay, so this tick's natural
+     recovery counts before thresholds are read; entities holding an
+     incapacitating condition at threshold are deactivated and the
+     world's estate rule is applied (conditions.py)
  10. records every outcome (applied / rejected / script_error / trade /
      order_cancelled / auction / process_completed / auto_issue /
-     need_satisfied / need_unmet / decay) as an event on a new Tick row —
-     those events feed ctx.events next tick
+     need_satisfied / need_unmet / decay / entity_incapacitated) as an
+     event on a new Tick row — those events feed ctx.events next tick
+
+Incapacitated entities take no part in any pass: no auto-issue, no
+consumption, their scripts do not run, and start_process / place_order
+refuse them.
 
 An intent may only move money out of accounts owned by the entity whose
 script queued it; the service layer additionally enforces monetary-authority
@@ -42,11 +50,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import goods, markets, needs, parcels, production, rng, tech
+from . import conditions, goods, markets, needs, parcels, production, rng, tech
 from .lua_engine import Intent, LuaEngine
 from .models import (
-    Entity, Holding, Need, NeedState, Parcel, Process, ProcessStatus, Script,
-    ScriptType, Tick,
+    Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
+    ProcessStatus, Script, ScriptType, Tick,
 )
 from .scripting import build_queries, resolve_intent
 
@@ -71,7 +79,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     for script_type in (ScriptType.POLICY, ScriptType.BEHAVIOUR):
         for script in _tick_scripts(session, script_type):
             entity = session.get(Entity, script.entity_id)
-            if entity is None:
+            if entity is None or entity.status != EntityStatus.ACTIVE:
                 continue
             entity_events = (
                 prev_events if script_type == ScriptType.POLICY
@@ -97,6 +105,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     events.extend(markets.run_auctions(session, tick_number=number))
     events.extend(needs.run_consumption(session, tick_number=number))
     events.extend(goods.apply_decay(session, tick_number=number))
+    events.extend(conditions.run_incapacity(session, tick_number=number))
 
     tick = Tick(
         number=number,
@@ -201,6 +210,7 @@ def _entity_needs(session: Session, entity: Entity) -> list[dict]:
             "quantity_per_tick": str(n.quantity_per_tick),
             "satisfiers": [s.symbol for s in n.satisfiers],
             "satisfaction": str(states.get(n.id, Decimal("0"))),
+            "condition": n.condition_symbol,
         }
         for n in applicable
     ]

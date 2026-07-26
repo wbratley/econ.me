@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from econengine import services
+from econengine import conditions, services
 from econ.api.deps import get_session, require_admin
-from econ.api.schemas import AdminEntityCreate, EntityRead, EntityUpdate, UserRead, UserUpdate
+from econ.api.schemas import (
+    AdminEntityCreate, EntityRead, EntityUpdate, EstateRuleRead, EstateRuleUpdate,
+    UserRead, UserUpdate,
+)
 from econengine.models import Entity, User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -43,6 +46,13 @@ def update_entity(
         entity.entity_type = body.entity_type
     if body.is_monetary_authority is not None:
         entity.is_monetary_authority = body.is_monetary_authority
+    if "heir_id" in body.model_fields_set:
+        if body.heir_id is not None:
+            if body.heir_id == entity.id:
+                raise HTTPException(status_code=422, detail="Entity cannot be its own heir")
+            if session.get(Entity, body.heir_id) is None:
+                raise HTTPException(status_code=422, detail="Unknown heir entity")
+        entity.heir_id = body.heir_id
     session.commit()
     session.refresh(entity)
     return entity
@@ -59,6 +69,34 @@ def delete_entity(
         raise HTTPException(status_code=404, detail="Entity not found")
     session.delete(entity)
     session.commit()
+
+
+@router.get("/estate-rule", response_model=EstateRuleRead)
+def get_estate_rule(session: Session = Depends(get_session), _: User = Depends(require_admin)):
+    rule = conditions.get_estate_rule(session)
+    return EstateRuleRead(
+        policy=rule.get("policy", "burn"),
+        treasury_entity_id=rule.get("treasury_entity_id"),
+    )
+
+
+@router.put("/estate-rule", response_model=EstateRuleRead)
+def set_estate_rule(
+    body: EstateRuleUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    try:
+        setting = conditions.set_estate_rule(
+            session, body.policy, treasury_entity_id=body.treasury_entity_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    session.commit()
+    return EstateRuleRead(
+        policy=setting.value["policy"],
+        treasury_entity_id=setting.value.get("treasury_entity_id"),
+    )
 
 
 @router.get("/users", response_model=list[UserRead])
