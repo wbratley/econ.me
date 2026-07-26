@@ -18,10 +18,16 @@ run_tick():
   7. clears every active commodity market in a uniform-price call auction —
      orders placed this tick (by scripts or via the API since the last tick)
      participate in this tick's auction
-  8. decays perishable goods — AFTER the auction, so unsold perishables rot
-  9. records every outcome (applied / rejected / script_error / trade /
-     order_cancelled / auction / process_completed / auto_issue / decay)
-     as an event on a new Tick row — those events feed ctx.events next tick
+  8. runs the consumption pass — AFTER the auction, so goods bought this
+     tick are eaten this tick and sell orders settle before anything is
+     eaten; draws down need-satisfying holdings and rewrites satisfaction
+     scores, emitting per-entity need_satisfied / need_unmet events
+  9. decays perishable goods — AFTER consumption, so entities eat fresh
+     stock and only unsold, uneaten perishables rot
+ 10. records every outcome (applied / rejected / script_error / trade /
+     order_cancelled / auction / process_completed / auto_issue /
+     need_satisfied / need_unmet / decay) as an event on a new Tick row —
+     those events feed ctx.events next tick
 
 An intent may only move money out of accounts owned by the entity whose
 script queued it; the service layer additionally enforces monetary-authority
@@ -29,13 +35,16 @@ rules, balance/currency invariants, and VALIDATOR scripts.
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import goods, markets, production
+from . import goods, markets, needs, production
 from .lua_engine import Intent, LuaEngine
-from .models import Entity, Holding, Process, ProcessStatus, Script, ScriptType, Tick
+from .models import (
+    Entity, Holding, Need, NeedState, Process, ProcessStatus, Script, ScriptType, Tick,
+)
 from .scripting import build_queries, resolve_intent
 
 
@@ -82,6 +91,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
         events.append(resolve_intent(session, intent))
 
     events.extend(markets.run_auctions(session, tick_number=number))
+    events.extend(needs.run_consumption(session, tick_number=number))
     events.extend(goods.apply_decay(session, tick_number=number))
 
     tick = Tick(
@@ -138,7 +148,37 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
                 .order_by(Process.created_at, Process.id)
             ).scalars()
         ],
+        "needs": _entity_needs(session, entity),
         "events": entity_events,
         "state": dict(script.state or {}),
         "queries": build_queries(session),
     }
+
+
+def _entity_needs(session: Session, entity: Entity) -> list[dict]:
+    """Every active need that applies to the entity, with its current
+    satisfaction ("0" before the first consumption pass)."""
+    applicable = session.execute(
+        select(Need)
+        .where(
+            Need.is_active.is_(True),
+            (Need.entity_type.is_(None)) | (Need.entity_type == entity.entity_type),
+        )
+        .order_by(Need.priority, Need.code)
+    ).scalars().all()
+    states = {
+        s.need_id: s.satisfaction
+        for s in session.execute(
+            select(NeedState).where(NeedState.entity_id == entity.id)
+        ).scalars()
+    }
+    return [
+        {
+            "code": n.code,
+            "priority": n.priority,
+            "quantity_per_tick": str(n.quantity_per_tick),
+            "satisfiers": [s.symbol for s in n.satisfiers],
+            "satisfaction": str(states.get(n.id, Decimal("0"))),
+        }
+        for n in applicable
+    ]

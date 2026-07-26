@@ -273,6 +273,19 @@ The engine runs a **consumption pass** each tick: decrement satisfying
 holdings, update a per-need satisfaction score on the entity, emit
 `need_satisfied` / `need_unmet` events.
 
+The pass runs **after the auction and before decay**: after the auction so
+goods bought this tick are eaten this tick (the wage→bread→dinner loop
+closes in one tick) and declared sell orders settle against the holdings
+that backed them before anything is eaten — the same reason decay is
+post-auction; before decay so entities eat fresh stock and only unsold,
+uneaten perishables rot. Within the pass all ordering is explicit
+(determinism): needs by priority (lower = more essential, so when two
+needs share a satisfying good the essential one draws first), satisfiers
+symbol-ascending, entities id-ascending. Satisfaction is consumed ÷
+required, rounded down so 1.0 means fully met. Unlike the goods passes,
+events are **per entity** — they are the signal behaviour scripts react
+to, and behaviour scripts see only their own entity's events.
+
 Needs are what make the economy circulate — without a demand sink,
 production just accumulates inventory and prices collapse. Satisfaction
 scores are also the natural inputs for NPC behaviour scripts ("if food
@@ -280,6 +293,9 @@ satisfaction < 0.5, bid up for BREAD"), for win conditions, and for the
 platform's quality-of-life metrics. *Consequences* of unmet needs
 (productivity loss, migration pressure, death?) are policy — scripts and
 votable parameters — not engine code.
+
+*Status: shipped (Step 9) — `ctx.needs` exposes each entity's applicable
+needs with current satisfaction to its scripts.*
 
 #### Parcels and facilities (land)
 
