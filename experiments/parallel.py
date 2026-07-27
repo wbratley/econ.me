@@ -29,19 +29,29 @@ from .inequality.scenario import ScenarioConfig
 @dataclass
 class Job:
     """One scenario run. `label` identifies it in progress output; `kwargs`
-    are passed through to run_scenario()."""
+    are passed through to run_scenario().
+
+    `reduce` is an optional module-level function applied to the result
+    *inside the worker*, so only what it returns is pickled back. A 400-tick
+    result carries ~0.8 MB of snapshots; a summary row is a few hundred bytes,
+    and a large sweep would otherwise haul hundreds of megabytes across the
+    process boundary and hold it all in the parent. It must be importable by
+    name (a module-level def, not a lambda or closure) to survive pickling.
+    """
     label: str
     config: ScenarioConfig
     ticks: int
     kwargs: dict[str, Any]
+    reduce: Callable[[dict], Any] | None = None
 
 
-def _run_job(job: Job) -> dict:
+def _run_job(job: Job) -> Any:
     # Imported inside the worker: the parent may have been forked mid-run, and
     # this keeps the worker's engine/session construction entirely its own.
     from .inequality.run import run_scenario
 
-    return run_scenario(job.config, job.ticks, progress=False, **job.kwargs)
+    result = run_scenario(job.config, job.ticks, progress=False, **job.kwargs)
+    return job.reduce(result) if job.reduce else result
 
 
 def default_workers(n_jobs: int) -> int:

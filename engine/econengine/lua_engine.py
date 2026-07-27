@@ -227,11 +227,28 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     state_tbl   = _to_lua_table(ctx.get("state", {}))
 
     # --- queries (caller-provided callables; missing ones return nil) ---
+    #
+    # Results are converted on the way out: a query returning a Python list or
+    # dict would otherwise arrive in Lua as an opaque Python object, where `#`
+    # and ipairs() do not work and indexing is 0-based — a trap for any script
+    # author, and the reason scalar-only was the de facto rule here. Converting
+    # lets a query return a row set (ctx.query.holders) and have it behave like
+    # any other Lua table.
+    def _wrap_result(fn):
+        def wrapper(*args):
+            value = fn(*args)
+            if isinstance(value, dict):
+                return _to_lua_table(value)
+            if isinstance(value, list):
+                return _to_lua_list(value)
+            return value
+        return wrapper
+
     query_tbl = lua.table()
     for name in ("balance", "total_supply", "market_price", "holding"):
-        query_tbl[name] = queries.get(name) or (lambda *args: None)
+        query_tbl[name] = _wrap_result(queries[name]) if name in queries else (lambda *a: None)
     for name, fn in queries.items():
-        query_tbl[name] = fn
+        query_tbl[name] = _wrap_result(fn)
 
     # --- action stubs (collect intents) ---
     action_tbl = lua.table()

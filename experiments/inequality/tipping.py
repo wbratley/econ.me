@@ -80,6 +80,16 @@ def summarise(result: dict) -> dict:
         "cond_weak_at_100": next(
             (s["cond_weak_total"] for s in snapshots if s["tick"] >= 100), 0.0),
         "first_death_tick": deaths[0][0] if deaths else None,
+        # Death count at fixed ticks, so a run's mortality TRAJECTORY survives
+        # summarising. Without these, comparing a 200-tick result against a
+        # 400-tick one cannot separate "the intervention stopped working" from
+        # "we measured at a different time" — which is exactly the ambiguity
+        # the n=100 sweep hit, because reducing in the worker (parallel.Job)
+        # discards the snapshots these are read from.
+        **{
+            f"deaths_at_{t}": sum(1 for d, _ in deaths if d is not None and d <= t)
+            for t in (100, 150, 200, 250, 300)
+        },
         # H2 instruments: how much land stopped producing, and whether the
         # early deaths were the people who owned it.
         "idle_fields_final": last["farmland"]["idle"],
@@ -94,6 +104,17 @@ def summarise(result: dict) -> dict:
         "food_at_100": next(
             (s["produced"].get("FOOD", 0.0) for s in snapshots if s["tick"] >= 100), 0.0),
         "food_final": last["produced"].get("FOOD", 0.0),
+        # Capital-ownership instruments. .get() throughout because snapshots
+        # taken before metrics grew a "capital" block have no such key, and
+        # old result JSONs should still summarise rather than crash.
+        "firm_cash_final": last.get("capital", {}).get("firm_cash_total", 0.0),
+        "firms_solvent_final": last.get("capital", {}).get("firms_solvent", 0),
+        # Dividends are a per-tick flow and snapshots are every metrics_every
+        # ticks, so this is a SAMPLE of the flow, not the cumulative total --
+        # comparable across arms at equal sampling, not a payout figure.
+        "dividends_sampled": sum(
+            s.get("capital", {}).get("dividends_paid", 0.0) for s in snapshots
+        ),
     }
 
 
