@@ -1,8 +1,9 @@
 # Fielding inequality experiment — progress notes
 
-Status: pricing rebuilt, scenario recalibrated, 5-variant matrix re-run
-against it, and seed-swept — which killed one of the matrix's headline
-findings (see "Seed sweep" below).
+Status: pricing rebuilt, scenario recalibrated, and runs finally made
+reproducible — which killed both the matrix's headline finding and the
+follow-up theory built on it. Current findings are in "Variance is the
+actual result" below.
 The earlier findings table has been deleted rather than annotated: it
 predated bugs 6, 7 and 8, and every number in it was an artifact of a price
 system that could not converge.
@@ -223,9 +224,12 @@ exactly the same 20 people. The earlier result was an artifact: with prices
 unable to converge, nothing that depended on being able to *afford* food
 could have been measured in the first place.
 
-## Seed sweep: one of those columns does not survive it
+## Seed sweep (superseded — see "Reproducibility" below)
 
-Three further seeds per variant, same settings. Incapacitated out of 30:
+Three further runs per variant, same settings. These were labelled by seed
+but were not actually controlled by it — kept here because the reasoning
+they prompted is what uncovered the reproducibility problem. Incapacitated
+out of 30:
 
 | Variant | seed 0 | seed 1 | seed 2 | seed 3 |
 |---|---|---|---|---|
@@ -237,32 +241,117 @@ The baseline is a stable, reproducible outcome — a 30-person economy on this
 much land kills about half of it, every time. Flat tax reliably improves on
 that: its worst draw (11) still beats the baseline's best (15).
 
-Estate → treasury does not have a mean worth quoting. It is **bimodal**:
-either near-total rescue (1–2 deaths) or no better than doing nothing
-(14–17), with nothing in between across four seeds. Gini tracks it exactly
-(0.158 to 0.507). Seed 0 was one side of that split, and the "estate rules
-outperform income tax" reading it suggested is not supported.
-
-The bimodality is the interesting result here, not a nuisance to average
-away. The plausible mechanism — untested — is a tipping point in
-`COND-WEAK`: the condition halves labor productivity, so once enough people
-carry it the economy cannot grow its way back, and whether an estate
-windfall lands before or after that threshold decides the whole run. That
-predicts the split should track *when* the first deaths occur rather than
-how much money moves, which is a checkable claim.
+This looked bimodal — either near-total rescue or no better than doing
+nothing, nothing in between — and that reading drove the next round of work.
+Twelve reproducible replicates later it is not bimodal at all, and the flat
+tax turns out to have the same tail. See below.
 
 **Still-live caveats.** One population size, one field count. The baseline is
 still degrading at tick 200 (hunger 0.543 and falling), so these may be
 points on a slope rather than steady states. Progressive tax ending more
-unequal than flat tax while feeding people better is unexplained.
+unequal than flat tax while feeding people better is unexplained. And every
+number in this section predates reproducibility, so none of it reproduces.
+
+## Reproducibility: the seed never controlled the run
+
+`ScenarioConfig.seed` only ever controlled *genesis* — who starts rich, who
+owns land, which firm bids how hard. Nothing stochastic during a run was
+seeded, and an identical config gave a different answer every time (measured:
+same seed, two runs, 7 vs 2 people incapacitated; food-produced series
+diverging from tick 3).
+
+The chain is `rng.outcome_roll() = sha256(prev tick's event hash + ":" +
+process_id)`, and `Process.id` is a `uuid.uuid4()` — so every harvest outcome
+came from fresh OS entropy.
+
+**This is not an engine defect.** `rng.py` guarantees that an auditor holding
+the persisted rows can recompute every roll, and that a roller cannot
+cherry-pick outcomes — which *requires* the process ID be unpredictable
+before the last cancellation opportunity. That is auditability. Experiment
+reproducibility is a different property, and the harness needed it and never
+had it. Making IDs deterministic in the engine would trade the commit-reveal
+away for every real deployment in order to serve a test harness.
+
+`experiments/determinism.py` seeds `uuid.uuid4` for the duration of a run
+instead. Engine untouched; same seed now reproduces bit-for-bit, different
+seeds still differ. Everything below this line is reproducible; everything
+above it, including the matrix table, is not — those runs stand as
+independent replicates, not as reproducible individual results.
+
+## Testing the tipping-point theory: both hypotheses refuted
+
+The theory was that `estate → treasury`'s bimodality came from a tipping
+point in `COND-WEAK` (H1), with a rival explanation found while instrumenting
+— that `_apply_estate` moves parcels to a Treasury which has no production
+script, so inherited fields stop growing food permanently (H2).
+
+**The premise did not survive replication.** Twelve reproducible replicates
+of `estate → treasury` give 0, 1, 1, 1, 1, 2, 3, 4, 6, 8, 16, 23 — a
+continuous right-skewed spread, not two modes. The "either ~1 or ~15, nothing
+in between" pattern was four uncontrolled draws landing at the ends.
+
+Both hypotheses fail on their own predictions:
+
+- **H1** predicted the split tracks *when* hunger first bites. It bites at
+  tick 5 in all twelve runs, zero variance — the instrument is a constant.
+- **H2** predicted idle farmland drives collapse. Idle fields are 0 in eleven
+  of twelve runs, and the twelfth reaches 2 only *after* 23 deaths. The arrow
+  points the other way: deaths idle the land, not the reverse.
+
+What deaths do track, across the twelve:
+
+| Instrument | r with deaths |
+|---|---|
+| Accumulated `COND-WEAK` at tick 100 | **+0.90** |
+| Number of people carrying any `COND-WEAK` | **−0.59** |
+| Food produced at tick 100 | −0.69 |
+| When hunger first bit | 0.00 (no variance) |
+| Idle farmland | 0.00 (no variance) |
+
+The sign flip is the interesting part. More people going hungry predicts
+*fewer* deaths; more accumulated hunger predicts more. Incapacitation is a
+per-person threshold (30 units of `COND-WEAK`, which never decays), so the
+same total shortfall spread across twenty people kills nobody and
+concentrated onto five kills five. What matters is the distribution of
+deprivation, not its level — which is a distributional finding, not a
+tipping point.
+
+Caveat: with carrier counts spanning only 14–20, total and per-carrier
+`COND-WEAK` are near-collinear (r = +0.90 vs +0.90), so this separates the
+*sign* of the two effects convincingly but not their independent magnitudes.
+
+## Variance is the actual result, and it is not policy-specific
+
+Twelve reproducible replicates per condition, incapacitated out of 30:
+
+| Condition | mean | sd | median | range |
+|---|---|---|---|---|
+| No tax | 13.8 | 2.1 | 14.0 | 8–17 |
+| Flat tax 10% | 6.0 | 6.3 | 4.5 | 0–24 |
+| Estate → treasury | 5.5 | 6.8 | 2.5 | 0–23 |
+
+Doing nothing is the *reliable* option: a dependable ~14 deaths, sd 2.1.
+Either intervention usually does far better — medians of 2.5 and 4.5 — but
+both carry a tail that is worse than doing nothing at all. The two
+interventions are not distinguishable from each other at this n; an earlier
+reading that the estate rule was uniquely risky was drawn from seven
+replicates of the flat tax before its own bad tail showed up.
+
+**Seed 7 is worth its own investigation.** It is unremarkable under no tax
+(14 deaths, dead-on the baseline) and catastrophic under *both* interventions
+(24 and 23). Redistribution reliably makes that particular economy much
+worse, and it now reproduces exactly, so the mechanism is directly
+inspectable.
 
 ## Not yet done
 
 - Establish whether the matrix numbers are steady states or points on a
   slope — the baseline is still degrading at tick 200. Needs a 400+ tick run.
-- Test the tipping-point explanation for the estate → treasury bimodality:
-  does the split track *when* the first deaths occur rather than how much
-  money moves? Needs the per-tick snapshots the runs already save.
+- Work out why seed 7 collapses under redistribution and not without it.
+  Reproducible, so the tick-by-tick mechanism is directly inspectable.
+- Separate "how much deprivation" from "how concentrated" properly — they are
+  near-collinear at this carrier count, so it needs conditions that move the
+  number of people affected independently of the total.
 - Population and field-count sensitivity (seeds are now swept; these are
   not). The calibration sweep in particular was a single seed.
 - Understand why progressive tax ends more unequal than flat tax while
