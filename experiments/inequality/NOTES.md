@@ -378,6 +378,13 @@ Caveat: with carrier counts spanning only 14–20, total and per-carrier
 
 ## Variance is the actual result, and it is not policy-specific
 
+**Superseded — read "Redistribution delays deaths" below first.** Everything
+in this section is measured at tick 200 and replicates at higher n, but tick
+200 is mid-transition: the effect it reports is a delay, not a rescue, and
+most of the variance it reports is variance in *when* a run dies rather than
+*whether*. Kept because the numbers are sound and the reasoning is what
+prompted the trajectory measurement that corrected it.
+
 Twelve reproducible replicates per condition, incapacitated out of 30:
 
 | Condition | mean | sd | median | range |
@@ -398,6 +405,62 @@ replicates of the flat tax before its own bad tail showed up.
 (24 and 23). Redistribution reliably makes that particular economy much
 worse, and it now reproduces exactly, so the mechanism is directly
 inspectable.
+
+## Redistribution delays deaths; it does not prevent them
+
+The headline result above ("either intervention usually does far better —
+medians of 2.5 and 4.5") is **correct at tick 200 and gone by tick 400**.
+Deaths out of 30, mean, from 30 seeds per arm measured at fixed ticks within
+the same runs:
+
+| arm | t100 | t150 | t200 | t250 | t300 | t400 |
+|---|---|---|---|---|---|---|
+| tax_none | 0.13 | 4.60 | **13.73** | 15.20 | 15.30 | 15.53 |
+| tax_flat | 1.07 | 1.57 | **4.63** | 12.30 | 14.17 | 15.77 |
+| estate_treasury | 1.07 | 1.63 | **4.70** | 12.13 | 14.53 | 15.80 |
+
+Significance of tax_none vs tax_flat decays with the effect: p=0.0000 at
+t200, 0.0049 at t250, 0.156 at t300, **0.75 at t400**. At n=100 and 400
+ticks all three arms sit at 14.9–15.8 with no pair surviving correction for
+three comparisons.
+
+**The old numbers were not wrong.** At tick 200 they replicate almost
+exactly — old n=12 gave none 13.8 (sd 2.1) / flat 6.0 (6.3) / estate 5.5
+(6.8); this run at n=30 gives none 13.7 (2.0) / flat 4.6 (5.6) / treasury
+4.7 (6.0). What was wrong was reading a measurement taken mid-transition as
+a steady state. Every arm converges on ~15.5 deaths; redistribution buys
+about 50–100 ticks of delay, and buys them at the cost of a slightly earlier
+*first* death (95.2 vs 141.7, p<0.0001) because taxing subsistence-margin
+households pushes them under sooner.
+
+### "Variance is the actual result" was mostly transition timing
+
+sd of the death count by tick:
+
+| arm | t100 | t150 | t200 | t250 | t300 | t400 |
+|---|---|---|---|---|---|---|
+| tax_none | 0.57 | **5.70** | 2.03 | 1.35 | 1.64 | 1.78 |
+| tax_flat | 1.74 | 4.26 | **5.56** | 5.09 | 3.96 | 3.54 |
+
+Each arm's sd peaks exactly when that arm is passing through its die-off and
+collapses afterwards. The intervention arms' famous sd of 6.3–6.8 was tick
+200 landing in the middle of *their* transition while the baseline had
+already finished its own — so a run running slightly fast or slow showed a
+wildly different death count. It was variance in *when*, misread as variance
+in *whether*. At t400, sd is 1.8 (none) against 3.5 (flat): the
+interventions remain genuinely more variable, but by a factor of two, not
+three, and around an identical mean.
+
+### It lines up with the firm sector going bankrupt
+
+Firm cash hits 771 with one solvent firm at tick 150 (see below), and
+tax_none's deaths go 4.6 → 13.7 across exactly that window. Redistribution
+shifts the same die-off to t200 → t250. The mass-mortality event tracks the
+exhaustion of firm capital, and redistribution postpones it by financing
+consumption for a while longer. That makes the firm-margin question the
+central open issue in this experiment rather than a modelling nicety: as
+built, the economy is a battery discharging, and every policy result so far
+is a measurement of how fast different policies drain it.
 
 ## Firms have no profit margin, and decapitalise
 
@@ -490,8 +553,9 @@ dividend reads it every payout period. Two notes:
 
 ## Not yet done
 
-- Establish whether the matrix numbers are steady states or points on a
-  slope — the baseline is still degrading at tick 200. Needs a 400+ tick run.
+- ~~Establish whether the matrix numbers are steady states or points on a
+  slope.~~ **Done**: they were points on a slope, and the slope was the
+  whole result. See "Redistribution delays deaths" above.
 - Work out why seed 7 collapses under redistribution and not without it.
   Reproducible, so the tick-by-tick mechanism is directly inspectable.
 - Separate "how much deprivation" from "how concentrated" properly — they are
