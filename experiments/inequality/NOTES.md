@@ -462,6 +462,12 @@ central open issue in this experiment rather than a modelling nicety: as
 built, the economy is a battery discharging, and every policy result so far
 is a measurement of how fast different policies drain it.
 
+**Followed up and confirmed causally** — giving firms a margin moves the
+capital-exhaustion point ~100 ticks later and moves the die-off with it, then
+converges to the same place anyway. See "Firms with a margin" below. The
+battery framing survives; the guess that firm pricing was the battery does
+not.
+
 ## Firms have no profit margin, and decapitalise
 
 Found while building shareholding: there was nothing for a firm to pay a
@@ -495,6 +501,117 @@ Two consequences that reach beyond shares:
   draining battery rather than a going concern. Giving firms a markup would
   fix it and would recalibrate the entire economy, so it is left as an open
   modelling decision, not silently patched.
+
+**Resolved — the markup was built and swept. It does not fix it.** See
+"Firms with a margin" below; the prediction in the second bullet was wrong,
+and interestingly wrong.
+
+## Firms with a margin: the same result again, one level down
+
+`firm_margin` is now a scenario parameter (default 0, so every result above
+reproduces unchanged — verified: seed 0, 400 ticks gives 20 incapacitated /
+gini 0.823 against the 20 / 0.8225 recorded in `sweep_n100_t400.json`).
+
+**The wedge is symmetric, and it has to be.** The firm withholds the margin
+from its labour bid (`× (1 - m)`) and adds it back to its ask (`÷ (1 - m)`).
+A one-sided markup does not just create a margin — it makes the price level
+drift forever, because nothing in this economy pins the price level. Mark
+only the bid down and the wage settles at `y·P·(1-m)`, so the ask becomes
+`w/y = P·(1-m)` and next tick's price is `(1-m)` times this one's: geometric
+deflation, compounding. Mark only the ask up and it inflates the same way.
+With both, the fixed point is `ask = w/y/(1-m) = P` — unchanged — while
+labour cost per unit of output is `P·(1-m)`, a gross margin of exactly `m` on
+revenue. The markup is applied in the bid loop rather than per tranche, so a
+tranche added later cannot silently opt out of it.
+
+### It works, mechanically
+
+30 seeds per arm, 400 ticks, 30 individuals, no tax, burn estate — arms
+differ *only* in the margin (`results/sweep_margin_n30_t400.json`). Mean
+firm cash (genesis endowment: 5 × 3,000 = 15,000):
+
+| arm | t50 | t100 | t150 | t200 | t300 | final |
+|---|---|---|---|---|---|---|
+| tax_none (m=0) | 10,946 | 6,162 | 2,832 | 3,429 | 4,210 | 6,324 |
+| margin_10 | 11,543 | 8,028 | 3,623 | 2,282 | 2,503 | 4,371 |
+| margin_20 | 12,152 | 9,870 | **7,345** | **5,034** | 2,329 | 2,876 |
+
+Mean firms solvent, of 5:
+
+| arm | t50 | t100 | t150 | t200 | t300 | final |
+|---|---|---|---|---|---|---|
+| tax_none | 5.00 | 5.00 | 3.17 | 2.23 | 1.93 | 1.87 |
+| margin_10 | 5.00 | 5.00 | 4.57 | 2.53 | 1.97 | 1.77 |
+| margin_20 | 5.00 | 5.00 | **5.00** | **4.67** | 3.20 | 1.90 |
+
+At m=0.20 the whole sector is still solvent at tick 150, where the baseline
+has already lost two firms and 82% of its capital. So the margin does what
+it was supposed to do.
+
+### And it reproduces the redistribution result exactly
+
+Mean deaths out of 30:
+
+| arm | t100 | t150 | t200 | t250 | t300 | t400 |
+|---|---|---|---|---|---|---|
+| tax_none | 0.13 | 4.60 | **13.73** | 15.20 | 15.30 | 15.53 |
+| margin_10 | 0.80 | 4.20 | 12.23 | 14.20 | 14.47 | 14.57 |
+| margin_20 | 1.33 | 5.10 | **7.03** | 9.37 | 11.60 | **14.10** |
+
+tax_none vs margin_20, Welch (\* survives Bonferroni at α=0.05/3):
+
+| measure | none | m=0.20 | diff | p |
+|---|---|---|---|---|
+| deaths at t200 | 13.73 | 7.03 | +6.70 | 0.00000 \* |
+| deaths at t300 | 15.30 | 11.60 | +3.70 | 0.00001 \* |
+| deaths at t400 | 15.53 | 14.10 | **+1.43** | 0.00727 \* |
+| first death tick | 141.1 | **115.6** | +25.5 | 0.00003 \* |
+
+This is the same shape as "Redistribution delays deaths" above, down to the
+detail that the intervention **kills someone earlier** — first death at 115.6
+against 141.1 — because withholding the margin from wages pushes
+subsistence-margin households under sooner, exactly as taxing them did. A
+6.7-death advantage at t200 decays to 1.43 by t400. The residual is real and
+survives correction, but it is a fifth of the mid-run effect, and the
+mid-run effect is what a naive read of the t200 table would have reported.
+
+**This is stronger evidence for the old mechanism than the old evidence
+was.** "The die-off tracks the exhaustion of firm capital" was an
+observational alignment between two curves. Here that alignment was
+*intervened on*: moving the capital-exhaustion point ~100 ticks later moved
+the die-off ~100 ticks later with it, dose-responsively. The correlation
+turned out to be causal in the direction assumed.
+
+### The economy is still a battery, and no margin in this range changes that
+
+Firm cash still ends below the genesis endowment in **30 of 30 runs in every
+arm**, including m=0.20. Runs ending with ≥3 of 5 firms solvent: 0/30, 0/30,
+2/30. A margin re-times the discharge; it does not convert the firm sector
+into a going concern.
+
+Why not — total money, 3 seeds, individuals + firms + treasury:
+
+| margin | t1 | t50 | t100 | t150 | t200 | t400 |
+|---|---|---|---|---|---|---|
+| 0 (seed 0) | 28,154 | 28,154 | 28,154 | 18,760 | 18,760 | 18,253 |
+| 0.20 (seed 0) | 28,154 | 28,154 | 27,846 | 25,502 | 25,502 | 22,708 |
+
+**Money is conserved to the cent until the first death**, then falls in steps
+that land exactly on deaths — burn-estate destroying the deceased's cash. So
+the drain is not a leak in normal operation, and this was worth ruling out
+before theorising further. What actually happens is a one-way circular flow:
+firms pay out more in wages than they recover in sales (money moves firm →
+household and stays there — at m=0, seed 0, firms go 14,356 → 4,341 while
+households go 13,798 → 23,813 with the total flat), because food decays,
+crops fail, and `concede()` sells below cost. The margin slows that flow
+without reversing it. Note also the late-run *rise* in baseline firm cash
+(771 at t150 → 6,453 at t400): once the sector consolidates the survivor is
+a monopsonist and the flow finally turns around — long after the deaths.
+
+So the honest statement of what the margin settled: the firm sector's zero
+margin was a real defect and it was worth fixing, it was **not** what made
+the baseline degrade, and every policy result above stands. The battery is
+the circular flow, not the pricing rule.
 
 ## Capital ownership: SHARE-FIRM-n
 
@@ -565,10 +682,21 @@ dividend reads it every payout period. Two notes:
   not). The calibration sweep in particular was a single seed.
 - Understand why progressive tax ends more unequal than flat tax while
   feeding people better.
-- Decide whether firms should carry a profit margin (see "Firms have no
-  profit margin" above). It shapes two separate findings — the baseline's
-  endless degradation, and capital income arriving too late to affect
-  mortality — so it is the highest-leverage open modelling question.
+- ~~Decide whether firms should carry a profit margin.~~ **Done**: built,
+  swept at n=30, and it delays the die-off without preventing it — the same
+  result redistribution gave. See "Firms with a margin" above. It did not
+  shape either finding it was expected to: the baseline still degrades, and
+  the residual mortality effect at t400 is 1.4 deaths.
+- Pick a margin for the default scenario, now that one *can* be picked on
+  evidence. Left at 0 deliberately: every result in this file was measured
+  there, and re-baselining the whole experiment is a separate decision from
+  establishing what the margin does. m=0.20 is the natural candidate — it is
+  the only arm that holds the sector solvent through tick 150.
+- Find what actually stops the circular flow running one way, since the
+  margin only slows it. Candidates: firms that hold inventory instead of
+  conceding below cost, FOOD decay (0.3/tick is punishing for a good the
+  economy is short of), or households that spend down rather than accumulate
+  cash they cannot convert into food.
 - Run the capital-ownership comparison properly:
   `sweep.py --arms tax_none,share_wealth,share_equal --seeds 100`. The n=1
   result recorded above is not evidence.

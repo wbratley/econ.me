@@ -57,6 +57,15 @@ ARMS = {
                           share_allocation="wealth"),
     "share_equal": dict(tax_rate=Decimal("0"), tax_threshold=Decimal("0"), estate_rule="burn",
                          share_allocation="equal"),
+    # Firm profit margin. Same policy as tax_none in every other respect, so
+    # tax_none is their exact control and the three together read as a
+    # dose-response rather than a single before/after. This is the one arm
+    # family that changes the economy's *production* side: every other arm
+    # here moves money after the goods exist.
+    "margin_10": dict(tax_rate=Decimal("0"), tax_threshold=Decimal("0"), estate_rule="burn",
+                       firm_margin=Decimal("0.10")),
+    "margin_20": dict(tax_rate=Decimal("0"), tax_threshold=Decimal("0"), estate_rule="burn",
+                       firm_margin=Decimal("0.20")),
 }
 
 BASELINE = "tax_none"

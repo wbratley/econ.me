@@ -95,6 +95,20 @@ class ScenarioConfig:
     smallholder_fraction: float = 0.15
     seed: int = 0
 
+    # --- Firm profit margin ------------------------------------------------
+    # Gross margin a firm requires on revenue, withheld from its labor bid and
+    # added back to its ask (firm.lua applies the two symmetrically, which is
+    # what keeps the price level from drifting -- see the note there).
+    #
+    # 0 is the default so every result recorded before this reproduces
+    # unchanged. It is also a defensible model in its own right -- zero
+    # economic profit is textbook perfect competition -- but combined with a
+    # fixed endowment it makes the firm sector a battery discharging rather
+    # than a going concern: measured, total firm cash 14.7k -> 0.8k by tick
+    # 150 with four of five firms bankrupt, and the mass-mortality event
+    # tracks that exhaustion rather than any policy under test.
+    firm_margin: Decimal = Decimal("0")
+
     # --- Capital ownership (SHARE-FIRM-n) ---------------------------------
     # Without these the model has no capital-income channel at all: an
     # individual's only income is wages, so the main driver of real wealth
@@ -105,13 +119,10 @@ class ScenarioConfig:
     shares_per_firm: Decimal = Decimal("100")
     # Firms may only ever distribute cash ABOVE their genesis endowment, i.e.
     # real accumulated profit and never working capital. This is not a
-    # nicety: measured, firms *decapitalise* under this scenario's pricing
-    # (total firm cash 14.7k -> 0.8k by tick 150, four of five bankrupt),
-    # because a firm bids labour at exactly its marginal revenue product and
-    # prices output at exactly its labour cost -- an inverse pair with a
-    # margin of zero, so every friction (0.3/tick FOOD decay, 5% crop
-    # failure, concede() cutting asks below cost) is a pure loss. A payout
-    # rule with a lower reserve would simply speed the bankruptcies up.
+    # nicety: at firm_margin 0 (see above) firms *decapitalise*, so every
+    # friction (0.3/tick FOOD decay, 5% crop failure, concede() cutting asks
+    # below cost) is a pure loss and a payout rule with a lower reserve would
+    # simply speed the bankruptcies up.
     firm_cash_reserve: Decimal = Decimal("3000")
     dividend_period: int = 10
     dividend_payout: Decimal = Decimal("0.5")   # fraction of profit paid per period
@@ -150,6 +161,14 @@ def build_economy(session: Session, config: ScenarioConfig) -> Scenario:
     # result JSON.
     if config.n_firms is None:
         config.n_firms = recommended_n_firms(config.n_individuals, config.smallholder_fraction)
+
+    # firm.lua clamps an out-of-range margin back to 0 rather than dividing by
+    # zero, which would silently run the baseline while the result JSON claimed
+    # otherwise. Fail here instead.
+    if not (0 <= config.firm_margin < 1):
+        raise ValueError(
+            f"firm_margin must be in [0, 1), got {config.firm_margin}"
+        )
 
     _create_goods(session)
     _create_needs(session)
@@ -479,6 +498,7 @@ def _wire_scripts(
                 "share_symbol": (
                     share_symbol(firm_index) if config.share_allocation != "none" else ""
                 ),
+                "firm_margin": str(config.firm_margin),
                 "firm_cash_reserve": str(config.firm_cash_reserve),
                 "dividend_period": config.dividend_period,
                 "dividend_payout": str(config.dividend_payout),
