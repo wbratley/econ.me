@@ -100,14 +100,22 @@ class ScenarioConfig:
     # added back to its ask (firm.lua applies the two symmetrically, which is
     # what keeps the price level from drifting -- see the note there).
     #
-    # 0 is the default so every result recorded before this reproduces
-    # unchanged. It is also a defensible model in its own right -- zero
-    # economic profit is textbook perfect competition -- but combined with a
-    # fixed endowment it makes the firm sector a battery discharging rather
-    # than a going concern: measured, total firm cash 14.7k -> 0.8k by tick
-    # 150 with four of five firms bankrupt, and the mass-mortality event
-    # tracks that exhaustion rather than any policy under test.
-    firm_margin: Decimal = Decimal("0")
+    # 0.20 chosen on evidence, not taste: at n=30 it is the lowest margin
+    # swept that holds all five firms solvent through tick 150, where margin 0
+    # has already lost two firms and 82% of the sector's capital, and 0.10
+    # holds 4.57. See NOTES.md "Firms with a margin".
+    #
+    # It is NOT chosen for its mortality effect, which is small (14.10 deaths
+    # against 15.53 at margin 0, n=30, t400). It is chosen because a firm
+    # sector that is still trading at the end of a run is the precondition for
+    # reading anything else off a long run at all -- at margin 0 most of a
+    # 400-tick run happens in a post-bankruptcy economy of one or two
+    # survivors, which is a confound in every arm comparison.
+    #
+    # WARNING for anyone reproducing older numbers: every result in NOTES.md
+    # above the "arm matrix at margin 0.20" section was measured at 0, and
+    # needs firm_margin=Decimal("0") passed explicitly to reproduce.
+    firm_margin: Decimal = Decimal("0.20")
 
     # --- Capital ownership (SHARE-FIRM-n) ---------------------------------
     # Without these the model has no capital-income channel at all: an
@@ -119,10 +127,14 @@ class ScenarioConfig:
     shares_per_firm: Decimal = Decimal("100")
     # Firms may only ever distribute cash ABOVE their genesis endowment, i.e.
     # real accumulated profit and never working capital. This is not a
-    # nicety: at firm_margin 0 (see above) firms *decapitalise*, so every
-    # friction (0.3/tick FOOD decay, 5% crop failure, concede() cutting asks
-    # below cost) is a pure loss and a payout rule with a lower reserve would
-    # simply speed the bankruptcies up.
+    # nicety: at firm_margin 0 firms *decapitalise*, so every friction
+    # (0.3/tick FOOD decay, 5% crop failure, concede() cutting asks below
+    # cost) is a pure loss and a payout rule with a lower reserve would simply
+    # speed the bankruptcies up. At the current 0.20 default firms hold their
+    # capital far longer, so this reserve now binds much less often and
+    # dividends start flowing earlier in a run -- which is the intended
+    # behaviour, but it does mean the share arms are not comparable to the
+    # ones recorded before the margin existed.
     firm_cash_reserve: Decimal = Decimal("3000")
     dividend_period: int = 10
     dividend_payout: Decimal = Decimal("0.5")   # fraction of profit paid per period

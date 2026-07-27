@@ -166,8 +166,8 @@ def _capital(session: Session, scenario: Scenario, tick_number: int) -> dict[str
     }
 
 
-def _farmland(session: Session, scenario: Scenario) -> dict[str, int]:
-    """Working vs idle farmland.
+def _farmland(session: Session, scenario: Scenario) -> tuple[dict[str, int], dict[str, int]]:
+    """Working vs idle farmland, plus fields-held per owner.
 
     The estate rule moves a dead entity's parcels to its recipient, but the
     Treasury has no production script -- it redistributes cash and nothing
@@ -175,14 +175,23 @@ def _farmland(session: Session, scenario: Scenario) -> dict[str, int]:
     permanently, and the economy's productive capacity ratchets down with
     each death. Fields held by incapacitated entities are dead the same way.
     Counting them is the difference between "people are poor" and "there is
-    less food in the world than there was"."""
+    less food in the world than there was".
+
+    The per-owner breakdown comes out of the same parcel scan rather than a
+    second pass: land is one of the three things a person can actually hold
+    (with cash and shares), and it was the one the aggregate hid -- "9 fields
+    are working" cannot answer whether the same person holds all of them.
+    """
     working = idle = treasury_held = 0
+    by_owner: dict[str, int] = {}
     parcels = session.execute(
         select(Parcel).join(Facility, Facility.parcel_id == Parcel.id)
         .where(Facility.facility_type == "FARM")
     ).scalars().unique().all()
     for parcel in parcels:
         owner = session.get(Entity, parcel.owner_id) if parcel.owner_id else None
+        if owner is not None:
+            by_owner[owner.id] = by_owner.get(owner.id, 0) + 1
         if owner is None:
             idle += 1
         elif owner.id == scenario.treasury_id:
@@ -192,7 +201,23 @@ def _farmland(session: Session, scenario: Scenario) -> dict[str, int]:
             idle += 1
         else:
             working += 1
-    return {"working": working, "idle": idle, "treasury_held": treasury_held}
+    return {"working": working, "idle": idle, "treasury_held": treasury_held}, by_owner
+
+
+def _shares_by_entity(session: Session) -> dict[str, float]:
+    """Total SHARE-FIRM-n held per entity, in one query rather than one per
+    person. Shares were allocated at genesis and then never measured again,
+    so "who owns the firms" was only ever knowable for tick 0 -- which is
+    exactly the wrong tick if the question is whether ownership concentrates.
+    Markets exist for these symbols, so they can move even though no script
+    currently trades them."""
+    rows = session.execute(
+        select(Holding).where(Holding.symbol.like("SHARE-FIRM-%"))
+    ).scalars().all()
+    totals: dict[str, float] = {}
+    for holding in rows:
+        totals[holding.entity_id] = totals.get(holding.entity_id, 0.0) + float(holding.quantity)
+    return totals
 
 
 def _holding_qty(session: Session, entity_id: str, symbol: str) -> float:
@@ -215,6 +240,8 @@ def _satisfaction(session: Session, entity_id: str, need_code: str) -> float:
 def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
     """Per-tick aggregate + per-individual metrics."""
     prices = _last_prices(session)
+    farmland, fields_by_owner = _farmland(session, scenario)
+    shares_by_owner = _shares_by_entity(session)
 
     entities: list[dict] = []
     for entity_id in scenario.individual_ids:
@@ -237,6 +264,10 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
             "cond_weak": _holding_qty(session, entity_id, "COND-WEAK"),
             "incapacitated_tick": entity.incapacitated_tick,
             "landed": scenario.landed.get(entity_id, False),
+            # The three stocks a person can hold, all as of THIS tick rather
+            # than genesis: cash (above), land, and capital.
+            "fields": fields_by_owner.get(entity_id, 0),
+            "shares": shares_by_owner.get(entity_id, 0.0),
             "starting_balance": float(scenario.starting_balance.get(entity_id, 0)),
             "starting_skill": float(scenario.starting_skill.get(entity_id, 0)),
         })
@@ -262,7 +293,7 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         "cond_weak_carriers": sum(1 for e in entities if e["cond_weak"] > 0),
         "produced": _production(session, tick_number),
         "capital": _capital(session, scenario, tick_number),
-        "farmland": _farmland(session, scenario),
+        "farmland": farmland,
         "treasury_balance": (
             float(treasury.accounts[0].balance) if treasury and treasury.accounts else 0.0
         ),
