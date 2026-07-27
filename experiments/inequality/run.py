@@ -23,6 +23,7 @@ from econengine import conditions
 from econengine.models import Base
 from econengine.tick import run_tick
 
+from ..determinism import deterministic_ids
 from ..progress import Progress
 from . import metrics as metrics_mod
 from .scenario import Scenario, ScenarioConfig, build_economy
@@ -42,7 +43,10 @@ def run_scenario(
     )
     Base.metadata.create_all(engine)
 
-    with Session(engine) as session:
+    # Covers the whole run, genesis included: stochastic harvest outcomes are
+    # rolled off process IDs, so seeding the ID source is what makes config.seed
+    # actually control the run rather than just its starting conditions.
+    with deterministic_ids(config.seed), Session(engine) as session:
         scenario = build_economy(session, config)
 
         if config.estate_rule == "treasury":
