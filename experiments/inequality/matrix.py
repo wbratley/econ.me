@@ -10,6 +10,7 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
+from ..parallel import Job, default_workers, run_jobs
 from ..progress import _duration
 from .run import run_scenario
 from .scenario import ScenarioConfig, recommended_n_firms
@@ -25,32 +26,56 @@ VARIANTS = {
 
 def run_matrix(
     n_individuals: int, n_firms: int | None, ticks: int, out_dir: Path,
-    metrics_every: int = 1, progress: bool = True,
+    metrics_every: int = 1, progress: bool = True, workers: int | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    for index, (name, overrides) in enumerate(VARIANTS.items(), start=1):
-        config = ScenarioConfig(n_individuals=n_individuals, n_firms=n_firms, **overrides)
-        # Variants cost about the same, so completed ones give an honest ETA
-        # for the whole matrix -- the per-variant bar only ever knows about
-        # the run it is in.
-        if progress and index > 1:
-            per_variant = (time.perf_counter() - started) / (index - 1)
-            remaining = per_variant * (len(VARIANTS) - index + 1)
-            print(f"=== {name} ({index}/{len(VARIANTS)}): {overrides} "
-                  f"-- matrix eta {_duration(remaining)} ===", file=sys.stderr)
-        else:
-            print(f"=== {name} ({index}/{len(VARIANTS)}): {overrides} ===", file=sys.stderr)
 
-        result = run_scenario(
-            config, ticks, db_path=str(out_dir / f"{name}.db"),
-            metrics_every=metrics_every, progress=progress, progress_label=name,
+    jobs = [
+        Job(
+            label=name,
+            config=ScenarioConfig(n_individuals=n_individuals, n_firms=n_firms, **overrides),
+            ticks=ticks,
+            kwargs=dict(db_path=str(out_dir / f"{name}.db"), metrics_every=metrics_every),
         )
-        last = result["snapshots"][-1]
-        print(f"  ticks/s={result['ticks_per_second']:.2f} gini={last['gini']:.4f} "
-              f"incapacitated={last['incapacitated_count']} "
-              f"mean_hunger_satisfaction={last['mean_hunger_satisfaction']:.3f}")
-        (out_dir / f"{name}.json").write_text(json.dumps(result, indent=2))
+        for name, overrides in VARIANTS.items()
+    ]
+    if workers is None:
+        workers = default_workers(len(jobs))
+
+    if workers == 1:
+        # Serial path keeps the per-variant progress bar and running ETA:
+        # variants cost about the same, so completed ones give an honest ETA
+        # for the whole matrix -- the per-variant bar only ever knows about
+        # the run it is in. Under parallelism neither is meaningful, since
+        # variants no longer finish one at a time.
+        for index, (name, overrides) in enumerate(VARIANTS.items(), start=1):
+            if progress and index > 1:
+                per_variant = (time.perf_counter() - started) / (index - 1)
+                remaining = per_variant * (len(VARIANTS) - index + 1)
+                print(f"=== {name} ({index}/{len(VARIANTS)}): {overrides} "
+                      f"-- matrix eta {_duration(remaining)} ===", file=sys.stderr)
+            else:
+                print(f"=== {name} ({index}/{len(VARIANTS)}): {overrides} ===", file=sys.stderr)
+            result = run_scenario(
+                jobs[index - 1].config, ticks, db_path=str(out_dir / f"{name}.db"),
+                metrics_every=metrics_every, progress=progress, progress_label=name,
+            )
+            _write_variant(out_dir, name, result)
+    else:
+        results = run_jobs(jobs, workers=workers)
+        for job, result in zip(jobs, results):
+            _write_variant(out_dir, job.label, result)
+
+    print(f"matrix done in {_duration(time.perf_counter() - started)}", file=sys.stderr)
+
+
+def _write_variant(out_dir: Path, name: str, result: dict) -> None:
+    last = result["snapshots"][-1]
+    print(f"{name}: ticks/s={result['ticks_per_second']:.2f} gini={last['gini']:.4f} "
+          f"incapacitated={last['incapacitated_count']} "
+          f"mean_hunger_satisfaction={last['mean_hunger_satisfaction']:.3f}")
+    (out_dir / f"{name}.json").write_text(json.dumps(result, indent=2))
 
 
 def main() -> None:
@@ -63,6 +88,10 @@ def main() -> None:
     parser.add_argument("--out-dir", type=str, required=True)
     parser.add_argument("--no-progress", action="store_true",
                          help="suppress progress bars (they write to stderr)")
+    parser.add_argument("--workers", type=int, default=None,
+                         help="parallel processes (default: one per variant, capped at "
+                              "core count). 1 runs serially, keeping the per-variant "
+                              "progress bar and matrix ETA.")
     args = parser.parse_args()
     # None flows through to build_economy, which derives it -- deliberately
     # not re-derived here, so there is exactly one place that decides.
@@ -70,7 +99,7 @@ def main() -> None:
           f"n_firms={args.firms if args.firms is not None else 'auto'} "
           f"(auto = {recommended_n_firms(args.individuals)})")
     run_matrix(args.individuals, args.firms, args.ticks, Path(args.out_dir),
-               args.metrics_every, progress=not args.no_progress)
+               args.metrics_every, progress=not args.no_progress, workers=args.workers)
 
 
 if __name__ == "__main__":

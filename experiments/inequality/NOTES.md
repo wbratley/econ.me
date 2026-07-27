@@ -205,6 +205,62 @@ it never did in a slack one.
   `build_economy`, so there is exactly one place that decides it -- the same
   duplicated-default trap as bug 5.
 
+## Performance: runs were quadratic in run length
+
+Sweeps were taking hours. Profiled rather than guessed, and the cause was
+not where it looked.
+
+**The bottleneck was one transaction held open for the whole run.**
+`run_scenario` committed only at the end, on the reasoning that `run_tick`
+flushes but never commits so ticks can share a transaction (design.md
+§"fast-forward"). The effect is that per-tick cost grows linearly with tick
+number, making total cost quadratic in run length — 30 individuals, measured:
+
+| tick | one transaction | commit each tick |
+|---|---|---|
+| 10 | 0.58 s/tick | 0.59 |
+| 50 | 1.15 | 0.72 |
+| 100 | 2.11 (still climbing) | 0.74 |
+
+It is not query volume and not table scans. Over ticks 6→65 statement
+counts rise ~10%, but time inside `sqlite3.Cursor.execute` goes 0.66s →
+4.05s for the same work, and the expensive statements are primary-key
+`UPDATE`/`INSERT`s against *tiny* tables — 0.22ms to update the 143-row
+`holdings` table. Every write records undo state into an ever-growing
+uncommitted transaction, with ~320 open savepoints per tick on top of it.
+The harness gains nothing from batching, so it now commits per tick.
+Verified byte-identical output across all 61 snapshots of two variants.
+
+**Sweeps now run one process per scenario.** `matrix.py` and `tipping.py`
+looped serially on a 12-core box. `experiments/parallel.py` fans them out;
+`--workers 1` keeps the serial path and its progress bar. Processes, never
+threads — see `determinism.py`. Measured: matrix 1:52 → 0:28, a 4-seed
+tipping sweep 1:57 → 0:35, both byte-identical to serial.
+
+Ruled out by measurement, recorded so it is not re-investigated:
+
+- **Lua is 9% of wall time.** A fresh `LuaRuntime` and a fresh OS thread per
+  script execution looks like the obvious culprit and is not one; running
+  scripts inline on the calling thread saved 3%.
+- **Indexes changed nothing.** The schema declares none at all, but adding
+  12 covering ones made no measurable difference — `holdings` already gets
+  an implicit index from its unique constraint, and the growth was never
+  scan-bound.
+- **Savepoints cost 9.5%**, and removing them costs the per-intent error
+  isolation that keeps one bad intent from poisoning the rest. Bad trade.
+- **`Transaction(account=...)` does not load the account's history.** A
+  plausible quadratic via the `back_populates` collection; measured zero
+  transaction-history SELECTs.
+- **Population scaling is linear** (15→120 individuals, 0.30→2.80 s/tick),
+  so larger economies are fine.
+
+What remains is a flat ~0.65 s/tick of which **56% is SQLAlchemy ORM
+overhead and only ~10% is actual SQLite** — auctions 36%, intent resolution
+31%. Going faster means batching the per-fill `session.get(Account)` /
+`adjust_holding` / `reserved_quantity` round-trips in `markets._settle` into
+set-based operations. Not attempted; it is a real refactor of the settlement
+path and the two changes above bought enough headroom.
+
 ## First matrix on the rebuilt pricing
 
 30 individuals, 9 fields, 200 ticks, seed 0, one run per variant:
@@ -390,11 +446,21 @@ non-payment of tax/debts (jail, asset seizure, loss of services).
   --db /path/to/scratch.db --out /path/to/result.json
 
 # 5-variant matrix (firm count derived from population unless --firms given)
+# variants run in parallel, one process each; --workers 1 forces serial
 .venv/bin/python -m experiments.inequality.matrix --individuals 30 --ticks 200 \
   --metrics-every 5 --out-dir /path/to/outdir
+
+# seed sweep, one process per seed
+.venv/bin/python -m experiments.inequality.tipping --seeds 10 --ticks 200 \
+  --out /path/to/tipping.json
 ```
 
-Both write a progress bar with an ETA to stderr; `--no-progress` suppresses
-it. Runs are minutes long — roughly 1.4 ticks/sec at 30 individuals, and it
-degrades as the population and order books grow, so the ETA is deliberately
-computed over the whole run rather than a recent window.
+`run.py` and serial sweeps write a progress bar with an ETA to stderr;
+`--no-progress` suppresses it. Under parallelism the bar is suppressed
+automatically — N workers sharing one stderr produce noise, not a bar — and
+each run reports a line as it finishes.
+
+Roughly 1.4 ticks/sec at 30 individuals, now flat across a run rather than
+degrading (see "Performance" above), so a 200-tick run is a couple of
+minutes and a sweep costs about one run given enough cores. Cost still
+scales linearly with population, which the whole-run ETA accounts for.

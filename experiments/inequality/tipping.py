@@ -38,6 +38,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+from ..parallel import Job, default_workers, run_jobs
 from .run import run_scenario
 from .scenario import ScenarioConfig
 
@@ -149,6 +150,14 @@ def report(rows: list[dict]) -> None:
                   f"collapse={mean(collapses):>9.2f}")
 
 
+def _report_seed(seed: int, result: dict) -> dict:
+    row = summarise(result)
+    print(f"seed {seed}: incapacitated={row['incapacitated']} "
+          f"idle_fields={row['idle_fields_final']} "
+          f"carriers@100={row['carriers_at_100']}", flush=True)
+    return row
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--seeds", type=int, default=10)
@@ -159,23 +168,40 @@ def main() -> None:
     parser.add_argument("--metrics-every", type=int, default=5)
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--workers", type=int, default=None,
+                         help="parallel processes (default: one per seed, capped at "
+                              "core count). 1 runs serially with a progress bar.")
     args = parser.parse_args()
 
+    jobs = [
+        Job(
+            label=f"seed {seed}",
+            config=ScenarioConfig(
+                n_individuals=args.individuals, seed=seed,
+                tax_rate=Decimal(args.tax_rate), estate_rule=args.estate_rule,
+            ),
+            ticks=args.ticks,
+            kwargs=dict(metrics_every=args.metrics_every),
+        )
+        for seed in range(args.seeds)
+    ]
+    workers = args.workers if args.workers is not None else default_workers(len(jobs))
+
     rows = []
-    for seed in range(args.seeds):
-        config = ScenarioConfig(
-            n_individuals=args.individuals, seed=seed,
-            tax_rate=Decimal(args.tax_rate), estate_rule=args.estate_rule,
-        )
-        result = run_scenario(
-            config, args.ticks, metrics_every=args.metrics_every,
-            progress=not args.no_progress, progress_label=f"seed {seed}",
-        )
-        row = summarise(result)
-        rows.append(row)
-        print(f"seed {seed}: incapacitated={row['incapacitated']} "
-              f"idle_fields={row['idle_fields_final']} "
-              f"carriers@100={row['carriers_at_100']}", flush=True)
+    if workers == 1:
+        # Serial path keeps the per-seed progress bar, which is only readable
+        # when one run owns stderr.
+        for seed, job in enumerate(jobs):
+            result = run_scenario(
+                job.config, args.ticks, metrics_every=args.metrics_every,
+                progress=not args.no_progress, progress_label=job.label,
+            )
+            rows.append(_report_seed(seed, result))
+    else:
+        # Seeds are independent, and run_jobs returns them in submission
+        # order, so the report does not depend on which worker finished first.
+        for seed, result in enumerate(run_jobs(jobs, workers=workers)):
+            rows.append(_report_seed(seed, result))
 
     report(rows)
     if args.out:

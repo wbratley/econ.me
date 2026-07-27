@@ -64,16 +64,26 @@ def run_scenario(
         started = time.perf_counter()
         with Progress(ticks, progress_label, enabled=progress) as bar:
             for tick_number in range(1, ticks + 1):
-                # run_tick() only flushes, never commits -- many ticks share
-                # one transaction (design.md §"fast-forward"); reads in this
-                # same session see flushed state fine, so we only commit at
-                # the end.
+                # run_tick() only flushes, never commits, so a caller *may*
+                # span many ticks in one transaction (design.md
+                # §"fast-forward"). The harness deliberately does not: holding
+                # one transaction open for a whole run makes per-tick cost grow
+                # linearly with tick number, and so total cost quadratic in run
+                # length. Measured, 30 individuals: 0.58 s/tick at tick 10 ->
+                # 2.11 s/tick at tick 100 and still climbing, against a flat
+                # ~0.73 s/tick when each tick commits. It is not query volume
+                # (statement counts move ~10% over that span) -- it is that
+                # every write records undo state into an ever-growing
+                # uncommitted transaction, with ~320 open savepoints per tick
+                # on top, so even a primary-key UPDATE against the 143-row
+                # holdings table costs 0.22ms. Committing changes no result:
+                # verified bit-identical against commit-at-end.
                 run_tick(session)
+                session.commit()
                 if tick_number % metrics_every == 0 or tick_number == ticks:
                     snapshots.append(metrics_mod.snapshot(session, scenario, tick_number))
                 bar.advance()
         elapsed = time.perf_counter() - started
-        session.commit()
 
     config_out = asdict(config)
     for key, value in config_out.items():
