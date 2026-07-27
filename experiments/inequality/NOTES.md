@@ -399,6 +399,95 @@ replicates of the flat tax before its own bad tail showed up.
 worse, and it now reproduces exactly, so the mechanism is directly
 inspectable.
 
+## Firms have no profit margin, and decapitalise
+
+Found while building shareholding: there was nothing for a firm to pay a
+dividend *from*. Firm cash across a no-tax run, 30 individuals:
+
+| tick | firm cash (total) | solvent firms | individual cash |
+|---|---|---|---|
+| 1 | 14,709 | 5 | 13,444 |
+| 50 | 10,828 | 5 | 17,326 |
+| 100 | 4,341 | 5 | 23,813 |
+| 150 | 771 | 1 | 17,989 |
+
+Firms convert their 3,000 genesis endowment into wages and go bankrupt
+around tick 125–150. This is not a valuation bug — the recipe chain is
+1 LABOR → 1 LABOR-FARM → 4.95 FOOD, so firm.lua's `farm_yield * food_price`
+is correct. It is structural: a firm bids labour at `farm_yield ×
+food_price` and prices its output at `wage / farm_yield`. Those are exact
+inverses, so the margin is **zero by construction**, and every friction
+(0.3/tick FOOD decay on unsold stock, 5% crop failure, `concede()` cutting
+asks below cost) comes straight out of capital.
+
+Two consequences that reach beyond shares:
+
+- **The economy is subsidised by firm capital for its first ~150 ticks.**
+  The baseline's failure to reach a steady state is at least partly the
+  endowment running out, not a property of the steady state. Any run longer
+  than ~150 ticks spends most of its length in a post-bankruptcy economy of
+  one or two survivors, which is a confound in reading the arm comparison.
+- **Zero economic profit is textbook perfect competition** and defensible on
+  its own. Combined with a fixed endowment it makes the firm sector a
+  draining battery rather than a going concern. Giving firms a markup would
+  fix it and would recalibrate the entire economy, so it is left as an open
+  modelling decision, not silently patched.
+
+## Capital ownership: SHARE-FIRM-n
+
+The model had no capital-income channel at all — wages were an individual's
+only income, so the main driver of real wealth concentration was simply
+absent. Now: `share_allocation` = `none` | `wealth` | `equal`.
+
+`wealth` and `equal` are the experiment. Both are no-tax, burn-estate runs
+with identical firms and identical production; only *who owns them* differs.
+That isolates what concentrated ownership does, which no redistribution arm
+can ask, because redistribution only ever moves income after the fact.
+
+- Shares are bare symbols (`SHARE-FIRM-1`…), needing no `Good` row: the
+  defaults a Good would supply — no decay, no auto-issue — are exactly what
+  a share wants. Markets are created for them, so they are tradable in
+  principle; no script trades them yet.
+- Allocation uses largest-remainder so each firm's register sums to exactly
+  `shares_per_firm`. Rounding each slice independently would mint or leak
+  fractions of a company, and the dividend divides by the register's live
+  total.
+- Dividends pay only from cash **above the genesis endowment** — real profit,
+  never working capital. Given the decapitalisation above, a lower reserve
+  would simply bankrupt firms faster.
+- The register is read live via the new `ctx.query.holders(symbol)`, not
+  cached in `Script.state`, so a dividend follows the shares the moment any
+  of them change hands.
+
+**The channel is real but late.** Nothing pays out until the sector
+consolidates and the survivor earns genuine monopsony rents (n=1, wealth
+allocation): 8 cumulative by tick 200, 1,008 by tick 300, 4,350 by tick 400.
+So capital income redistributes wealth among *survivors* without changing
+who survives — the deaths are over by tick 200, long before the first
+dividend.
+
+A single seed of `wealth` vs `equal` ends at gini 0.557 vs 0.523, both with
+15 incapacitated. **That is n=1 and proves nothing** — this project's own
+replicates span 0–23 deaths within one condition. The direction matches the
+mechanism, which is reassurance about the wiring and nothing more. The real
+comparison needs `sweep.py --arms tax_none,share_wealth,share_equal` at
+n≈100.
+
+### Engine addition: `ctx.query.holders(symbol)`
+
+Returns the live register — entity_id, quantity, and the account to pay
+through — batched into two queries rather than one per holder, since a
+dividend reads it every payout period. Two notes:
+
+- Query callables previously returned only scalars. A Python list arrives in
+  Lua as an opaque object where `#` and `ipairs` do not work and indexing is
+  0-based, so `lua_engine` now converts list/dict results into real Lua
+  tables. Any query can return a row set from here on.
+- It is a **global** read: any script can enumerate holders of any symbol.
+  Right for a share register (real ones are public), considerably more than
+  that for `FOOD`. If per-symbol visibility should be votable data,
+  `build_queries` is where it would be gated. Deliberately not gated yet.
+
 ## Not yet done
 
 - Establish whether the matrix numbers are steady states or points on a
@@ -412,10 +501,17 @@ inspectable.
   not). The calibration sweep in particular was a single seed.
 - Understand why progressive tax ends more unequal than flat tax while
   feeding people better.
+- Decide whether firms should carry a profit margin (see "Firms have no
+  profit margin" above). It shapes two separate findings — the baseline's
+  endless degradation, and capital income arriving too late to affect
+  mortality — so it is the highest-leverage open modelling question.
+- Run the capital-ownership comparison properly:
+  `sweep.py --arms tax_none,share_wealth,share_equal --seeds 100`. The n=1
+  result recorded above is not evidence.
 - Empirically time and pick a large-scale target (§ Scale in the original
-  plan); current throughput is ~1.6–6 ticks/sec depending on population/
-  firm count and is itself informative for the design.md §7 fast-forward
-  question, but hasn't been formally profiled.
+  plan); throughput is now flat across a run and profiled in detail (see
+  "Performance" above), which also answers part of the design.md §7
+  fast-forward question.
 - Visualization artifact (Gini-over-time, wealth-share, mobility scatter,
   skill-premium price series, incapacitation counts).
 - Findings write-up.

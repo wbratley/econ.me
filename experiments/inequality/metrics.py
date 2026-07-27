@@ -130,6 +130,42 @@ def _production(session: Session, tick_number: int) -> dict[str, float]:
     return produced
 
 
+def _capital(session: Session, scenario: Scenario, tick_number: int) -> dict[str, float]:
+    """The capital-income channel: what firms are worth and what they paid out.
+
+    Firm cash is tracked because this economy's firms decapitalise rather than
+    accumulate -- they start with an endowment and bleed it into wages, so the
+    sector's cash is a running measure of how much of the economy is still
+    being financed by genesis capital rather than by production. Dividends are
+    read off the tick's own transfer events, so they measure money that
+    actually moved, not money a script intended to move.
+    """
+    balances = []
+    for firm_id in scenario.firm_ids:
+        firm = session.get(Entity, firm_id)
+        if firm and firm.accounts:
+            balances.append(float(firm.accounts[0].balance))
+
+    dividends = 0.0
+    tick = session.execute(
+        select(Tick).where(Tick.number == tick_number)
+    ).scalar_one_or_none()
+    for event in (tick.events if tick else None) or []:
+        if event.get("type") != "transfer" or event.get("status") != "applied":
+            continue
+        params = event.get("params") or {}
+        if params.get("reference") == "dividend":
+            dividends += float(params.get("amount", 0))
+
+    return {
+        "firm_cash_total": sum(balances),
+        "firm_cash_min": min(balances) if balances else 0.0,
+        "firm_cash_max": max(balances) if balances else 0.0,
+        "firms_solvent": sum(1 for b in balances if b > 1.0),
+        "dividends_paid": dividends,
+    }
+
+
 def _farmland(session: Session, scenario: Scenario) -> dict[str, int]:
     """Working vs idle farmland.
 
@@ -225,6 +261,7 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         "cond_weak_total": sum(e["cond_weak"] for e in entities),
         "cond_weak_carriers": sum(1 for e in entities if e["cond_weak"] > 0),
         "produced": _production(session, tick_number),
+        "capital": _capital(session, scenario, tick_number),
         "farmland": _farmland(session, scenario),
         "treasury_balance": (
             float(treasury.accounts[0].balance) if treasury and treasury.accounts else 0.0

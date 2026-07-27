@@ -17,7 +17,7 @@ only ever moves money out of the Treasury's own account (treasury.lua).
 
 import random
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -95,6 +95,27 @@ class ScenarioConfig:
     smallholder_fraction: float = 0.15
     seed: int = 0
 
+    # --- Capital ownership (SHARE-FIRM-n) ---------------------------------
+    # Without these the model has no capital-income channel at all: an
+    # individual's only income is wages, so the main driver of real wealth
+    # concentration is simply absent. "none" is the default so every existing
+    # result reproduces unchanged -- allocation must make no uuid4 draws when
+    # off, since the ID stream seeds the outcome rolls (see determinism.py).
+    share_allocation: str = "none"          # none | wealth | equal
+    shares_per_firm: Decimal = Decimal("100")
+    # Firms may only ever distribute cash ABOVE their genesis endowment, i.e.
+    # real accumulated profit and never working capital. This is not a
+    # nicety: measured, firms *decapitalise* under this scenario's pricing
+    # (total firm cash 14.7k -> 0.8k by tick 150, four of five bankrupt),
+    # because a firm bids labour at exactly its marginal revenue product and
+    # prices output at exactly its labour cost -- an inverse pair with a
+    # margin of zero, so every friction (0.3/tick FOOD decay, 5% crop
+    # failure, concede() cutting asks below cost) is a pure loss. A payout
+    # rule with a lower reserve would simply speed the bankruptcies up.
+    firm_cash_reserve: Decimal = Decimal("3000")
+    dividend_period: int = 10
+    dividend_payout: Decimal = Decimal("0.5")   # fraction of profit paid per period
+
 
 @dataclass
 class Scenario:
@@ -106,6 +127,7 @@ class Scenario:
     starting_balance: dict[str, Decimal] = field(default_factory=dict)
     starting_skill: dict[str, Decimal] = field(default_factory=dict)
     landed: dict[str, bool] = field(default_factory=dict)
+    starting_shares: dict[str, Decimal] = field(default_factory=dict)
 
 
 def _read_lua(name: str) -> str:
@@ -132,7 +154,7 @@ def build_economy(session: Session, config: ScenarioConfig) -> Scenario:
     _create_goods(session)
     _create_needs(session)
     _create_tech(session)
-    _create_markets(session)
+    _create_markets(session, config)
     _create_recipes(session)
 
     bank = services.create_entity(session, "Central Bank", EntityType.BANK)
@@ -150,6 +172,11 @@ def build_economy(session: Session, config: ScenarioConfig) -> Scenario:
     if config.estate_rule == "heir":
         _assign_heirs(session, individual_ids, rng)
 
+    # After heirs, before scripts: allocation reads starting_balance and makes
+    # no rng draws, so with share_allocation="none" nothing above or below
+    # this line moves and every pre-shares result reproduces exactly.
+    starting_shares = _allocate_shares(session, config, individual_ids, starting_balance)
+
     _wire_scripts(session, config, treasury, treasury_account, individual_ids, firm_ids, rng)
 
     session.flush()
@@ -162,6 +189,7 @@ def build_economy(session: Session, config: ScenarioConfig) -> Scenario:
         starting_balance=starting_balance,
         starting_skill=starting_skill,
         landed=landed,
+        starting_shares=starting_shares,
     )
 
 
@@ -204,9 +232,23 @@ def _create_tech(session: Session) -> None:
     tech.create_technology(session, "AGRONOMY")
 
 
-def _create_markets(session: Session) -> None:
+def share_symbol(firm_index: int) -> str:
+    """SHARE-FIRM-1, SHARE-FIRM-2, ... A share needs no Good row: bare symbols
+    work everywhere, and the defaults a Good would supply (no decay, no
+    auto-issue) are exactly what a share wants."""
+    return f"SHARE-FIRM-{firm_index + 1}"
+
+
+def _create_markets(session: Session, config: ScenarioConfig) -> None:
     for symbol in ("LABOR", "LABOR-FARM", "FOOD", "CLOTHES", "TOOLS"):
         markets.create_market(session, symbol, "USD")
+    if config.share_allocation != "none":
+        # Shares are tradable in principle from the start. No script places
+        # share orders yet, so these markets sit idle -- but the register
+        # (ctx.query.holders) reads live holdings, so a firm's dividend
+        # follows the shares the moment anything does trade them.
+        for i in range(config.n_firms):
+            markets.create_market(session, share_symbol(i), "USD")
 
 
 def _create_recipes(session: Session) -> None:
@@ -321,6 +363,68 @@ def _create_individuals(
     return individual_ids, starting_balance, starting_skill, landed
 
 
+def _allocate_shares(
+    session: Session,
+    config: ScenarioConfig,
+    individual_ids: list[str],
+    starting_balance: dict[str, Decimal],
+) -> dict[str, Decimal]:
+    """Hand out each firm's shares to the population. Returns per-person total
+    shares held, for the metrics baseline.
+
+    The two live modes are the experiment: "wealth" gives capital ownership to
+    whoever already has money, so dividends amplify the starting distribution;
+    "equal" gives everyone the same slice, so the same firms and the same
+    profits flow back evenly. Running both isolates what concentrated capital
+    OWNERSHIP does, holding the economy's production identical -- which is the
+    question a redistribution-only matrix cannot ask, because it only ever
+    moves income after the fact.
+
+    Deterministic by construction: proportional allocation, no rng draws.
+    """
+    if config.share_allocation == "none":
+        return {}
+    if config.share_allocation not in ("wealth", "equal"):
+        raise ValueError(f"unknown share_allocation {config.share_allocation!r}")
+
+    if config.share_allocation == "wealth":
+        weights = {eid: float(starting_balance.get(eid, 0)) for eid in individual_ids}
+        if sum(weights.values()) <= 0:
+            raise ValueError("wealth allocation needs positive starting balances")
+    else:
+        weights = {eid: 1.0 for eid in individual_ids}
+
+    total_weight = sum(weights.values())
+    held: dict[str, Decimal] = {eid: Decimal("0") for eid in individual_ids}
+
+    for i in range(config.n_firms):
+        symbol = share_symbol(i)
+        # Largest-remainder so every firm's shares sum to exactly
+        # shares_per_firm: rounding each slice independently would leak or
+        # mint fractions of a company, and the dividend divides by the
+        # register's live total.
+        exact = {
+            eid: config.shares_per_firm * Decimal(str(w / total_weight))
+            for eid, w in weights.items()
+        }
+        floors = {eid: v.quantize(Decimal("1"), rounding=ROUND_DOWN) for eid, v in exact.items()}
+        shortfall = int(config.shares_per_firm - sum(floors.values()))
+        # Ties broken by entity id, so the leftovers are assigned the same way
+        # on every run rather than by dict iteration accident.
+        ranked = sorted(
+            individual_ids, key=lambda e: (-(exact[e] - floors[e]), e)
+        )
+        for eid in ranked[:shortfall]:
+            floors[eid] += 1
+
+        for eid, qty in floors.items():
+            if qty > 0:
+                markets.adjust_holding(session, session.get(Entity, eid), symbol, qty)
+                held[eid] += qty
+
+    return held
+
+
 def _assign_heirs(session: Session, individual_ids: list[str], rng: random.Random) -> None:
     shuffled = individual_ids[:]
     rng.shuffle(shuffled)
@@ -362,7 +466,7 @@ def _wire_scripts(
             },
         ))
 
-    for entity_id in firm_ids:
+    for firm_index, entity_id in enumerate(firm_ids):
         session.add(Script(
             name=f"firm-behaviour-{entity_id}",
             script_type=ScriptType.BEHAVIOUR,
@@ -370,6 +474,15 @@ def _wire_scripts(
             entity_id=entity_id,
             timeout_ms=200,
             state={
+                # Empty share_symbol disables the dividend block entirely, so
+                # a no-shares run executes exactly the code it did before.
+                "share_symbol": (
+                    share_symbol(firm_index) if config.share_allocation != "none" else ""
+                ),
+                "firm_cash_reserve": str(config.firm_cash_reserve),
+                "dividend_period": config.dividend_period,
+                "dividend_payout": str(config.dividend_payout),
+                "dividend_timer": 0,
                 # Firms bid labor at its marginal revenue product (firm.lua),
                 # which every firm computes identically -- so without a little
                 # idiosyncrasy they all quote the same number and the auction

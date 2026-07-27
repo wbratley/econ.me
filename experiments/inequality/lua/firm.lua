@@ -70,6 +70,52 @@ else
   end
 end
 
+-- Dividends: distribute real profit to the share register, never capital.
+--
+-- The reserve is the firm's genesis endowment, so only cash earned ABOVE
+-- what it started with is distributable. That is not conservatism for its
+-- own sake -- firms in this economy decapitalise rather than accumulate,
+-- because bidding labour at marginal revenue product while pricing output at
+-- labour cost is an inverse pair with a margin of exactly zero, leaving
+-- every friction (food rotting unsold, crop failure, conceded asks) as pure
+-- loss. Paying out of working capital would just bankrupt them faster. What
+-- this rule does capture is the late phase: once the sector consolidates,
+-- the survivor faces less competition for labour, earns a genuine margin,
+-- and only then does capital income start to flow.
+--
+-- The register is read live (ctx.query.holders), not cached in state, so a
+-- dividend follows the shares the moment any of them change hands.
+local share_sym = ctx.state.share_symbol
+if share_sym and share_sym ~= "" then
+  local period = tonumber(ctx.state.dividend_period) or 0
+  local timer = (ctx.state.dividend_timer or 0) + 1
+  ctx.state.dividend_timer = timer
+  if period > 0 and timer >= period then
+    ctx.state.dividend_timer = 0
+    local reserve = tonumber(ctx.state.firm_cash_reserve) or 0
+    local payout = tonumber(ctx.state.dividend_payout) or 0
+    local distributable = (balance - reserve) * payout
+    if distributable > 0.01 then
+      local register = ctx.query.holders(share_sym)
+      local total_shares = 0
+      for _, h in ipairs(register) do total_shares = total_shares + tonumber(h.quantity) end
+      if total_shares > 0 then
+        for _, h in ipairs(register) do
+          local amount = distributable * tonumber(h.quantity) / total_shares
+          if amount >= 0.0001 and h.account_id then
+            ctx.action.transfer(account.id, h.account_id,
+                                 string.format("%.4f", amount), "dividend", 3)
+          end
+        end
+        -- Spend against what is left after the payout. `balance` was read at
+        -- the start of the tick, and the dividend transfers resolve (priority
+        -- 3) well before the auction settles this tick's labour orders.
+        balance = balance - distributable
+      end
+    end
+  end
+end
+
 -- Sell surplus output at cost, adapting downward if it doesn't move.
 --
 -- Marginal cost is the labor that went into it, valued at the going wage --

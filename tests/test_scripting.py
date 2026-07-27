@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from econengine.models import Base, EntityType, Script, ScriptType
 from econengine.scripting import OperationVetoedError
+from econengine.markets import adjust_holding
 from econengine.services import create_account, create_entity, deposit, transfer
 from econengine.tick import run_tick
 
@@ -282,3 +283,104 @@ def test_policy_intents_resolve_before_behaviour_on_tie(world):
 
     refs = [e["params"]["reference"] for e in tick.events]
     assert refs == ["policy", "behaviour"]
+
+
+# ---------------------------------------------------------------------------
+# ctx.query.holders — the share register (see build_queries)
+# ---------------------------------------------------------------------------
+
+def test_holders_lists_entities_with_positive_quantity(world):
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("30"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("70"))
+
+    script = make_script(
+        session, "reader",
+        """
+        local hs = ctx.query.holders('SHARE-ACME')
+        local total = 0
+        for _, h in ipairs(hs) do total = total + tonumber(h.quantity) end
+        ctx.state.n = #hs
+        ctx.state.total = total
+        ctx.state.has_account = hs[1].account_id ~= nil
+        """,
+        ScriptType.BEHAVIOUR, entity=gov,
+    )
+    run_tick(session)
+
+    # ipairs/# work, so the result really is a Lua table and not an opaque
+    # Python object — the thing _wrap_result exists to guarantee.
+    assert script.state["n"] == 2
+    assert script.state["total"] == 100
+    assert script.state["has_account"] is True
+
+
+def test_holders_excludes_zero_and_unknown_symbols(world):
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("5"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("5"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("-5"))  # back to zero
+
+    script = make_script(
+        session, "reader",
+        """
+        ctx.state.n = #ctx.query.holders('SHARE-ACME')
+        ctx.state.none = #ctx.query.holders('SHARE-NOSUCH')
+        """,
+        ScriptType.BEHAVIOUR, entity=gov,
+    )
+    run_tick(session)
+
+    assert script.state["n"] == 1     # Bob is at zero, so not a holder
+    assert script.state["none"] == 0  # unknown symbol is empty, not an error
+
+
+def test_holders_is_deterministically_ordered(world):
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("1"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("1"))
+
+    script = make_script(
+        session, "reader",
+        """
+        local ids = {}
+        for _, h in ipairs(ctx.query.holders('SHARE-ACME')) do
+          ids[#ids + 1] = h.entity_id
+        end
+        ctx.state.ids = table.concat(ids, ',')
+        """,
+        ScriptType.BEHAVIOUR, entity=gov,
+    )
+    run_tick(session)
+
+    expected = ",".join(sorted([alice.id, bob.id]))
+    assert script.state["ids"] == expected
+
+
+def test_holders_supports_paying_a_dividend(world):
+    """The actual use: an issuer pays its register pro rata, in one tick."""
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("25"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("75"))
+    firm = create_entity(session, "Acme", EntityType.BUSINESS)
+    f = create_account(session, firm, "USD", initial_balance=Decimal("400"))
+
+    make_script(
+        session, "dividend",
+        f"""
+        local hs = ctx.query.holders('SHARE-ACME')
+        local total = 0
+        for _, h in ipairs(hs) do total = total + tonumber(h.quantity) end
+        for _, h in ipairs(hs) do
+          local share = 400 * tonumber(h.quantity) / total
+          ctx.action.transfer('{f.id}', h.account_id, string.format('%.4f', share), 'dividend')
+        end
+        """,
+        ScriptType.BEHAVIOUR, entity=firm,
+    )
+    run_tick(session)
+
+    session.refresh(a); session.refresh(b); session.refresh(f)
+    assert a.balance == Decimal("1100.0000")  # 1000 + 25% of 400
+    assert b.balance == Decimal("1300.0000")  # 1000 + 75% of 400
+    assert f.balance == Decimal("0.0000")

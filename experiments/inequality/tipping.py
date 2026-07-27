@@ -94,6 +94,17 @@ def summarise(result: dict) -> dict:
         "food_at_100": next(
             (s["produced"].get("FOOD", 0.0) for s in snapshots if s["tick"] >= 100), 0.0),
         "food_final": last["produced"].get("FOOD", 0.0),
+        # Capital-ownership instruments. .get() throughout because snapshots
+        # taken before metrics grew a "capital" block have no such key, and
+        # old result JSONs should still summarise rather than crash.
+        "firm_cash_final": last.get("capital", {}).get("firm_cash_total", 0.0),
+        "firms_solvent_final": last.get("capital", {}).get("firms_solvent", 0),
+        # Dividends are a per-tick flow and snapshots are every metrics_every
+        # ticks, so this is a SAMPLE of the flow, not the cumulative total --
+        # comparable across arms at equal sampling, not a payout figure.
+        "dividends_sampled": sum(
+            s.get("capital", {}).get("dividends_paid", 0.0) for s in snapshots
+        ),
     }
 
 

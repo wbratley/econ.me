@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
-from .models import Account, Entity, Script, ScriptType
+from .models import Account, Entity, Holding, Script, ScriptType
 
 
 class OperationVetoedError(ValueError):
@@ -148,12 +148,60 @@ def build_queries(session: Session) -> dict:
             return False
         return tech.has_unlock(session, str(entity_id), technology)
 
+    def holders(symbol):
+        """Every entity holding a positive quantity of the symbol, with the
+        settlement account to pay them through.
+
+        The register a share needs: an issuer cannot pay a dividend without
+        knowing who its holders are, and once shares trade, a cap table
+        cached in Script.state goes stale the first time one changes hands.
+
+        Note this is a GLOBAL read — any script can enumerate holders of any
+        symbol, which is right for a share register (real ones are public)
+        and considerably more than that for, say, FOOD. If per-symbol
+        visibility should be votable data rather than always-on, this is the
+        place it would be gated; it is deliberately not gated yet.
+
+        Ordered by entity id so a script iterating holders is deterministic.
+        The account is the entity's first in `currency`, matching how
+        ctx.accounts[1] is used everywhere else in this codebase.
+        """
+        rows = session.execute(
+            select(Holding.entity_id, Holding.quantity)
+            .where(Holding.symbol == str(symbol).upper(), Holding.quantity > 0)
+            .order_by(Holding.entity_id)
+        ).all()
+        if not rows:
+            return []
+
+        # Accounts for the whole register in one query rather than one per
+        # holder: a dividend reads this every payout period, and an N+1 here
+        # would scale with the shareholder count on a hot path.
+        holder_ids = [entity_id for entity_id, _ in rows]
+        first_account: dict[str, str] = {}
+        for account in session.execute(
+            select(Account)
+            .where(Account.entity_id.in_(holder_ids))
+            .order_by(Account.entity_id, Account.currency, Account.id)
+        ).scalars():
+            first_account.setdefault(account.entity_id, account.id)
+
+        return [
+            {
+                "entity_id": entity_id,
+                "quantity": str(quantity),
+                "account_id": first_account.get(entity_id),
+            }
+            for entity_id, quantity in rows
+        ]
+
     return {
         "balance": balance,
         "total_supply": total_supply,
         "market_price": market_price,
         "holding": holding,
         "has_unlock": has_unlock,
+        "holders": holders,
     }
 
 
