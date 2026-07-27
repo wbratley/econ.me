@@ -22,7 +22,14 @@ same IDs, same rolls, same economy, bit for bit.
 
 Scope carefully: this patches `uuid.uuid4` process-wide, so it is a context
 manager, and concurrent runs in one process would interleave draws and
-corrupt each other's determinism. Runs here are sequential.
+corrupt each other's determinism.
+
+That constraint is per *process*, not per machine, and it is why
+`experiments/parallel.py` parallelises sweeps with processes and never with
+threads: a forked worker gets its own `uuid4` and its own seeded stream, so
+one scenario per process stays exactly as reproducible as running them one
+after another (verified: parallel and serial sweeps produce byte-identical
+output). Threading a sweep would silently corrupt every run in it.
 """
 
 import random
