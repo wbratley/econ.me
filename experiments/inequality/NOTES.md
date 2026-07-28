@@ -1598,6 +1598,48 @@ explains it was added because firing while short "fails the intent silently,
 every tick, forever" — true when written, no longer true since the engine
 retries an input-starved `start_process` after clearing.
 
+### Shorter horizons do not help, and the hunger gap is seed variance
+
+`results/calibration_horizon.json`, grid extended to h3 and h2, 72 runs in
+37m32s. **h5 is a genuine interior optimum, not a boundary artifact** —
+`cost_weighted` runs 0.62, 0.65, 0.68, **0.83**, 0.69, 0.72 across h20 → h2.
+Below h5 households bid so hard that food crowds out the other two: at
+`legacy|h3` hunger reaches 0.83 but power collapses to 0.65, and
+`shelter_heavy|h2` brings deaths back (1.3). Best arm is unchanged at
+`cost_weighted|h5`, worst-need 0.83, failing on hunger alone.
+
+**The remaining gap is seed variance, and it is enormous:**
+
+| seed | farms built | bare left | FOOD produced | hunger |
+|---|---|---|---|---|
+| 0 | 15 | 4 | 48.0 | **0.97** |
+| 1 | 13 | 6 | 33.8 | 0.78 |
+| 2 | 12 | 6 | 29.6 | 0.73 |
+
+Two things worth keeping.
+
+**It is not a sampling artifact.** The obvious suspicion, given this project's
+history and the note above about point-sampled hunger, was that
+`metrics_every=5` was aliasing against an oscillation — FOOD sold swings 12.1
+to 76.3 tick to tick. It is not: re-measured at `metrics_every=1` the same
+three seeds give 0.954 / 0.791 / 0.726 against 0.967 / 0.786 / 0.727. The
+sampling grid is fine and the hunger column means what it says.
+
+**It is how much land got built on.** Every seed still ends with 4–6 parcels
+bare, and the seed that built the most farms is the one that feeds everyone.
+So the build fix raised the ceiling without raising the floor: firms still stop
+building well short of using the land they hold, just at different points.
+
+Note also that every seed produces MORE food than the 24/tick subsistence
+requirement (48.0, 33.8, 29.6) and still shows hunger below 1.0, so there is a
+distributional component on top of the production one — sold runs *above*
+need in seed 2 (34.4) at hunger 0.73, which means the food is reaching some
+households' pantries rather than everyone's plates.
+
+**Next: why does building still stall with parcels bare?** That is the lever
+that raises the floor rather than the ceiling, and it is worth more than any
+remaining demand-side knob.
+
 ## Not yet done
 
 - Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
