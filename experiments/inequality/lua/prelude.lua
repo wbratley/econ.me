@@ -74,10 +74,17 @@ local LABOR_PER_TOOL = 3                          -- CRAFT_TOOLS: 3 -> 1
 -- are not farming. Yields are set so one parcel serves about the same number
 -- of people whichever way it is used (a field feeds 4.95/0.8 = 6.2), so these
 -- are directly comparable to FOOD_PER_FARM_HAND when choosing what to build.
-local SHELTER_PER_DWELLING = 6                    -- LET_DWELLING: 0.5 -> 6
-local LABOR_PER_LET = 0.5
-local ENERGY_PER_PLANT = 6                        -- GENERATE_POWER: 1 -> 6
-local LABOR_PER_GENERATE = 1
+-- These MUST match the recipes in scenario.py. They are what a firm prices
+-- its asks and its labour bids off, so a stale copy does not merely misreport
+-- -- it makes the firm charge for labour it never spends. They were left at
+-- the pre-utility-margin values (0.5 and 1) when the recipes dropped to 0.2
+-- and 0.3, which had firms asking 2.5x their true cost for shelter and 3.3x
+-- for energy, and bidding for more labour per parcel than a let or a
+-- generation run actually consumes.
+local SHELTER_PER_DWELLING = 6                    -- LET_DWELLING: 0.2 -> 6
+local LABOR_PER_LET = 0.2
+local ENERGY_PER_PLANT = 6                        -- GENERATE_POWER: 0.3 -> 6
+local LABOR_PER_GENERATE = 0.3
 
 -- The fixed real quantities a household turns over every tick -- what it
 -- consumes plus what spoils on the shelf. These are the denominators that
