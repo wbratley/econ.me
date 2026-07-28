@@ -300,6 +300,13 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
     except ValueError as exc:
         # InsufficientFunds / CurrencyMismatch / NotMonetaryAuthority /
         # OperationVetoed / InsufficientHoldings / MarketInactive / bad amount
-        return rejected(str(exc))
+        outcome = rejected(str(exc))
+        if isinstance(exc, markets.InsufficientHoldingsError):
+            # The one rejection this tick's auction could still cure. Flagged by
+            # exception type rather than left for the caller to pattern-match
+            # out of `reason`, which is a human-readable string and not a
+            # contract. run_tick uses this to retry the intent after clearing.
+            outcome["short_of_holdings"] = True
+        return outcome
 
     return {**event, "status": "applied", **extra}

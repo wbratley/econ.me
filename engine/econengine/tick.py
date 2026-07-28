@@ -24,6 +24,12 @@ run_tick():
   7. clears every active commodity market in a uniform-price call auction —
      orders placed this tick (by scripts or via the API since the last tick)
      participate in this tick's auction
+ 7b. retries any start_process from step 6 that was rejected solely for want
+     of inputs — AFTER the auction, so a process can be fed by what its
+     entity bought this tick instead of waiting a tick and paying a round of
+     decay first. Only that rejection is retried, and the step-6 attempt is
+     what fixes ordering against sell orders of the same good, so each intent
+     still yields exactly one event
   8. runs the consumption pass — AFTER the auction, so goods bought this
      tick are eaten this tick and sell orders settle before anything is
      eaten; draws down need-satisfying holdings and rewrites satisfaction
@@ -143,10 +149,47 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
             intents.extend(result.intents)
 
     intents.sort(key=lambda i: i.priority)  # stable: collection order breaks ties
+
+    # Every intent is tried here, before the auction, exactly as priority order
+    # says. A start_process that fails ONLY for want of inputs is then retried
+    # after clearing, because that is the one rejection buying could have
+    # cured: with a single pass, an input bought this tick was unusable until
+    # the next one and took a full round of decay on the way -- a flat tax on
+    # hiring rather than self-supplying. Measured in the inequality scenario,
+    # where LABOR decays 0.5/tick, hired labour arrived at 50% while a
+    # smallholder's own auto-issued labour arrived at 100%.
+    #
+    # Retrying rather than simply moving production after the auction is what
+    # keeps the rest of the ordering honest, and all three of these matter:
+    #
+    #   * a process still has first claim on its own entity's goods. Orders do
+    #     not escrow (markets.py) -- holdings are checked live at settlement --
+    #     so whichever runs first wins. Deferring production wholesale would
+    #     silently let a sell order take inputs out from under it.
+    #   * priority keeps meaning what it says between "use this" and "sell
+    #     this". Splitting by intent type would have made type outrank
+    #     priority, which no script author could see coming.
+    #   * a duration-0 recipe still completes inline in time to sell its output
+    #     into this tick's auction (production.start_process completes them
+    #     immediately). Deferring production would have pushed that output past
+    #     the auction and into the decay pass -- the same bug, mirrored onto
+    #     producers.
+    #
+    # A first attempt leaves nothing behind when it fails: resolve_intent runs
+    # each one in a savepoint, so a rejection is fully rolled back and the
+    # retry starts clean. The held-back rejection is not recorded, so each
+    # intent still produces exactly one event -- the outcome that stood.
+    retry: list[Intent] = []
     for intent in intents:
-        events.append(resolve_intent(session, intent))
+        outcome = resolve_intent(session, intent)
+        if intent.intent_type == "start_process" and outcome.get("short_of_holdings"):
+            retry.append(intent)
+            continue
+        events.append(outcome)
 
     events.extend(markets.run_auctions(session, tick_number=number))
+    for intent in retry:
+        events.append(resolve_intent(session, intent))
     events.extend(needs.run_consumption(session, tick_number=number))
     events.extend(goods.apply_decay(session, tick_number=number))
     events.extend(conditions.run_incapacity(session, tick_number=number))
