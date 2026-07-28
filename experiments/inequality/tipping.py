@@ -39,6 +39,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from ..parallel import Job, default_workers, run_jobs
+from .metrics import mobility_correlation
 from .run import run_scenario
 from .scenario import ScenarioConfig
 
@@ -46,12 +47,67 @@ from .scenario import ScenarioConfig
 RESCUE_MAX = 6
 COLLAPSE_MIN = 10
 
+# Ticks at which every outcome variable is recorded, not just deaths. Deaths
+# went degenerate once COND-WEAK got a decay rate, so the arm comparison now
+# rests on hunger / COND-WEAK burden / gini / mobility -- and those need the
+# same trajectory treatment deaths already had, or a 250-tick result cannot be
+# compared against a 400-tick one at all. See horizon.py.
+HORIZON_TICKS = (100, 150, 200, 250, 300, 350, 400)
+
+# Length of the trailing window hunger is read through -- see _windowed().
+HUNGER_WINDOW = 100
+
 
 def _first(snapshots: list[dict], predicate) -> int | None:
     for snap in snapshots:
         if predicate(snap):
             return snap["tick"]
     return None
+
+
+def _at(snapshots: list[dict], tick: int, getter):
+    """Value at the first snapshot at or after `tick`, so the fixed-tick
+    series is robust to `metrics_every`. None -- not 0 -- when the run never
+    reached that tick, because a shorter run must not read as a real zero."""
+    return next((getter(s) for s in snapshots if s["tick"] >= tick), None)
+
+
+def _land_share(snapshot: dict) -> float:
+    """Land as a fraction of measured household wealth. The number that says
+    how much the old cash-and-goods `net_worth` was leaving out."""
+    components = snapshot.get("wealth_components")
+    if not components:
+        return 0.0
+    total = sum(components[k] for k in ("cash", "goods", "land", "shares"))
+    return components["land"] / total if total else 0.0
+
+
+def _windowed(snapshots: list[dict], tick: int, getter, width: int = HUNGER_WINDOW):
+    """Mean over the TRAILING window (tick - width, tick].
+
+    Hunger needs this and the stocks do not. Measured at metrics_every=1, seed
+    0, 400 ticks: COND-WEAK burden, carrier count and gini all move under 2%
+    between one tick and the next, but the population's mean hunger moves
+    0.05-0.09 -- as much as the entire spread across all eight arms of the last
+    matrix (0.534 to 0.628). It is a fast, jittery signal because hungry spells
+    are one tick long, so a point sample throws away nearly all the
+    information in it. (This is NOT the metrics_every=5 aliasing bug: even and
+    odd ticks average within 0.016 of each other over a run, so there is no
+    phase lock to correct for -- just noise to average out.)
+
+    Trailing rather than centred, which matters more than it looks. A centred
+    window is undefined at the last tick of a run, so it truncates to one side
+    there and nowhere else -- and the last tick is exactly where the arm
+    comparison gets made. Measured with a centred window: three of four
+    arm/tick cells cut the across-seed sd (x0.74, x0.89, x0.45) and the fourth
+    *raised* it (x1.56), with both t400 windowed means biased above their
+    point values because the truncated window lagged into an earlier, better
+    stretch of the run. A trailing window is defined identically at every
+    tick: it lags by ~width/2, but it lags equally for every arm, so no
+    comparison is affected.
+    """
+    xs = [getter(s) for s in snapshots if tick - width < s["tick"] <= tick]
+    return sum(xs) / len(xs) if xs else None
 
 
 def summarise(result: dict) -> dict:
@@ -75,11 +131,42 @@ def summarise(result: dict) -> dict:
         "first_hunger_tick": _first(snapshots, lambda s: s["cond_weak_carriers"] > 0),
         "carriers_at_50": next(
             (s["cond_weak_carriers"] for s in snapshots if s["tick"] >= 50), 0),
-        "carriers_at_100": next(
-            (s["cond_weak_carriers"] for s in snapshots if s["tick"] >= 100), 0),
-        "cond_weak_at_100": next(
-            (s["cond_weak_total"] for s in snapshots if s["tick"] >= 100), 0.0),
         "first_death_tick": deaths[0][0] if deaths else None,
+        # The outcome variables at fixed ticks. `cond_weak_at_100` and
+        # `carriers_at_100` used to be spelled out here and now come from this
+        # block instead -- same definition, one source.
+        **{
+            f"{name}_at_{t}": _at(snapshots, t, getter)
+            for t in HORIZON_TICKS
+            for name, getter in (
+                ("hunger", lambda s: s["mean_hunger_satisfaction"]),
+                ("gini", lambda s: s["gini"]),
+                ("cond_weak", lambda s: s["cond_weak_total"]),
+                ("carriers", lambda s: s["cond_weak_carriers"]),
+                # Mobility is a two-point statistic, so it needs genesis as
+                # well as the tick: "does where you started still decide where
+                # you are" only means something against where everyone started.
+                ("mobility", lambda s: mobility_correlation(snapshots[0], s)),
+                # The same two on wealth that includes land and shares, not
+                # just cash and goods. .get() with a fallback so a result JSON
+                # written before metrics grew these keys still summarises.
+                ("gini_total", lambda s: s.get("gini_total", s["gini"])),
+                ("mobility_total", lambda s: mobility_correlation(
+                    snapshots[0], s, key="total_wealth")),
+                ("land_share_of_wealth", lambda s: _land_share(s)),
+            )
+        },
+        # Hunger again, averaged over a window rather than sampled at an
+        # instant -- see _windowed(). `hunger_at_t` is kept alongside it
+        # because the horizon comparison was run on the point version and the
+        # two should stay comparable.
+        **{
+            f"hunger_win_at_{t}": (
+                _windowed(snapshots, t, lambda s: s["mean_hunger_satisfaction"])
+                if snapshots[-1]["tick"] >= t else None
+            )
+            for t in HORIZON_TICKS
+        },
         # Death count at fixed ticks, so a run's mortality TRAJECTORY survives
         # summarising. Without these, comparing a 200-tick result against a
         # 400-tick one cannot separate "the intervention stopped working" from
@@ -87,8 +174,15 @@ def summarise(result: dict) -> dict:
         # the n=100 sweep hit, because reducing in the worker (parallel.Job)
         # discards the snapshots these are read from.
         **{
-            f"deaths_at_{t}": sum(1 for d, _ in deaths if d is not None and d <= t)
-            for t in (100, 150, 200, 250, 300)
+            # Gated on the run actually reaching t, like _at() above: deaths
+            # are counted off the death list rather than a snapshot, so
+            # without the gate a 150-tick run reports a confident 0 deaths at
+            # tick 400 -- a zero that is really "never ran that far".
+            f"deaths_at_{t}": (
+                sum(1 for d, _ in deaths if d is not None and d <= t)
+                if snapshots[-1]["tick"] >= t else None
+            )
+            for t in HORIZON_TICKS
         },
         # H2 instruments: how much land stopped producing, and whether the
         # early deaths were the people who owned it.

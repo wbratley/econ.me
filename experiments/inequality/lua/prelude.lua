@@ -70,6 +70,14 @@ local FOOD_PER_FARM_HAND = 0.70 * 6 + 0.25 * 3   -- 4.95, 5% crop failure
 local FOOD_PER_FARM_TOOLED = 0.80 * 10 + 0.15 * 5 -- 8.75
 local CLOTHES_PER_LABOR = 3 / 2                   -- MAKE_CLOTHES: 2 -> 3
 local LABOR_PER_TOOL = 3                          -- CRAFT_TOOLS: 3 -> 1
+-- Per PARCEL per tick, and per unit of labour, for the two land uses that
+-- are not farming. Yields are set so one parcel serves about the same number
+-- of people whichever way it is used (a field feeds 4.95/0.8 = 6.2), so these
+-- are directly comparable to FOOD_PER_FARM_HAND when choosing what to build.
+local SHELTER_PER_DWELLING = 6                    -- LET_DWELLING: 0.5 -> 6
+local LABOR_PER_LET = 0.5
+local ENERGY_PER_PLANT = 6                        -- GENERATE_POWER: 1 -> 6
+local LABOR_PER_GENERATE = 1
 
 -- The fixed real quantities a household turns over every tick -- what it
 -- consumes plus what spoils on the shelf. These are the denominators that
@@ -77,6 +85,8 @@ local LABOR_PER_TOOL = 3                          -- CRAFT_TOOLS: 3 -> 1
 -- level has somewhere to sit (see "The nominal anchor" above).
 local SUBSISTENCE_FOOD = 0.8    -- HUNGER quantity_per_tick
 local COMFORT_CLOTHES = 0.2     -- COMFORT quantity_per_tick
+local SHELTER_PER_TICK = 1      -- SHELTER quantity_per_tick
+local ENERGY_PER_TICK = 1       -- POWER quantity_per_tick
 local FOOD_DECAY = 0.3          -- FOOD decay_per_tick
 local CLOTHES_DECAY = 0.05      -- CLOTHES decay_per_tick
 local PLANNING_HORIZON = 20     -- ticks of savings a household spends against
@@ -123,6 +133,48 @@ local function farm_parcel()
     end
   end
   return nil
+end
+
+
+-- Every parcel of ours carrying `facility_type`, in ctx order (which is
+-- creation order, so it is stable across ticks and across runs). Land stopped
+-- being one field per firm when housing and power arrived: a firm can hold
+-- several dwellings and work each of them, and facility capacity means each
+-- one backs its own running process.
+local function parcels_with(facility_type)
+  local out = {}
+  for _, p in ipairs(ctx.parcels) do
+    for _, f in ipairs(p.facilities) do
+      if f == facility_type then out[#out + 1] = p.id break end
+    end
+  end
+  return out
+end
+
+
+-- Parcels with nothing standing on them yet -- the land the firm still gets
+-- to decide about. One use per parcel is a rule of THIS script, not of the
+-- engine: nothing stops a farm and a dwelling sharing an acre, so treating
+-- "has any facility" as "spoken for" is what keeps the three uses genuinely
+-- rival. See the note on the BUILD_ recipes in scenario.py.
+-- Is a build already under way? Builds take several ticks and tie up the
+-- parcel, and a firm that started one every tick it could afford would sink
+-- its whole balance into simultaneous construction before the first one
+-- finished and told it anything about whether the use was worth it.
+local function building_now()
+  for _, p in ipairs(ctx.processes) do
+    if string.sub(p.recipe, 1, 6) == "BUILD_" then return true end
+  end
+  return false
+end
+
+
+local function bare_parcels()
+  local out = {}
+  for _, p in ipairs(ctx.parcels) do
+    if #p.facilities == 0 then out[#out + 1] = p.id end
+  end
+  return out
 end
 
 

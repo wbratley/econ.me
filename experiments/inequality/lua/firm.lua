@@ -25,7 +25,12 @@ local labor = holding_qty("LABOR")
 local food_price = market_price("FOOD", 3)
 local clothes_price = market_price("CLOTHES", 8)
 local tools_price = market_price("TOOLS", 20)
+local shelter_price = market_price("SHELTER", 3)
+local energy_price = market_price("ENERGY", 3)
 local farm_yield = unlocked_agronomy and FOOD_PER_FARM_TOOLED or FOOD_PER_FARM_HAND
+
+local dwellings = parcels_with("DWELLING")
+local plants = parcels_with("POWER-PLANT")
 
 -- Firms are not identical: this is seeded per firm at genesis. Without it
 -- every firm quotes the same number for the same tranche and the auction
@@ -98,6 +103,71 @@ else
   end
 end
 
+-- Work every dwelling and every plant that is standing and idle. Facility
+-- capacity means one facility backs one running process, so this is one
+-- process per parcel: housing more people or generating more power is a
+-- building decision, not a scheduling one.
+-- Priority 21/22 puts these AHEAD of tools and clothes, and that ordering is
+-- load-bearing rather than cosmetic. Intents consume the firm's labour in
+-- priority order, so whatever runs last gets what is left -- and at 5 firms
+-- needing 7.5 labour a tick against 30 units issued to the whole economy,
+-- something always goes short. Measured with generation last: GENERATE_POWER
+-- failed on all five plants nearly every tick for sixty ticks, energy output
+-- flat zero against a standing demand of 30, while clothes were made on
+-- schedule. An hour spent generating is worth six units of energy; an hour
+-- spent on clothes is worth one and a half units of clothes. The bid schedule
+-- below already says so; this makes the firm's own spending agree with it.
+for _, pid in ipairs(dwellings) do
+  if not running_on(pid) then ctx.action.start_process("LET_DWELLING", pid, 21) end
+end
+for _, pid in ipairs(plants) do
+  if not running_on(pid) then ctx.action.start_process("GENERATE_POWER", pid, 22) end
+end
+
+-- What to put on bare land.
+--
+-- The firm prices each use the same way it prices labour: by what the parcel
+-- would earn per tick, net of the labour it takes to work it. Whichever pays
+-- most wins the acre. That is the whole point of the fixed land pool -- a
+-- dwelling is a field that is not growing food, and which one gets built is
+-- an outcome of prices rather than a setting in genesis.
+--
+-- Two deliberate conservatisms. Rent per tick is compared against a build
+-- that costs labour once, so the firm is comparing a flow to a stock and will
+-- always build if any use is profitable at all; the brake is that it only
+-- ever starts ONE build at a time, so over-building takes many ticks and the
+-- prices it is reading move underneath it. And it will not build while it
+-- cannot cover the labour, which is what stops a broke firm sinking its last
+-- cash into a hole in the ground.
+local wage = market_price("LABOR", 5)
+local bare = bare_parcels()
+local intended_build = nil
+if #bare > 0 and not building_now() then
+  local uses = {
+    { recipe = "BUILD_FARM",        labor = 2,
+      value = farm_yield * food_price - wage },
+    { recipe = "BUILD_DWELLING",    labor = 4,
+      value = SHELTER_PER_DWELLING * shelter_price - LABOR_PER_LET * wage },
+    { recipe = "BUILD_POWER_PLANT", labor = 6,
+      value = ENERGY_PER_PLANT * energy_price - LABOR_PER_GENERATE * wage },
+  }
+  table.sort(uses, function(a, b) return a.value > b.value end)
+  local best = uses[1]
+  -- Net of the margin, like every other use of labour: a firm that builds at
+  -- exactly break-even is decapitalising itself one acre at a time.
+  if best.value * (1 - margin) > 0.01 and balance >= best.labor * wage then
+    intended_build = best
+    -- Only start it once the labour is actually in hand. start_process
+    -- consumes its inputs at start, so firing this while short just fails the
+    -- intent silently, every tick, forever -- which is exactly what happened
+    -- the first time and left every parcel bare for a whole run. The labour
+    -- is bid for below, so the build lands a tick or two after the decision.
+    if labor >= best.labor then
+      ctx.action.start_process(best.recipe, bare[1], 29)
+    end
+  end
+end
+
 -- Dividends: distribute real profit to the share register, never capital.
 --
 -- The reserve is the firm's genesis endowment, so only cash earned ABOVE
@@ -165,6 +235,26 @@ if clothes > 0.01 then
                           account.id, 41)
 end
 
+-- Rent and power. Both goods decay completely at the end of the tick, so
+-- there is no such thing as holding them back for a better price -- an unsold
+-- night's occupancy is gone. That makes conceding on them strictly correct
+-- where it is merely reasonable for food, and it is why a landlord in this
+-- economy has more reason to cut than a farmer does.
+local shelter = holding_qty("SHELTER")
+if shelter > 0.01 then
+  local unit_cost = wage * LABOR_PER_LET / SHELTER_PER_DWELLING * markup
+  ctx.action.place_order("SHELTER", "sell", amount_str(shelter),
+                          amount_str(quote(unit_cost, concede(fills, "SHELTER"))),
+                          account.id, 42)
+end
+local energy = holding_qty("ENERGY")
+if energy > 0.01 then
+  local unit_cost = wage * LABOR_PER_GENERATE / ENERGY_PER_PLANT * markup
+  ctx.action.place_order("ENERGY", "sell", amount_str(energy),
+                          amount_str(quote(unit_cost, concede(fills, "ENERGY"))),
+                          account.id, 43)
+end
+
 -- Buy labor for next tick's operations, as a demand schedule: one order per
 -- use of labor, priced at what that use is actually worth.
 --
@@ -188,6 +278,24 @@ if field_id then
   tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price - wear }
 end
 
+-- One tranche per dwelling and per plant, not one for the sector: each
+-- facility runs its own process, so the Nth dwelling's labour is worth
+-- exactly what the Nth dwelling produces. Priced per unit of labour, which is
+-- why letting -- half a unit of upkeep for six units of occupancy -- bids so
+-- much harder per hour than farming does.
+for _ = 1, #dwellings do
+  tranches[#tranches + 1] = {
+    qty = LABOR_PER_LET,
+    price = SHELTER_PER_DWELLING * shelter_price / LABOR_PER_LET,
+  }
+end
+for _ = 1, #plants do
+  tranches[#tranches + 1] = {
+    qty = LABOR_PER_GENERATE,
+    price = ENERGY_PER_PLANT * energy_price / LABOR_PER_GENERATE,
+  }
+end
+
 tranches[#tranches + 1] = { qty = 2, price = CLOTHES_PER_LABOR * clothes_price }
 
 if holding_qty("TOOLS") < 3 then
@@ -202,6 +310,20 @@ end
 -- push competing on equal terms with ordinary production.
 if not unlocked_agronomy and research_timer >= 15 then
   local shortfall = 6 - labor
+  if shortfall > 0 then
+    tranches[#tranches + 1] = { qty = shortfall, price = farm_yield * food_price }
+  end
+end
+
+-- Labour to put up whatever the firm decided to build. Without this tranche
+-- the firm decides to build every tick and never has the hours to do it: the
+-- build recipes want 2-6 LABOR held at once, and ordinary operations bid for
+-- one or two. Valued at a farm hour, the same conservative floor the research
+-- push uses -- the honest value is the discounted stream the building would
+-- earn, and pricing it that way would have the firm outbid the entire economy
+-- for construction labour.
+if intended_build then
+  local shortfall = intended_build.labor - labor
   if shortfall > 0 then
     tranches[#tranches + 1] = { qty = shortfall, price = farm_yield * food_price }
   end

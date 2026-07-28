@@ -34,6 +34,15 @@ _SOIL_QUANTITY = Decimal("50")
 _SOIL_CAPACITY = Decimal("50")
 _SOIL_REGEN = Decimal("2")
 
+# A fuel seam regenerates more slowly than soil and holds less, so a plant run
+# flat out outruns its own land and has to idle -- energy is the sector where
+# land quality bites hardest. GENERATE_POWER draws 1 per tick against a regen
+# of 1.2, so a single plant is sustainable and a second on the same parcel
+# would not be.
+_FUEL_QUANTITY = Decimal("30")
+_FUEL_CAPACITY = Decimal("30")
+_FUEL_REGEN = Decimal("1.2")
+
 
 # Expected FOOD from one field-tick under FARM_FOOD_HAND, from the branch
 # table in _create_recipes below.
@@ -93,6 +102,44 @@ class ScenarioConfig:
     estate_rule: str = "burn"  # burn | treasury | heir
     redistribution_period: int = 5
     smallholder_fraction: float = 0.15
+    # Bare parcels each firm holds on top of its working farm. This is the
+    # land the build mechanic gets to allocate: raise it and firms have room
+    # to over-build one sector, drop it to 0 and the economy reverts to
+    # farming only, which is every result recorded before rent and bills.
+    bare_land_per_firm: int = 2
+
+    # --- The household nominal anchor (swept by calibrate.py) -------------
+    # A household commits `balance / planning_horizon` per tick and splits it
+    # across goods by these shares. The horizon is what pins the price level
+    # (see bug 8), so it cannot be widened casually -- but it was calibrated
+    # against a basket of food alone, and rent and power tripled the real flow
+    # it has to fund.
+    planning_horizon: float = 20.0
+    food_budget_share: float = 0.5
+    shelter_budget_share: float = 0.20
+    energy_budget_share: float = 0.10
+    clothes_budget_share: float = 0.15
+
+    # --- The extensive margin of labour supply ------------------------------
+    # Ticks of ordinary living (the basket at market prices) a household's
+    # balance must already cover before it stops offering wage labour at all.
+    # Work is a disutility: you sell your labour because you cannot pay for the
+    # week otherwise, and whoever can live off what they own does not turn up.
+    # Below this the reservation wage still does its work on the intensive
+    # margin. Set very high to recover the old always-participate behaviour.
+    #
+    # 40 is a deliberately inert default, and that is a statement about the
+    # economy rather than about the number. Measured over individuals only,
+    # smoothed (30 individuals, seed 0), cover peaks at 36.8 for the RICHEST
+    # person at t30 and decays to 11.9 by t150; the median goes 10.3 -> 0.39.
+    # So nobody in this economy can live off what they own, at any point, and
+    # the extensive margin never binds. It fires when it is given something to
+    # bite on -- at a threshold of 5, two workers withdraw at t15 with all 30
+    # still alive -- but a threshold tuned to bind on destitution would be
+    # fitting to the very brokenness the calibration work is trying to remove.
+    # Left where it belongs so it becomes live once households can accumulate.
+    work_free_cover: float = 40.0
+
     seed: int = 0
 
     # --- Firm profit margin ------------------------------------------------
@@ -268,16 +315,101 @@ def _create_goods(session: Session) -> None:
         decay_per_tick=Decimal("0.02"),
     )
 
+    # --- Rent and bills ----------------------------------------------------
+    #
+    # SHELTER and ENERGY decay COMPLETELY each tick, which is the whole trick
+    # that makes a recurring obligation work without a new engine mechanism.
+    # Consumption runs after the auction and before decay, so buying exactly
+    # this tick's requirement satisfies the need and nothing carries over: you
+    # are buying one tick's occupancy and one tick's power, and next tick the
+    # bill is due again. Nobody can stockpile a year of rent in a good week.
+    #
+    # It also sidesteps the ownership invariant the same way taxation does. A
+    # landlord cannot reach into a tenant's account any more than a treasury
+    # can (design.md § military, and see the taxation note above) -- so rent
+    # is not taken, it is *bought*, and the consequence of not paying is
+    # simply that the need goes unmet. No forced transfer, no seizure, no new
+    # primitive. Eviction is the absence of a purchase.
+    goods.create_good(session, "SHELTER", decay_per_tick=Decimal("1"))
+    goods.create_good(session, "ENERGY", decay_per_tick=Decimal("1"))
+
+    # Both carry decay FROM THE START -- the COND-WEAK artifact above is what
+    # happens when a damage counter has no way down.
+    #
+    # They deliberately bite on DIFFERENT margins rather than being one effect
+    # at two strengths, and what makes that possible is where the engine reads
+    # a condition's modifier. There are exactly two such sites (goods.py,
+    # production.py): the auto-issue top-up target, and a recipe's input and
+    # good_requirement checks. So a condition can throttle what you are ISSUED
+    # and what you are ABLE TO DO -- it cannot reach consumption, orders or
+    # cash. Within that, the two needs express two different kinds of harm.
+    #
+    # NO HEATING is the intensive margin: you are cold, so you get less done.
+    # It scales "LABOR" alone, which is the auto-issued good, so it cuts the
+    # hours you have to sell and nothing else. Unpleasant, survivable,
+    # recoverable the moment you can pay the bill again.
+    goods.create_good(
+        session, "COND-COLD",
+        modifies_pattern="LABOR", modifies_factor=Decimal("0.80"),
+        decay_per_tick=Decimal("0.02"),
+    )
+    # ROUGH SLEEPING is the extensive margin, and the pattern is "*" on
+    # purpose. It scales every symbol at both read sites, so it cuts the labour
+    # you are issued AND every recipe input and good_requirement you try to
+    # meet -- most sharply `SKILL-FARM`, which `WORK_AS_FARMER` gates on at >=
+    # 1. A smallholder sleeping rough stops being able to work their own land;
+    # a labourer's day shrinks. Losing your home does not just cost you a
+    # slice of your wage, it locks you out of skilled and self-provisioning
+    # work, which is the difference between a bad month and a trap: less
+    # labour -> less income -> still cannot pay rent.
+    #
+    # It is also the one new route to incapacity, and the arithmetic is the
+    # point rather than an afterthought. Grant is 1 x (1 - satisfaction) per
+    # tick against decay 0.02, so an entity unhoused a fraction f of the time
+    # settles at f/0.02 = 50f, and the threshold only ever fires if
+    # 50f > incapacitates_at. At 40:
+    #
+    #   f = 1.00 (never housed)      equilibrium 50 -> crosses 40 at ~80 ticks
+    #   f = 0.80 (housed one tick in five) equilibrium 40 -> only just, slowly
+    #   f = 0.50 (housed half the time)    equilibrium 25 -> never
+    #
+    # That is the property COND-WEAK lacked: it is reachable only under
+    # sustained near-total destitution, never by intermittently missing rent.
+    # In the current uncalibrated economy shelter satisfaction sits near 0.5,
+    # so this fires for nobody -- it is a tail, deliberately, not a default.
+    goods.create_good(
+        session, "COND-EXPOSED",
+        modifies_pattern="*", modifies_factor=Decimal("0.70"),
+        incapacitates_at=Decimal("40"),
+        decay_per_tick=Decimal("0.02"),
+    )
+
 
 def _create_needs(session: Session) -> None:
+    # Priority is the order the consumption pass draws in, and here it is also
+    # the order a household goes under: food before rent before power before
+    # clothes. That ordering is the mechanism by which a squeeze shows up as
+    # cold and crowded rather than as starvation -- the essential need is
+    # served first, so the bills are what get missed. Making it explicit
+    # matters because it is a claim about behaviour, not a tie-break.
     needs.create_need(
         session, "HUNGER", Decimal("0.8"), ["FOOD"],
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="COND-WEAK", condition_quantity=Decimal("1"),
     )
     needs.create_need(
-        session, "COMFORT", Decimal("0.2"), ["CLOTHES"],
+        session, "SHELTER", Decimal("1"), ["SHELTER"],
         entity_type=EntityType.INDIVIDUAL, priority=1,
+        condition_symbol="COND-EXPOSED", condition_quantity=Decimal("1"),
+    )
+    needs.create_need(
+        session, "POWER", Decimal("1"), ["ENERGY"],
+        entity_type=EntityType.INDIVIDUAL, priority=2,
+        condition_symbol="COND-COLD", condition_quantity=Decimal("1"),
+    )
+    needs.create_need(
+        session, "COMFORT", Decimal("0.2"), ["CLOTHES"],
+        entity_type=EntityType.INDIVIDUAL, priority=3,
     )
 
 
@@ -293,7 +425,8 @@ def share_symbol(firm_index: int) -> str:
 
 
 def _create_markets(session: Session, config: ScenarioConfig) -> None:
-    for symbol in ("LABOR", "LABOR-FARM", "FOOD", "CLOTHES", "TOOLS"):
+    for symbol in ("LABOR", "LABOR-FARM", "FOOD", "CLOTHES", "TOOLS",
+                    "SHELTER", "ENERGY"):
         markets.create_market(session, symbol, "USD")
     if config.share_allocation != "none":
         # Shares are tradable in principle from the start. No script places
@@ -346,13 +479,101 @@ def _create_recipes(session: Session) -> None:
         duration_ticks=5, unlocks=["AGRONOMY"],
     )
 
+    # --- Housing and power: the two other things land can be ---------------
+    #
+    # These are what make land contested rather than merely required. A parcel
+    # is bare until something is built on it, and the three BUILD_ recipes are
+    # mutually exclusive uses of the same acre -- a dwelling is a field that is
+    # not growing food. Because `builds_facility` erects on the bound parcel at
+    # completion and `ctx.parcels` reports each parcel's facilities, a firm can
+    # see which of its land is empty, price the three uses off their own
+    # output, and put up whichever pays best. Land allocation becomes something
+    # the run produces, not something genesis decides.
+    #
+    # One-use-per-parcel is enforced in firm.lua (build only where
+    # `#facilities == 0`), NOT by the engine, which is happy to stack a farm
+    # and a dwelling on one parcel. That is the right split -- zoning is a
+    # policy question and belongs in behaviour, not in mechanism -- but it does
+    # mean the invariant is only as good as the script.
+    production.create_recipe(
+        session, "BUILD_FARM",
+        inputs={"LABOR": Decimal("2")}, outputs={},
+        duration_ticks=3, builds_facility="FARM",
+    )
+    production.create_recipe(
+        session, "BUILD_DWELLING",
+        inputs={"LABOR": Decimal("4"), "TOOLS": Decimal("0.5")}, outputs={},
+        duration_ticks=5, builds_facility="DWELLING",
+    )
+    production.create_recipe(
+        session, "BUILD_POWER_PLANT",
+        inputs={"LABOR": Decimal("6"), "TOOLS": Decimal("1")}, outputs={},
+        duration_ticks=8, builds_facility="POWER-PLANT",
+    )
 
-def _grant_field(session: Session, owner: Entity) -> None:
-    parcel = parcels.create_parcel(session, "FIELD", name=f"{owner.name}'s Field", owner=owner)
-    parcels.add_facility(session, parcel, "FARM", built_tick=None)
+    # Letting takes upkeep, not construction: a dwelling already standing
+    # produces occupancy for several households a tick against a little
+    # maintenance labour. Facility capacity does the rest -- one DWELLING backs
+    # one running LET_DWELLING, so housing more people means building more.
+    # Yields are set so one parcel serves about the same number of people
+    # whatever is built on it: a field feeds 4.95/0.8 = 6.2 mouths a tick, so a
+    # dwelling houses 6 and a plant powers 6. Without that parity the choice
+    # between uses would be decided by an accident of units rather than by
+    # prices, and "which use pays best" is the question the build mechanic
+    # exists to ask.
+    #
+    # Labour intensity is NOT at parity, and deliberately so. Housing and power
+    # are utilities: the cost is in the building, and running one afterwards
+    # takes a caretaker, not a workforce. Giving them farm-like ongoing labour
+    # (0.5 and 1.0) was an unexamined default, and the calibration sweep showed
+    # what it cost -- running the genesis stock of 10 farms, 5 dwellings and 5
+    # plants wanted 10x1 + 5x0.5 + 5x1 = 17.5 LABOR a tick against the ~11.8
+    # the market actually clears, so most of every sector sat idle and no
+    # budget share could fix it. At 0.2 and 0.3 the same stock wants 12.5,
+    # which is within reach of what clears and leaves the margin to fund
+    # clothes, tools and building out of the same labour pool.
+    production.create_recipe(
+        session, "LET_DWELLING",
+        inputs={"LABOR": Decimal("0.2")}, outputs={"SHELTER": Decimal("6")},
+        duration_ticks=1, requires_facility="DWELLING",
+    )
+    # Power draws a regenerating seam, so an energy plot has land *quality*
+    # the way a field has soil, and generating flat out drains it faster than
+    # it comes back.
+    production.create_recipe(
+        session, "GENERATE_POWER",
+        inputs={"LABOR": Decimal("0.3")}, outputs={"ENERGY": Decimal("6")},
+        duration_ticks=1, requires_facility="POWER-PLANT",
+        deposit_inputs={"FUEL-SEAM": Decimal("1")},
+    )
+
+
+def _grant_field(
+    session: Session, owner: Entity, name: str = "", built: bool = True,
+    facility: str = "FARM",
+) -> None:
+    """One parcel of land, optionally with a farm already standing on it.
+
+    Every parcel carries BOTH deposits regardless of what gets built, because
+    the point of the fixed land pool is that a given acre could have been any
+    of the three things. Endowing only the parcels destined to farm with soil
+    would decide the allocation at genesis under another name, and the
+    allocation is meant to be the run's output.
+
+    `built=False` hands over bare land: no facility, so a firm has to choose a
+    use and pay to build it before that acre produces anything at all.
+    """
+    parcel = parcels.create_parcel(
+        session, "LAND", name=name or f"{owner.name}'s Land", owner=owner)
+    if built:
+        parcels.add_facility(session, parcel, facility, built_tick=None)
     parcels.add_deposit(
         session, parcel, "SOIL-FERTILITY", _SOIL_QUANTITY,
         capacity=_SOIL_CAPACITY, regen_per_tick=_SOIL_REGEN,
+    )
+    parcels.add_deposit(
+        session, parcel, "FUEL-SEAM", _FUEL_QUANTITY,
+        capacity=_FUEL_CAPACITY, regen_per_tick=_FUEL_REGEN,
     )
 
 
@@ -361,7 +582,23 @@ def _create_firms(session: Session, config: ScenarioConfig) -> list[str]:
     for i in range(config.n_firms):
         firm = services.create_entity(session, f"Firm {i + 1}", EntityType.BUSINESS)
         services.create_account(session, firm, "USD", initial_balance=Decimal("3000"))
-        _grant_field(session, firm)
+        # A working farm, a dwelling and a power plant each, plus bare land.
+        #
+        # The housing and power stock has to EXIST at genesis, not be built
+        # from nothing. Measured without it: no firm can assemble the 4-6 LABOR
+        # a build needs before the whole population has failed shelter and
+        # power for the entire bootstrap, and since both conditions cut labour
+        # productivity on top of COND-WEAK, the food economy goes with them --
+        # food price 3 -> 111, hunger satisfaction 0.03, and not one dwelling
+        # ever built. Real economies start with a housing stock; this one has
+        # to as well. At 6 served per parcel, one of each per firm covers the
+        # population exactly, so the build mechanic operates at the MARGIN --
+        # which is where a build-or-not decision is interesting anyway.
+        _grant_field(session, firm, name=f"{firm.name}'s Field")
+        _grant_field(session, firm, name=f"{firm.name}'s Houses", facility="DWELLING")
+        _grant_field(session, firm, name=f"{firm.name}'s Works", facility="POWER-PLANT")
+        for j in range(config.bare_land_per_firm):
+            _grant_field(session, firm, name=f"{firm.name}'s Plot {j + 1}", built=False)
         # Standing agronomist -- what lets a firm self-convert bought raw
         # LABOR into LABOR-FARM instead of depending on a thin market for it.
         # Headroom above the good_requirements threshold (>= 1): SKILL-FARM
@@ -516,6 +753,16 @@ def _wire_scripts(
                 "tax_rate": str(config.tax_rate),
                 "tax_threshold": str(config.tax_threshold),
                 "treasury_account_id": treasury_account.id,
+                # The nominal anchor, exposed so it can be swept. These were
+                # Lua constants tuned for an economy whose only recurring
+                # purchase was food; with rent and power they decide whether
+                # the basket is affordable at all. See calibrate.py.
+                "planning_horizon": str(config.planning_horizon),
+                "food_budget_share": str(config.food_budget_share),
+                "shelter_budget_share": str(config.shelter_budget_share),
+                "energy_budget_share": str(config.energy_budget_share),
+                "clothes_budget_share": str(config.clothes_budget_share),
+                "work_free_cover": str(config.work_free_cover),
             },
         ))
 

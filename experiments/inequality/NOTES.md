@@ -54,10 +54,13 @@ engine's mechanism/data/policy split this leans on throughout.
   and the Treasury's own POLICY script redistributes only from its own
   collected balance.
 - `metrics.py` — pure-Python Gini/percentile/share/mobility stats (no
-  numpy/pandas in this repo's `.venv`).
+  numpy/pandas in this repo's `.venv`), on two wealth measures: `net_worth`
+  (cash + priced goods) and `total_wealth`, which also values land and shares.
 - `run.py` — single-scenario CLI + `run_scenario()` for programmatic use.
 - `matrix.py` — runs the 5-variant sweep (tax none/flat/progressive ×
   estate burn/treasury/heir) and writes one JSON per variant.
+- `horizon.py` — how long a run has to be. Scores the whole arm comparison at
+  a cheap tick against a long one, measured inside the same runs.
 
 ## Bugs found and fixed (chronological)
 
@@ -868,8 +871,713 @@ dividend reads it every payout period. Two notes:
   that for `FOOD`. If per-symbol visibility should be votable data,
   `build_queries` is where it would be gated. Deliberately not gated yet.
 
+## How long must a run be? 250 keeps the ranking, not the magnitude
+
+The re-run matrix is ~4h at 400 ticks and ~2.5h at 250, and the saving is only
+worth taking if the *comparison* survives the shorter horizon. "Have the
+metrics settled by 250" is the wrong test for that: a metric can still be
+moving at 250 while every arm moves together (gap already decided), and a
+metric can look flat while two arms are mid-crossing. What has to hold is that
+the conclusion drawn at t250 is the conclusion drawn at t400.
+
+`horizon.py` runs the arms to 400 with every outcome recorded at both ticks
+**inside the same run**, so run-to-run luck is removed from the comparison
+entirely — seed 3's t250 and seed 3's t400 are one economy at two moments.
+It then runs the identical pairwise Welch analysis twice and asks whether the
+verdicts match. 4 arms x 12 seeds x 400 ticks, `metrics_every=10`, 50m01s
+(`results/horizon_n30_t400.json`). Arms chosen to span the effect range:
+`tax_none` (baseline), `tax_progressive` (the only arm with a residual effect
+at t400 on the old outcome), `estate_treasury` (a pure delay-pattern arm),
+`margin_00` (the largest lever, and the only one that moves *production*).
+
+| outcome | pairs agreeing | sign flips | arm-ordering rank r |
+|---|---|---|---|
+| gini | **6/6** | 0 | **+1.00** |
+| mobility | **6/6** | 0 | +0.80 |
+| COND-WEAK burden | 5/6 | 0 | **+1.00** |
+| COND-WEAK carriers | 5/6 | 0 | +0.89 |
+| mean hunger (point sample) | 4/6 | 0 | +0.80 |
+| deaths | — | — | 0.000 in all four arms at every tick |
+
+**Zero sign flips in 30 comparisons.** No pair of arms crosses over between
+250 and 400, on any outcome. Arm means at the two horizons:
+
+| arm | hunger | COND-WEAK | carriers | gini | mobility |
+|---|---|---|---|---|---|
+| tax_none | 0.801 → 0.803 | 230 → 289 | 17.5 → 23.3 | 0.284 → 0.456 | 0.643 → 0.291 |
+| tax_progressive | 0.930 → 0.869 | 186 → 242 | 24.6 → 26.1 | 0.020 → 0.018 | −0.006 → −0.074 |
+| estate_treasury | 0.843 → 0.860 | 161 → 230 | 24.6 → 25.9 | 0.031 → 0.030 | −0.011 → −0.025 |
+| margin_00 | 0.809 → 0.753 | 306 → 339 | 20.3 → 23.3 | 0.372 → 0.554 | 0.482 → 0.246 |
+
+**The magnitudes do not survive.** diff@250 / diff@400 per pair runs from 0.32
+to 2.74, and the bias has a *direction per outcome* rather than being noise:
+t250 overstates carrier gaps (x2.58, x2.74, x1.68) and mobility gaps (x1.78,
+x2.07, x1.82, x1.52), and understates every gini gap (x0.59, x0.60, x0.65,
+x0.66, x0.90, x0.91). A 250-tick matrix would rank the arms correctly and then
+misreport how much any of it matters, in opposite directions depending on
+which row you read. That is a milder version of the same trap the old deaths
+table set — 6.70 at t200 was really 1.43 at t400.
+
+Four pairs disagree. Two are p-values straddling the Bonferroni line
+(a=0.00833) rather than genuine changes of mind — `tax_none` vs
+`tax_progressive` on hunger (0.0027 → 0.0168) and `tax_progressive` vs
+`margin_00` on carriers (0.0089 → 0.0000). Two are substantive:
+
+| pair | outcome | diff@250 | p | diff@400 | p |
+|---|---|---|---|---|---|
+| estate_treasury vs margin_00 | hunger | +0.035 | 0.329 | +0.107 | 0.0012 |
+| tax_none vs margin_00 | COND-WEAK | −76.0 | 0.0054 | −50.2 | 0.124 |
+
+Both involve `margin_00`, the arm still moving fastest at 250 (gini 0.372 →
+0.554, burden 306 → 339 over that stretch). **So: 250 is safe for "which arms
+differ and in which direction", and specifically unsafe for `margin_00`.**
+
+Two caveats on the test itself. n=12, so the significance calls are themselves
+noisy, and "the horizons disagree" is partly conflated with "n=12 straddles
+the threshold" — which is exactly what the two borderline pairs are.
+And **neither horizon is a steady state**: `tax_none` gini goes 0.286 → 0.326
+→ 0.397 → 0.453 → 0.507 across t200–t400 with no sign of levelling. The
+ordering is stable; the economy is not.
+
+### The new outcomes separate the arms far harder than deaths ever did
+
+This is the bigger cost lever. At n=12, most gini and mobility pairs are
+already at p<0.0001 — the arms are separated by 0.018 against 0.554 on gini,
+and −0.074 against 0.291 on mobility. The old matrix needed 30 seeds because
+deaths had sd 1.5–3.2 around means 12–16. If the re-run is judged on gini or
+mobility, n=12–15 may be enough, which saves more than the tick reduction
+does. Size it on the smallest gap worth detecting, not the largest one here.
+
+### The carriers/burden split is now separable
+
+`tax_none` has *fewer* people carrying `COND-WEAK` (23.3) but a *higher* total
+burden (289) than `tax_progressive` (26.1 carriers, 242 burden). Redistribution
+spreads deprivation across more people while reducing its total. That is the
+"separate how much deprivation from how concentrated" item below — and unlike
+the twelve-replicate version, where the two were collinear at r=+0.90, they
+now move in **opposite directions across arms**, so they are separable
+without needing new conditions.
+
+## Two things found while checking the horizon
+
+### Point-sampled hunger is too noisy to be an outcome; the stocks are fine
+
+`metrics_every=10` samples only *even* ticks, which given the period-2 hunger
+oscillation looked like a worse version of the `metrics_every=5` aliasing that
+hid the mortality artifact for this project's whole life. Measured at
+`metrics_every=1`, seed 0, 400 ticks — **the parity worry was wrong, and a
+different problem is real.**
+
+| outcome | all ticks | even only | odd only | even − odd |
+|---|---|---|---|---|
+| hunger | 0.8456 | 0.8377 | 0.8534 | −0.0157 |
+| COND-WEAK burden | 195.01 | 195.45 | 194.57 | +0.88 |
+| carriers | 16.09 | 16.10 | 16.08 | +0.02 |
+| gini | 0.3859 | 0.3855 | 0.3862 | −0.0007 |
+
+No phase lock. But the horizon comparison reads a *single tick*, not an
+average, and one tick of hunger is very noisy — against its two odd
+neighbours it is +0.053 at t250 and +0.086 at t400, while the stocks move
+under 2%:
+
+| | at the tick | odd neighbours | gap |
+|---|---|---|---|
+| hunger @ t250 | 0.8345 | 0.7811 | **+0.053** |
+| hunger @ t400 | 0.8392 | 0.7528 | **+0.086** |
+| COND-WEAK @ t250 | 277.67 | 278.15 | −0.48 (0.2%) |
+| gini @ t250 | 0.3264 | 0.3216 | +0.005 (1.5%) |
+| carriers @ t250 | 16.00 | 16.00 | 0.00 |
+
+The entire spread across all eight arms of the last matrix was 0.534 to 0.628
+— 0.094. So one tick of measurement noise is about as large as the whole
+effect. Hunger is a fast square wave (63.8 fed↔unfed flips per person over
+400 ticks, down from the pre-decay 59-in-150) and an instant of it carries
+almost no information. `summarise()` now also records `hunger_win_at_*`, a
+mean over ±50 ticks. The stocks need no such treatment because they integrate
+history rather than sampling it. **The 4/6 hunger agreement above is measured
+on the point version and should be redone on the windowed one.**
+
+### The circular flow reverses at ~tick 200, and redistribution accelerates it
+
+Chasing an implausible number: `tax_progressive` reports gini 0.018–0.025,
+near-perfect equality, and `gini()` returns 0.0 for an all-zero population, so
+that reading is ambiguous between "equal" and "broke". It is genuinely equal —
+seed 0 at t400, everyone in a band around 320, and the *median* person is 22%
+better off than under no tax (323 against 265). But total household net worth
+is **21,271 under no tax against 9,725 under progressive tax**, with zero
+deaths, and NOTES says money is conserved to the cent absent a burned estate.
+
+It is conserved — 28,154 at every tick in both arms. The money is in the firms:
+
+| tick | no tax: household / firms / solvent | progressive: household / firms / solvent |
+|---|---|---|
+| 0 | 13,154 / 15,000 / 5 | 13,154 / 15,000 / 5 |
+| 100 | 18,436 / 9,717 / 5 | 19,482 / 7,240 / 5 |
+| 200 | 25,633 / 2,521 / 4 | 24,134 / 2,584 / **2** |
+| 250 | 24,135 / 4,019 / 3 | 20,321 / 6,678 / 2 |
+| 400 | 21,169 / 6,985 / 3 | **9,604 / 18,181** / 2 |
+
+**The battery discharges until ~t200 and then recharges from the households.**
+The late-run rise in firm cash was already recorded above as monopsony rents
+after consolidation; what is new is that it is not a mild uptick but a
+reversal of the whole circular flow, and that **redistribution roughly triples
+it** (+15,597 against +4,464 from the t200 trough). The mechanism is velocity:
+redistribution keeps poor households spending on food, and with a 0.20 margin
+on every sale, a faster circular flow drains the household sector into a
+two-firm oligopoly faster. Doing nothing leaves the money hoarded by a rich
+household that still only eats 0.8/tick — 2,814 sitting idle at t400.
+
+This also puts a health warning on gini as the matrix's headline. **Net worth
+excludes land**: `_holdings_value()` prices only FOOD, CLOTHES, TOOLS, LABOR
+and LABOR-FARM, and parcels are not holdings, so a smallholder's field counts
+zero. "Progressive tax achieves gini 0.018" means *cash and goods* are
+near-equal while 4 of 30 people still own all the productive land — measured
+by an instrument that structurally cannot see the asset the "land beats cash"
+item below says ends up deciding everything. **Fixed below.**
+
+## Land and shares now count as wealth, and it moves two results
+
+Neither asset has a market price — no script trades parcels or shares, so every
+`SHARE-FIRM-n` market sits at `last_price` None and parcels have no market at
+all. Leaving them out of wealth was never neutral, so they are now valued
+(`metrics.field_value`, `metrics._share_unit_values`):
+
+- **Land: capitalised Ricardian rent.** `rent = 4.95 x P_FOOD - 1 x P_LABOR`,
+  the residual accruing to the field rather than to whoever works it, floored
+  at zero and divided by a discount rate. It is the same quantity whoever
+  holds the field: a firm collects it as its margin (exactly `m x yield x P`
+  by construction), a smallholder collects it by not paying themselves a wage.
+- **Shares: book value.** Firm net assets (cash + priced goods + its own land)
+  over shares outstanding. Deliberately not earnings-based — firm earnings
+  swing from nothing to monopsony rents inside one run, and any multiple on
+  them would amplify that swing rather than measure it.
+
+`LAND_DISCOUNT_PER_TICK = 0.01`, i.e. a field is worth 100 ticks of net rent
+(~1,025 at P_FOOD 3.08 / P_LABOR 5.00). This is a modelling choice, not a
+measurement: capitalising a perpetuity at any realistic annual rate is
+meaningless in a world that ends at tick 400, and 100 ticks is a quarter of a
+standard run. It is exposed as a constant so results can be checked against it.
+
+**`net_worth` is unchanged** — still cash + priced goods — because every gini
+and mobility number recorded above is measured on it, and redefining it in
+place would silently invalidate all of them. The new measure is
+`total_wealth`, with `gini_total`, `mobility_total`, `top10_share_total` and a
+`wealth_components` breakdown alongside.
+
+4 seeds, 400 ticks (t400 means):
+
+| arm | gini | gini_total | mobility | mobility_total | land % of wealth |
+|---|---|---|---|---|---|
+| tax_none | 0.477 | 0.514 | 0.324 | 0.257 | 9.5% |
+| tax_progressive | **0.018** | **0.146** | −0.001 | −0.049 | 15.1% |
+| share_wealth | 0.483 | 0.492 | 0.324 | **0.567** | 6.9% |
+
+**1. `tax_progressive`'s near-perfect equality was largely the blind spot.**
+gini 0.018 → gini_total 0.146, eight times higher. It is still the most equal
+arm by a wide margin, but "near-perfect equality" and "meaningfully unequal"
+are different claims and only the second one survives seeing the land.
+
+**2. Concentrated share ownership entrenches position, and the old instrument
+could not see it.** `share_wealth` mobility goes 0.324 → **0.567**: including
+shares makes the hierarchy *more* rigid, not less. Mechanically that has to
+happen — shares were allocated by starting wealth and no script trades them,
+so the register is a frozen record of everyone's genesis position. But it
+bears on the standing null: "who owns the firms does not change who survives"
+was tested on deaths and is probably still true there, while the *inequality
+and mobility* half of the ownership question was never actually measured,
+because the measure omitted the shares. Worth re-running the ownership pair on
+`gini_total` / `mobility_total`.
+
+### How much of this is the discount rate?
+
+All of the magnitude and none of the ranking. Seed 0, t400, recomputed off one
+snapshot since land value scales as 1/r:
+
+| rate | ticks of rent | field $ (none / prog) | tax_none gini_total | tax_progressive gini_total |
+|---|---|---|---|---|
+| 0.050 | 20 | 102 / 144 | 0.514 | **0.072** |
+| 0.020 | 50 | 254 / 360 | 0.523 | 0.134 |
+| **0.010** | **100** | **508 / 719** | **0.538** | **0.217** |
+| 0.005 | 200 | 1,016 / 1,438 | 0.565 | 0.338 |
+| 0.002 | 500 | 2,540 / 3,595 | 0.623 | **0.527** |
+
+`tax_progressive` is the more equal arm at every rate, so that conclusion is
+not an artifact of the choice. The *size* of the advantage is: a 7x gap at 20
+ticks of rent, 1.2x at 500. **State the ranking, not the multiple.**
+
+Note also that land is a larger share of wealth under progressive tax (22.8%
+against 8.7%) partly because `P_LABOR` has collapsed further there — 0.52
+against 3.44. Lower wages mechanically raise Ricardian rent, so this land
+valuation is coupled to the wage collapse documented in "land beats cash"
+rather than independent of it. That is arguably correct — it is what land being
+the residual claimant *means* — but it does mean the measure moves most in
+exactly the arms where the labour market has broken down.
+
+Two limits to keep in view. Under `share_allocation="none"` no shares exist,
+so firm net assets belong to nobody and enter no one's wealth — that is the
+model being honest (those firms genuinely have no owners), but it means total
+measured household wealth is **not comparable between share and non-share
+arms**. Compare within, not across. And `mobility_total` for a share arm is
+partly measuring an untraded allocation; it will mean something different once
+shares can move.
+
+## The matrix re-run at 250 ticks — and three arms that are one arm
+
+8 arms x 15 seeds x 250 ticks, `metrics_every=10`, 1h15m
+(`results/matrix_m20_n30_t250_s15.json`). Dashboard:
+https://claude.ai/code/artifact/c4c1ab25-2a0b-475c-8917-e21d7f8c9904
+
+**Deaths: 0 in all 120 runs**, as expected since the COND-WEAK decay fix.
+
+### The estate arms stopped being policies
+
+An estate rule is a rule about what happens when someone dies. Nothing dies
+here, so it never executes, and the three arms that differ only in their
+estate rule are not three policies:
+
+- **`tax_flat` and `estate_treasury` are bit-identical** — every seed, every
+  recorded key, the same values. Verified cell-by-cell, not inferred from the
+  means. `dashboard_data._identical_groups` detects this from the data rather
+  than asserting it, so the claim cannot outlive the condition that produced it.
+- **`estate_heir` is the same policy on a different genesis draw.**
+  `_assign_heirs` calls `rng.shuffle` (scenario.py:203) *before*
+  `_wire_scripts` draws from the same generator, so the heir arm plays
+  identical rules against a differently-wired set of firms.
+
+### Which makes it a free null replicate, and that is the useful part
+
+Same policy, different luck, 15 seeds. Nothing separates the two, and the gap
+they open is the floor below which no other arm difference on this matrix
+means anything:
+
+| measure | tax_flat | estate_heir | gap by luck | p |
+|---|---|---|---|---|
+| hunger (windowed) | 0.866 | 0.879 | **0.013** | 0.34 |
+| hunger (1 tick) | 0.857 | 0.897 | 0.040 | 0.18 |
+| COND-WEAK burden | 166.4 | 180.3 | **13.9** | 0.47 |
+| carriers | 24.60 | 25.60 | 1.00 | 0.14 |
+| gini (cash) | 0.030 | 0.031 | 0.001 | 0.79 |
+| gini (all wealth) | 0.131 | 0.122 | **0.010** | 0.37 |
+| mobility (all wealth) | −0.065 | −0.068 | 0.003 | 0.95 |
+
+Note the point-sampled hunger opens **three times** the luck gap of the
+windowed version (0.040 against 0.013) — an independent confirmation, from a
+direction not designed to test it, that reading hunger at one tick is mostly
+reading noise.
+
+**Apply it as a second gate.** A difference has to survive the Bonferroni
+correction *and* exceed this floor. It immediately caught two claims that
+would otherwise have gone out: `estate_heir` "wins" gini_total at 0.1216
+against `tax_progressive`'s 0.1227 — a 0.0011 margin against a 0.0096 floor,
+and from a duplicate policy at that. The honest statement is that **flat and
+progressive tax are indistinguishable on total-wealth gini**; what separates
+is tax against no tax.
+
+### Results at t250
+
+| arm | hunger (win) | burden | carriers | gini | gini (all) | mobility (all) |
+|---|---|---|---|---|---|---|
+| tax_progressive | **0.914** | 185.2 | 24.8 | **0.018** | 0.123 | −0.061 |
+| estate_heir | 0.879 | 180.3 | 25.6 | 0.031 | 0.122 | −0.068 |
+| share_equal | 0.872 | 217.5 | 17.1 | 0.301 | 0.293 | 0.372 |
+| tax_flat / estate_treasury | 0.866 | **166.4** | 24.6 | 0.030 | 0.131 | −0.065 |
+| share_wealth | 0.866 | 224.8 | 17.6 | 0.299 | 0.395 | 0.556 |
+| tax_none | 0.843 | 232.6 | 18.1 | 0.290 | 0.356 | 0.331 |
+| margin_00 | **0.789** | **296.1** | 20.3 | 0.377 | 0.441 | 0.294 |
+
+Standing reads, all clear of the luck floor: **`margin_00` is the worst arm on
+every measure**, which reproduces "the margin is the largest single lever" on
+a non-degenerate outcome. `tax_progressive` genuinely leads on hunger. The
+carriers/burden inversion holds — the tax arms put *more* people on the
+COND-WEAK register (24–26 of 30) while carrying a *lower* total burden than
+`tax_none` (18 carriers, 233 burden), which is deprivation spread thin rather
+than concentrated.
+
+### Caveats specific to this run
+
+- The 28 comparisons are not 28 independent questions: two arms are identical
+  and a third is the same policy, and the duplicate pair contributes a
+  guaranteed p = 1.0. That makes the correction conservative, not generous.
+- **Any arm that changes what genesis creates may also shift the random
+  stream**, so part of its gap against another arm is a different draw rather
+  than the policy. `estate_heir` is the measured case; the share arms allocate
+  holdings at genesis and have not been checked for the same effect. Worth
+  ruling out before the share comparison is quoted again.
+
+## Rent and bills: housing and energy sectors, both competing for land
+
+Built, runs, **not yet calibrated** — read the calibration section before
+using any number out of it.
+
+### It needed no engine changes at all
+
+Every piece was already there, which is worth recording because it was not
+obvious going in:
+
+- `Parcel` carries a zoning tag and `Facility` is a built improvement on one,
+  so a dwelling and a power plant are the same primitive as a farm.
+- **Facility capacity is already a reservation rule** — one facility backs one
+  running process per tick — which is exactly the semantics housing wants:
+  one dwelling houses a fixed number of households and the only way to house
+  more is to build more.
+- `Deposit` regenerates toward a capacity, so an energy plot has a `FUEL-SEAM`
+  the way a field has `SOIL-FERTILITY`. Land has *quality*, not just a permit.
+- `builds_facility` erects on the bound parcel at completion, `ctx.parcels`
+  reports each parcel's facilities and deposits, and `start_process(recipe,
+  parcel_id)` is exposed to Lua. That is the whole build-and-convert mechanic.
+
+**Rent dodges the ownership invariant the same way taxation does.** A landlord
+cannot reach into a tenant's account any more than a treasury can. So rent is
+not taken, it is *bought*: `SHELTER` and `ENERGY` decay **completely** every
+tick, consumption runs after the auction and before decay, and a household
+buys exactly this tick's occupancy and this tick's power or does without.
+Next tick the bill falls due again regardless. Eviction is the absence of a
+purchase — no forced transfer, no seizure, no new primitive. That same total
+decay is what makes them bills rather than shopping: there is no pantry, so
+nobody can stockpile a year of rent in a good week.
+
+### Land is now genuinely rival
+
+One fixed pool. Every parcel carries *both* deposits whatever gets built on
+it, because endowing only the farming parcels with soil would decide the
+allocation at genesis under another name — and the allocation is meant to be
+the run's output. Three `BUILD_` recipes are mutually exclusive uses of the
+same acre: a dwelling is a field that is not growing food. A firm reads which
+of its parcels are bare, prices the three uses off their own output net of the
+labour to work them, and puts up whichever pays. **One use per parcel is
+enforced in `firm.lua`, not by the engine** — nothing stops a farm and a
+dwelling sharing an acre. That is the right split (zoning is policy, not
+mechanism) but the invariant is only as good as the script.
+
+Yields are set so one parcel serves ~6 people whichever way it is used (a
+field feeds 4.95/0.8 = 6.2), so "which use pays best" is decided by prices
+rather than by an accident of units.
+
+Genesis: 5 firms x (1 farm + 1 dwelling + 1 plant + 2 bare) + 4 smallholder
+farms = 29 parcels, of which 9 farms — the calibrated food number, preserved.
+
+### Two bootstrap deadlocks, both measured
+
+Same family as the `SKILL-FARM` deadlock (bug 3) and worth the same warning:
+
+1. **Nothing was ever built.** `BUILD_DWELLING` wants 4 LABOR held at once and
+   the firm only ever bid for one or two, so the intent failed silently every
+   tick for a whole run. Every parcel stayed bare, the population failed
+   shelter and power for 120 ticks, and because `COND-EXPOSED` and `COND-COLD`
+   both cut labour productivity on top of `COND-WEAK`, the *food* economy went
+   with them: food price 3 → 111, hunger satisfaction 0.03. Fixed by bidding
+   for build labour as its own tranche and only starting the build once the
+   hours are in hand.
+2. **Housing stock has to exist at genesis.** Even with the labour, no firm
+   can assemble a build before the whole population has failed both new needs
+   for the entire bootstrap. Real economies start with a housing stock; this
+   one has to as well. The build mechanic then operates at the *margin*, which
+   is where a build-or-not decision is interesting anyway.
+
+And one ordering bug that is pure engine-semantics: **intent priority decides
+who gets the firm's labour**, and generation was last. `GENERATE_POWER` failed
+on all five plants nearly every tick for sixty ticks — energy output flat zero
+against a standing demand of 30 — while clothes were made on schedule. An hour
+generating is worth six units of energy; an hour on clothes is worth one and a
+half units of clothes. The bid schedule already said so; the intent priorities
+did not. Letting and generation now sit at 21/22, ahead of tools and clothes.
+
+### The two conditions bite on different margins
+
+Not one effect at two strengths. What makes that possible is *where* the
+engine reads a condition's modifier: exactly two sites — the auto-issue top-up
+target (`goods.py`) and a recipe's inputs and `good_requirements`
+(`production.py`). So a condition can throttle what you are **issued** and what
+you are **able to do**, and cannot reach consumption, orders or cash. Both new
+consequences live inside that.
+
+| | pattern | factor | incapacitates | what it means |
+|---|---|---|---|---|
+| `COND-COLD` (no heating) | `LABOR` | 0.80 | never | fewer hours to sell; recoverable the moment the bill is paid |
+| `COND-EXPOSED` (rough sleeping) | `*` | 0.70 | at 40 | cuts labour **and** every recipe input and requirement |
+
+The `*` on rough sleeping is the design, not laziness. It scales every symbol
+at both read sites, so it hits `SKILL-FARM` — which `WORK_AS_FARMER` gates on
+at >= 1 — as well as labour. **A smallholder sleeping rough stops being able to
+work their own land.** Losing your home is not a slice off your wage, it locks
+you out of skilled and self-provisioning work, and that is the difference
+between a bad month and a trap: less labour, less income, still cannot pay
+rent.
+
+Rough sleeping is also the one new route to incapacity, and the arithmetic is
+the point. Grant 1 x (1 - satisfaction) per tick against decay 0.02 settles at
+`50f` for an unhoused fraction `f`, so a threshold of 40 fires only if
+`f > 0.8` — ~80 ticks of near-continuous destitution. Housed half the time
+settles at 25 and never dies. That is precisely the property COND-WEAK lacked,
+and at current shelter satisfaction (~0.5) it fires for nobody: a tail, on
+purpose, not a default.
+
+**Measured cost of adding them**: the economy gets markedly harsher, because
+the three conditions compound multiplicatively — 0.7 x 0.8 x 0.7 = 0.39 of
+normal labour for someone failing all three needs. Food price spiked to 157
+and the wage to 406 before settling, and no firm built anything in 120 ticks
+(bare land stayed at 10). That is a real consequence and probably the right
+*direction*, but it makes calibration more urgent, not less: the sweep below
+now has to cover these factors as well as the budget shares.
+
+### Calibration: NOT done, and the numbers show it
+
+120 ticks, seed 0, after all three fixes:
+
+| tick | farms | dwellings | plants | bare | P_FOOD | P_SHELTER | P_ENERGY | hunger | shelter | power |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 15 | 9 | 5 | 5 | 10 | 34.7 | 15.9 | 13.0 | 0.29 | 0.50 | 0.00 |
+| 45 | 10 | 5 | 5 | 9 | 14.5 | 3.0 | 7.5 | 0.53 | 0.80 | 0.60 |
+| 90 | 10 | 5 | 5 | 9 | 9.4 | 3.6 | 8.9 | 0.53 | 0.60 | 0.40 |
+| 120 | 10 | 5 | 5 | 9 | 8.9 | 11.1 | 7.0 | 0.50 | 0.50 | 0.60 |
+
+The mechanism works — both sectors produce and sell, bills get paid, and a
+firm converted bare land into a farm on its own (9 → 10 farms). **The economy
+cannot afford its own basket.** All three needs sit at 0.4–0.6 satisfaction
+indefinitely, where food alone used to sit at 0.85+.
+
+The cause is the nominal anchor, and it is structural rather than a bad
+number. `spend_rate = balance / PLANNING_HORIZON` caps what a household will
+commit per tick at a twentieth of its savings — about 15 for a median holder
+— while the basket at current prices costs 0.8xFOOD + 1xSHELTER + 1xENERGY
+≈ 25. That anchor was calibrated for an economy whose only recurring purchase
+was food, and it is the thing that pins the price level (bug 8), so it cannot
+be casually widened. The budget shares are the other half: they were
+food 0.5 / clothes 0.15 and are now food 0.5 / shelter 0.20 / energy 0.10 /
+clothes 0.15, which is a guess, not a measurement — energy costs 1 labour per
+6 units against shelter's 0.5 per 6, so a cost-proportional split would look
+nothing like that.
+
+### The calibration sweep: the demand side is not the problem
+
+`calibrate.py`, 4 budget splits x 4 planning horizons x 3 seeds x 150 ticks,
+17m46s (`results/calibration_bills.json`). Pass needs all four of MET (every
+need >= 0.85), TIGHT (sell-side fill in 0.55-0.98), ALIVE, and prices moving —
+ranking on satisfaction alone would pick the slackest economy in the grid.
+
+**Nothing passed, and the grid barely moved:**
+
+| | hunger | shelter | power |
+|---|---|---|---|
+| best config in grid | 0.47 | 0.52 | 0.35 |
+| worst config in grid | 0.35 | 0.39 | 0.22 |
+
+Across a 4x range of planning horizon (20 → 5, quadrupling what a household
+will commit per tick) and four radically different budget splits, hunger moves
+0.12 and power never gets above 0.35. **That is the demand side ruled out**,
+and it is worth having on record rather than treating as a failed run.
+
+### It is labour, and the arithmetic was there to be done
+
+Counted directly: **~11.8 LABOR clears per tick for the whole economy against
+~17.5 needed just to staff the facilities.** Most of them sit idle:
+
+| tick | farms run | lets run | generation runs | failed starts |
+|---|---|---|---|---|
+| 30 | 3 of 10 | 3 of 5 | 1 of 5 | LET x2, GEN x4 |
+| 60 | 2 of 10 | 2 of 5 | 2 of 5 | LET x3, GEN x3, BUILD x2 |
+| 90 | 2 of 10 | 2 of 5 | 2 of 5 | LET x3, GEN x3, BUILD x2 |
+
+Serving 30 people across three sectors needs ~15 facilities, since a parcel
+serves ~6 whatever is on it. Staffing them costs 10x1 + 5x0.5 + 5x1 = 17.5
+labour a tick. Supply is 30 people x 1 unit, cut ~30% by the stacked
+conditions, so ~21. **The facilities alone want 83% of all the labour in the
+economy** before clothes, tools or any building — and the market only clears
+11.8 of it. No budget share can reach that, which is exactly why power sat
+flat at 0.22-0.35 across all sixteen configs while its market cleared
+80-90% of the little it offered.
+
+**The lever is labour intensity, not household budgets.** Housing and power
+are utilities — capital-intensive, low ongoing labour — and they were given
+farm-like labour costs (0.5 and 1.0 per parcel-tick) on no evidence. At ~0.2
+and ~0.3 the sector total drops to 12.5 and leaves the rest of the economy
+room to function. That is both the realistic shape and the knob the
+measurement points at. Done, and measured in the next section.
+
+One thing that did work as designed: `COND-EXPOSED` incapacitation fired in
+the worst runs (5.7 dead at `legacy|h12`, 1.0-1.3 in three others) and nowhere
+else. That is the f > 0.8 tail doing precisely what the arithmetic said it
+would — sustained near-total destitution, never an intermittent miss.
+
+Until this is settled, nothing here is comparable to any result above, and
+`bare_land_per_firm = 0` reverts the economy to farming only.
+
+### Cutting utility labour: it fixed the two sectors it touched and not the third
+
+`LET_DWELLING` 0.5 → 0.2 and `GENERATE_POWER` 1.0 → 0.3, same grid, same four
+criteria, 16m21s (`results/calibration_labour.json`). The prediction was
+specific and half of it was right.
+
+| across the whole grid | before | after |
+|---|---|---|
+| hunger | 0.35–0.47 | 0.30–0.46 |
+| shelter | 0.39–0.52 | **0.52–0.69** |
+| power | 0.22–0.35 | **0.31–0.59** |
+
+Utilisation moved with it — seed 0, per tick, over 60 ticks: lets 2 of 5 → 4.0
+of 5, generation 2 of 5 → 3.1 of 5. **Housing and power were labour-starved
+and are not any more.** Still nothing passes: the closest is `legacy|h12` at
+worst-need 0.45, and hunger did not move at all.
+
+### Hunger is not a labour-allocation problem, it is a supply cap
+
+Labour *offered* to the market is pinned at **11.76 every single tick**, and
+that number is not an accident of pricing:
+
+    30 individuals x 0.7 (COND-WEAK) x 0.80 (COND-COLD) x 0.70 (ROUGH-SLEEPING)
+      = 11.76
+
+All 30 carry all three conditions permanently (`cond_weak_carriers` is 30 from
+tick 20 onward). **The economy runs at 39% of its nominal labour and cannot
+climb out**, because the conditions are caused by the shortfall the conditions
+cause. Cutting recipe costs changes how far that 11.76 goes; it cannot change
+the 11.76.
+
+Which is why food never improved. Against demand of ~150/tick and a bare
+subsistence requirement of 30 x 0.8 = **24 FOOD/tick, production runs ~12** —
+half of subsistence, and flat across the whole grid. Farms run 2.4 of 13 per
+tick (145 `FARM_FOOD_HAND` starts in 60 ticks x 4.95 expected yield = 11.9,
+matching measured output almost exactly).
+
+Two mechanisms worth having on record:
+
+- **The freed labour was spent on capacity, not output.** Land use went from
+  9–10 farms / 10 bare to **13 farms / 6 bare**. Firms responded to slack
+  labour by building more farms and then leaving them idle. More capacity, the
+  same food.
+- **Most bought labour perishes.** `LABOR` decays 0.5/tick; ~11 units clear
+  each tick against ~4 actually consumed by processes. The rest evaporates
+  before it is used.
+- **`food_light` is now lethal**: 15.3 and 18.3 dead of 30 at h20/h12, against
+  0.3 and 1.0 before. When food output is already half of subsistence, cutting
+  the food budget share is not a preference, it is a famine.
+
+So the ordering was wrong. Labour intensity was a real bug and worth fixing —
+it is what freed shelter and power — but it was never going to reach hunger.
+**The binding constraint is the condition stack multiplying down labour
+issuance**, and nothing on the demand side or the recipe side can reach it.
+
+### The tick order was taxing every hire 50%, and that was the real bug
+
+Processes resolved at step 6, the auction cleared at step 7, decay ran at step
+9. So an input bought this tick could not be used until next tick and took a
+full round of decay first. With `LABOR` decaying 0.5/tick that is a flat **50%
+tax on hired labour** — while a smallholder's own auto-issued labour, issued at
+step 2 and self-used at step 6, arrived intact. The engine was quietly paying
+people to self-supply.
+
+Fixed in `engine/econengine/tick.py` by **retrying**, not reordering: every
+intent is still tried before the auction in priority order, and a
+`start_process` rejected *solely* for want of inputs is retried after clearing.
+`InsufficientHoldingsError` is tagged onto the event as `short_of_holdings` so
+the tick discriminates by exception type rather than pattern-matching a
+human-readable reason string. The held-back rejection is not recorded, so each
+intent still yields exactly one event.
+
+The first, simpler attempt — move all `start_process` after the auction — was
+wrong in two ways that the scenario's own scripts happened to hide, and both
+are now regression tests in `tests/test_tick_process_retry.py`:
+
+- **Production would have lost first claim on its own entity's goods.** Orders
+  do not escrow (`markets.py`: holdings are checked live at settlement), so
+  whichever pass runs first wins. Deferring production lets a sell order take
+  inputs out from under the same entity's process — and worse, makes intent
+  *type* silently outrank *priority*, so an author who writes "priority 10: use
+  it, priority 40: sell the rest" no longer gets what they asked for.
+- **Duration-0 recipes would no longer reach the same tick's auction.**
+  `start_process` completes them inline, so their output was sellable
+  immediately; deferring pushes it past the auction and into the decay pass —
+  the same bug, mirrored onto producers.
+
+Both tests fail against the deferred version and pass against the retry.
+290 tests pass, and the 285 that predate this were not modified.
+
+Seed 0, 60 ticks:
+
+| | before | after |
+|---|---|---|
+| `start_process` rejections | 231 | **74** |
+| `LET_DWELLING` | 4.0 of 5 | **4.7 of 5** |
+| `GENERATE_POWER` | 3.1 of 5 | **4.3 of 5** |
+| `FARM_FOOD_HAND` | 2.4 (idle 145) | 2.2, **zero rejections** |
+| land | 13 farms / 6 bare | 19 farms / **0 bare** |
+
+Housing and power are now essentially fully utilised. **Food still is not**,
+and the bottleneck has moved: it is no longer labour clearing (11.76 clears in
+full) but `WORK_AS_FARMER` conversions, which run ~2.5/tick against 19 standing
+farms. Each conversion needs a whole unit of `LABOR`, and an individual issued
+0.392 can never make one — so the conversion is firm-only, and firms appear to
+run about one each per tick. That is the next thing to count.
+
+### Labour supply had no extensive margin at all
+
+Every individual dumped their whole endowment on the market every tick,
+however rich. The reservation wage already scaled with savings, so wealth
+expressed itself as a *price* — but participation was unconditional, which
+says people work for the love of it. Work is a disutility; you sell your
+labour when you cannot otherwise pay for the week.
+
+Added to `individual.lua`: a household stops offering wage labour once its
+balance covers `work_free_cover` ticks of the basket at market prices.
+Smallholders still work their own land at any wealth — living off what you own
+is the point, and a field is an asset. Config-driven so it can be swept.
+
+Two things the measurement forced:
+
+- **The cover measure has to be smoothed.** On one tick's prices the basket
+  swings 14 → 200 here, so on a crash tick the whole population reads as rich,
+  withdraws together, loses its only income and starves: **15 of 30 dead by
+  t150, against 0 with participation forced on.** Nobody had retired — a
+  one-tick price dip was mistaken for a fortune. An EMA (0.85) fixes it.
+- **Single-seed threshold comparisons are worthless here.** A sweep of the
+  threshold came back non-monotone, which is impossible from the logic. Every
+  `LABOR` sell_ordered movement decomposed exactly into mortality
+  (9.41 = 11.76 × 24/30, i.e. 6 dead), not withdrawal; the runs had simply
+  diverged chaotically, since `events_hash` seeds the harvest rolls.
+
+**The mechanism works and currently binds on nobody.** Individual-only,
+smoothed, cover peaks at 36.8 for the richest person at t30 and decays to 11.9
+by t150, median 10.3 → 0.39. At a threshold of 5 two workers do withdraw at
+t15 with all 30 alive, so it is live, not dead code. Nobody in this economy can
+live off what they own, which is a fact about the economy and consistent with
+everything else here. Default left at 40 — inert — rather than tuned down to
+bind on destitution, which would be fitting to the brokenness the calibration
+is trying to remove.
+
+Not yet done: the *investment* half of the same preference. Individuals have no
+way to buy shares or land at all, so surplus can only sit as cash. Until there
+is a portfolio choice, "prefers passive income" is only half expressible.
+
 ## Not yet done
 
+- Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
+  than the point sample, which is too noisy to carry an outcome (above). The
+  other four outcomes need no re-run.
+- ~~Put land into net worth.~~ **Done**, with shares — see "Land and shares now
+  count as wealth" above. It cut `tax_progressive`'s apparent equality by 8x
+  and flipped the sign of the ownership arms' mobility story.
+- **Re-run the ownership pair (`share_wealth` vs `share_equal`) on
+  `gini_total` / `mobility_total`.** The existing null was measured on deaths
+  and on a wealth measure that omitted the shares themselves, so the
+  distributional half of the question is untested rather than answered.
+- **Make land and shares tradable.** The valuation above is the half that was
+  missing: a trading script needs a reservation price and `field_value()` is
+  one. The open design question is what triggers a listing or a bid.
+  Sketch: a field is worth capitalised rent *to someone who can work it*
+  (needs `SKILL-FARM` above the `WORK_AS_FARMER` threshold), so an owner who
+  has lost that ability values it below what a working farmer would pay —
+  a real asymmetry rather than an arbitrary one. For shares, bid when the
+  dividend yield beats holding cash, and sell under distress: a household
+  below the pantry-restock threshold liquidating an asset to eat is the
+  wealth-concentration channel this model currently cannot express at all,
+  and it is the one most likely to overturn the ownership null, since it
+  would make the register move instead of sitting at its genesis allocation.
+  `ctx.query.holders()` already reads the register live, so the engine side
+  is ready.
+- Work out what stops the firm sector re-absorbing the whole household sector
+  after t200 — the reversal above is now the dominant late-run dynamic and it
+  makes every t400 number a measurement of oligopoly extraction as much as of
+  policy. Related to the existing circular-flow item below.
 - ~~Establish whether the matrix numbers are steady states or points on a
   slope.~~ **Done**: they were points on a slope, and the slope was the
   whole result. See "Redistribution delays deaths" above.
@@ -895,11 +1603,29 @@ dividend reads it every payout period. Two notes:
 - ~~Give `COND-WEAK` a `decay_per_tick`.~~ **Done** (0.02), and it removed
   the mortality result outright — 0 deaths in 6/6 seeds at 400 ticks. See
   "Applied" above.
-- **Re-run the arm matrix on a non-degenerate outcome.** Deaths are now always
-  zero, so the eight arms need comparing on hunger satisfaction, COND-WEAK
-  burden, gini and mobility instead. Everything above this line that reports
-  deaths is superseded; do the performance work first, since the matrix is
-  ~4h at current throughput.
+- ~~Re-run the arm matrix on a non-degenerate outcome.~~ **Done** at 250 ticks
+  x 15 seeds — see "The matrix re-run at 250 ticks" above. Everything above
+  that section reporting deaths is superseded.
+- **Calibrate the three-bill economy.** Half done: the budget-share and
+  planning-horizon grid is swept and comes back empty (above), which rules the
+  demand side out. The open half is labour intensity — cut `LET_DWELLING` to
+  ~0.2 LABOR and `GENERATE_POWER` to ~0.3, then re-run `calibrate.py`
+  unchanged. No arm comparison should run on this economy until all three
+  needs can be met.
+- With bills in, revisit **loss-of-services for delinquency** — the
+  `COND-DELINQUENT` idea below is now mostly built, since a missed bill
+  already credits a condition that cuts what you can earn. That is the poverty
+  trap, and it wants measuring: does a household that misses rent once ever
+  climb back?
+- **Replace the estate arms with policies that can fire.** Three of the eight
+  are inert while mortality is zero. Either give the matrix arms that differ
+  in something that happens to the living, or reintroduce a cause of death
+  that is not the COND-WEAK artifact. Until then the matrix is six arms.
+- **Check whether the share arms shift the random stream** the way
+  `_assign_heirs` does. If allocating holdings at genesis consumes draws that
+  `_wire_scripts` would otherwise have taken, part of every share-arm result
+  is a different economy rather than a different policy. `estate_heir` shows
+  the effect is real and roughly the size of the luck floor.
 - Land beats cash once the firm sector stops growing — **mechanism traced,
   needs a seed sweep**. Mean net worth of the landed against the landless
   goes 0.76 → 0.96 → **1.82** → 5.41 across ticks 50→350, and the crossover
@@ -973,6 +1699,12 @@ non-payment of tax/debts (jail, asset seizure, loss of services).
 # seed sweep, one process per seed
 .venv/bin/python -m experiments.inequality.tipping --seeds 10 --ticks 200 \
   --out /path/to/tipping.json
+
+# is a cheaper horizon good enough? runs to --late, scores the arm comparison
+# at --early against it. --reanalyse re-scores a saved file without re-running.
+.venv/bin/python -m experiments.inequality.horizon --seeds 12 --ticks 400 \
+  --arms tax_none,tax_progressive,estate_treasury,margin_00 \
+  --metrics-every 10 --out results/horizon_n30_t400.json
 ```
 
 `run.py` and serial sweeps write a progress bar with an ETA to stderr;
