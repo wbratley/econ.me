@@ -1282,6 +1282,44 @@ generating is worth six units of energy; an hour on clothes is worth one and a
 half units of clothes. The bid schedule already said so; the intent priorities
 did not. Letting and generation now sit at 21/22, ahead of tools and clothes.
 
+### The two conditions bite on different margins
+
+Not one effect at two strengths. What makes that possible is *where* the
+engine reads a condition's modifier: exactly two sites — the auto-issue top-up
+target (`goods.py`) and a recipe's inputs and `good_requirements`
+(`production.py`). So a condition can throttle what you are **issued** and what
+you are **able to do**, and cannot reach consumption, orders or cash. Both new
+consequences live inside that.
+
+| | pattern | factor | incapacitates | what it means |
+|---|---|---|---|---|
+| `COND-COLD` (no heating) | `LABOR` | 0.80 | never | fewer hours to sell; recoverable the moment the bill is paid |
+| `COND-EXPOSED` (rough sleeping) | `*` | 0.70 | at 40 | cuts labour **and** every recipe input and requirement |
+
+The `*` on rough sleeping is the design, not laziness. It scales every symbol
+at both read sites, so it hits `SKILL-FARM` — which `WORK_AS_FARMER` gates on
+at >= 1 — as well as labour. **A smallholder sleeping rough stops being able to
+work their own land.** Losing your home is not a slice off your wage, it locks
+you out of skilled and self-provisioning work, and that is the difference
+between a bad month and a trap: less labour, less income, still cannot pay
+rent.
+
+Rough sleeping is also the one new route to incapacity, and the arithmetic is
+the point. Grant 1 x (1 - satisfaction) per tick against decay 0.02 settles at
+`50f` for an unhoused fraction `f`, so a threshold of 40 fires only if
+`f > 0.8` — ~80 ticks of near-continuous destitution. Housed half the time
+settles at 25 and never dies. That is precisely the property COND-WEAK lacked,
+and at current shelter satisfaction (~0.5) it fires for nobody: a tail, on
+purpose, not a default.
+
+**Measured cost of adding them**: the economy gets markedly harsher, because
+the three conditions compound multiplicatively — 0.7 x 0.8 x 0.7 = 0.39 of
+normal labour for someone failing all three needs. Food price spiked to 157
+and the wage to 406 before settling, and no firm built anything in 120 ticks
+(bare land stayed at 10). That is a real consequence and probably the right
+*direction*, but it makes calibration more urgent, not less: the sweep below
+now has to cover these factors as well as the budget shares.
+
 ### Calibration: NOT done, and the numbers show it
 
 120 ticks, seed 0, after all three fixes:

@@ -300,21 +300,54 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "SHELTER", decay_per_tick=Decimal("1"))
     goods.create_good(session, "ENERGY", decay_per_tick=Decimal("1"))
 
-    # Both condition goods carry decay FROM THE START. The COND-WEAK artifact
-    # above is the reason: a damage counter with no way down turns an
-    # intermittent miss into a death sentence and invalidated every mortality
-    # number this project produced. Neither of these incapacitates at all --
-    # going cold is a drag on what you can earn, which is enough to make a
-    # poverty trap, and re-introducing a route to death is a separate decision
-    # to take deliberately rather than as a side effect of adding bills.
-    goods.create_good(
-        session, "COND-EXPOSED",
-        modifies_pattern="LABOR*", modifies_factor=Decimal("0.85"),
-        decay_per_tick=Decimal("0.02"),
-    )
+    # Both carry decay FROM THE START -- the COND-WEAK artifact above is what
+    # happens when a damage counter has no way down.
+    #
+    # They deliberately bite on DIFFERENT margins rather than being one effect
+    # at two strengths, and what makes that possible is where the engine reads
+    # a condition's modifier. There are exactly two such sites (goods.py,
+    # production.py): the auto-issue top-up target, and a recipe's input and
+    # good_requirement checks. So a condition can throttle what you are ISSUED
+    # and what you are ABLE TO DO -- it cannot reach consumption, orders or
+    # cash. Within that, the two needs express two different kinds of harm.
+    #
+    # NO HEATING is the intensive margin: you are cold, so you get less done.
+    # It scales "LABOR" alone, which is the auto-issued good, so it cuts the
+    # hours you have to sell and nothing else. Unpleasant, survivable,
+    # recoverable the moment you can pay the bill again.
     goods.create_good(
         session, "COND-COLD",
-        modifies_pattern="LABOR*", modifies_factor=Decimal("0.9"),
+        modifies_pattern="LABOR", modifies_factor=Decimal("0.80"),
+        decay_per_tick=Decimal("0.02"),
+    )
+    # ROUGH SLEEPING is the extensive margin, and the pattern is "*" on
+    # purpose. It scales every symbol at both read sites, so it cuts the labour
+    # you are issued AND every recipe input and good_requirement you try to
+    # meet -- most sharply `SKILL-FARM`, which `WORK_AS_FARMER` gates on at >=
+    # 1. A smallholder sleeping rough stops being able to work their own land;
+    # a labourer's day shrinks. Losing your home does not just cost you a
+    # slice of your wage, it locks you out of skilled and self-provisioning
+    # work, which is the difference between a bad month and a trap: less
+    # labour -> less income -> still cannot pay rent.
+    #
+    # It is also the one new route to incapacity, and the arithmetic is the
+    # point rather than an afterthought. Grant is 1 x (1 - satisfaction) per
+    # tick against decay 0.02, so an entity unhoused a fraction f of the time
+    # settles at f/0.02 = 50f, and the threshold only ever fires if
+    # 50f > incapacitates_at. At 40:
+    #
+    #   f = 1.00 (never housed)      equilibrium 50 -> crosses 40 at ~80 ticks
+    #   f = 0.80 (housed one tick in five) equilibrium 40 -> only just, slowly
+    #   f = 0.50 (housed half the time)    equilibrium 25 -> never
+    #
+    # That is the property COND-WEAK lacked: it is reachable only under
+    # sustained near-total destitution, never by intermittently missing rent.
+    # In the current uncalibrated economy shelter satisfaction sits near 0.5,
+    # so this fires for nobody -- it is a tail, deliberately, not a default.
+    goods.create_good(
+        session, "COND-EXPOSED",
+        modifies_pattern="*", modifies_factor=Decimal("0.70"),
+        incapacitates_at=Decimal("40"),
         decay_per_tick=Decimal("0.02"),
     )
 
