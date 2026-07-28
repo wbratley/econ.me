@@ -120,6 +120,26 @@ class ScenarioConfig:
     energy_budget_share: float = 0.10
     clothes_budget_share: float = 0.15
 
+    # --- The extensive margin of labour supply ------------------------------
+    # Ticks of ordinary living (the basket at market prices) a household's
+    # balance must already cover before it stops offering wage labour at all.
+    # Work is a disutility: you sell your labour because you cannot pay for the
+    # week otherwise, and whoever can live off what they own does not turn up.
+    # Below this the reservation wage still does its work on the intensive
+    # margin. Set very high to recover the old always-participate behaviour.
+    #
+    # 40 is a deliberately inert default, and that is a statement about the
+    # economy rather than about the number. Measured over individuals only,
+    # smoothed (30 individuals, seed 0), cover peaks at 36.8 for the RICHEST
+    # person at t30 and decays to 11.9 by t150; the median goes 10.3 -> 0.39.
+    # So nobody in this economy can live off what they own, at any point, and
+    # the extensive margin never binds. It fires when it is given something to
+    # bite on -- at a threshold of 5, two workers withdraw at t15 with all 30
+    # still alive -- but a threshold tuned to bind on destitution would be
+    # fitting to the very brokenness the calibration work is trying to remove.
+    # Left where it belongs so it becomes live once households can accumulate.
+    work_free_cover: float = 40.0
+
     seed: int = 0
 
     # --- Firm profit margin ------------------------------------------------
@@ -501,9 +521,20 @@ def _create_recipes(session: Session) -> None:
     # between uses would be decided by an accident of units rather than by
     # prices, and "which use pays best" is the question the build mechanic
     # exists to ask.
+    #
+    # Labour intensity is NOT at parity, and deliberately so. Housing and power
+    # are utilities: the cost is in the building, and running one afterwards
+    # takes a caretaker, not a workforce. Giving them farm-like ongoing labour
+    # (0.5 and 1.0) was an unexamined default, and the calibration sweep showed
+    # what it cost -- running the genesis stock of 10 farms, 5 dwellings and 5
+    # plants wanted 10x1 + 5x0.5 + 5x1 = 17.5 LABOR a tick against the ~11.8
+    # the market actually clears, so most of every sector sat idle and no
+    # budget share could fix it. At 0.2 and 0.3 the same stock wants 12.5,
+    # which is within reach of what clears and leaves the margin to fund
+    # clothes, tools and building out of the same labour pool.
     production.create_recipe(
         session, "LET_DWELLING",
-        inputs={"LABOR": Decimal("0.5")}, outputs={"SHELTER": Decimal("6")},
+        inputs={"LABOR": Decimal("0.2")}, outputs={"SHELTER": Decimal("6")},
         duration_ticks=1, requires_facility="DWELLING",
     )
     # Power draws a regenerating seam, so an energy plot has land *quality*
@@ -511,7 +542,7 @@ def _create_recipes(session: Session) -> None:
     # it comes back.
     production.create_recipe(
         session, "GENERATE_POWER",
-        inputs={"LABOR": Decimal("1")}, outputs={"ENERGY": Decimal("6")},
+        inputs={"LABOR": Decimal("0.3")}, outputs={"ENERGY": Decimal("6")},
         duration_ticks=1, requires_facility="POWER-PLANT",
         deposit_inputs={"FUEL-SEAM": Decimal("1")},
     )
@@ -731,6 +762,7 @@ def _wire_scripts(
                 "shelter_budget_share": str(config.shelter_budget_share),
                 "energy_budget_share": str(config.energy_budget_share),
                 "clothes_budget_share": str(config.clothes_budget_share),
+                "work_free_cover": str(config.work_free_cover),
             },
         ))
 

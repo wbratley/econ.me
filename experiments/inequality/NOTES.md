@@ -1392,8 +1392,7 @@ are utilities — capital-intensive, low ongoing labour — and they were given
 farm-like labour costs (0.5 and 1.0 per parcel-tick) on no evidence. At ~0.2
 and ~0.3 the sector total drops to 12.5 and leaves the rest of the economy
 room to function. That is both the realistic shape and the knob the
-measurement points at. Not yet done; the grid and criteria in `calibrate.py`
-are already built, so it is one command once the recipes change.
+measurement points at. Done, and measured in the next section.
 
 One thing that did work as designed: `COND-EXPOSED` incapacitation fired in
 the worst runs (5.7 dead at `legacy|h12`, 1.0-1.3 in three others) and nowhere
@@ -1402,6 +1401,152 @@ would — sustained near-total destitution, never an intermittent miss.
 
 Until this is settled, nothing here is comparable to any result above, and
 `bare_land_per_firm = 0` reverts the economy to farming only.
+
+### Cutting utility labour: it fixed the two sectors it touched and not the third
+
+`LET_DWELLING` 0.5 → 0.2 and `GENERATE_POWER` 1.0 → 0.3, same grid, same four
+criteria, 16m21s (`results/calibration_labour.json`). The prediction was
+specific and half of it was right.
+
+| across the whole grid | before | after |
+|---|---|---|
+| hunger | 0.35–0.47 | 0.30–0.46 |
+| shelter | 0.39–0.52 | **0.52–0.69** |
+| power | 0.22–0.35 | **0.31–0.59** |
+
+Utilisation moved with it — seed 0, per tick, over 60 ticks: lets 2 of 5 → 4.0
+of 5, generation 2 of 5 → 3.1 of 5. **Housing and power were labour-starved
+and are not any more.** Still nothing passes: the closest is `legacy|h12` at
+worst-need 0.45, and hunger did not move at all.
+
+### Hunger is not a labour-allocation problem, it is a supply cap
+
+Labour *offered* to the market is pinned at **11.76 every single tick**, and
+that number is not an accident of pricing:
+
+    30 individuals x 0.7 (COND-WEAK) x 0.80 (COND-COLD) x 0.70 (ROUGH-SLEEPING)
+      = 11.76
+
+All 30 carry all three conditions permanently (`cond_weak_carriers` is 30 from
+tick 20 onward). **The economy runs at 39% of its nominal labour and cannot
+climb out**, because the conditions are caused by the shortfall the conditions
+cause. Cutting recipe costs changes how far that 11.76 goes; it cannot change
+the 11.76.
+
+Which is why food never improved. Against demand of ~150/tick and a bare
+subsistence requirement of 30 x 0.8 = **24 FOOD/tick, production runs ~12** —
+half of subsistence, and flat across the whole grid. Farms run 2.4 of 13 per
+tick (145 `FARM_FOOD_HAND` starts in 60 ticks x 4.95 expected yield = 11.9,
+matching measured output almost exactly).
+
+Two mechanisms worth having on record:
+
+- **The freed labour was spent on capacity, not output.** Land use went from
+  9–10 farms / 10 bare to **13 farms / 6 bare**. Firms responded to slack
+  labour by building more farms and then leaving them idle. More capacity, the
+  same food.
+- **Most bought labour perishes.** `LABOR` decays 0.5/tick; ~11 units clear
+  each tick against ~4 actually consumed by processes. The rest evaporates
+  before it is used.
+- **`food_light` is now lethal**: 15.3 and 18.3 dead of 30 at h20/h12, against
+  0.3 and 1.0 before. When food output is already half of subsistence, cutting
+  the food budget share is not a preference, it is a famine.
+
+So the ordering was wrong. Labour intensity was a real bug and worth fixing —
+it is what freed shelter and power — but it was never going to reach hunger.
+**The binding constraint is the condition stack multiplying down labour
+issuance**, and nothing on the demand side or the recipe side can reach it.
+
+### The tick order was taxing every hire 50%, and that was the real bug
+
+Processes resolved at step 6, the auction cleared at step 7, decay ran at step
+9. So an input bought this tick could not be used until next tick and took a
+full round of decay first. With `LABOR` decaying 0.5/tick that is a flat **50%
+tax on hired labour** — while a smallholder's own auto-issued labour, issued at
+step 2 and self-used at step 6, arrived intact. The engine was quietly paying
+people to self-supply.
+
+Fixed in `engine/econengine/tick.py` by **retrying**, not reordering: every
+intent is still tried before the auction in priority order, and a
+`start_process` rejected *solely* for want of inputs is retried after clearing.
+`InsufficientHoldingsError` is tagged onto the event as `short_of_holdings` so
+the tick discriminates by exception type rather than pattern-matching a
+human-readable reason string. The held-back rejection is not recorded, so each
+intent still yields exactly one event.
+
+The first, simpler attempt — move all `start_process` after the auction — was
+wrong in two ways that the scenario's own scripts happened to hide, and both
+are now regression tests in `tests/test_tick_process_retry.py`:
+
+- **Production would have lost first claim on its own entity's goods.** Orders
+  do not escrow (`markets.py`: holdings are checked live at settlement), so
+  whichever pass runs first wins. Deferring production lets a sell order take
+  inputs out from under the same entity's process — and worse, makes intent
+  *type* silently outrank *priority*, so an author who writes "priority 10: use
+  it, priority 40: sell the rest" no longer gets what they asked for.
+- **Duration-0 recipes would no longer reach the same tick's auction.**
+  `start_process` completes them inline, so their output was sellable
+  immediately; deferring pushes it past the auction and into the decay pass —
+  the same bug, mirrored onto producers.
+
+Both tests fail against the deferred version and pass against the retry.
+290 tests pass, and the 285 that predate this were not modified.
+
+Seed 0, 60 ticks:
+
+| | before | after |
+|---|---|---|
+| `start_process` rejections | 231 | **74** |
+| `LET_DWELLING` | 4.0 of 5 | **4.7 of 5** |
+| `GENERATE_POWER` | 3.1 of 5 | **4.3 of 5** |
+| `FARM_FOOD_HAND` | 2.4 (idle 145) | 2.2, **zero rejections** |
+| land | 13 farms / 6 bare | 19 farms / **0 bare** |
+
+Housing and power are now essentially fully utilised. **Food still is not**,
+and the bottleneck has moved: it is no longer labour clearing (11.76 clears in
+full) but `WORK_AS_FARMER` conversions, which run ~2.5/tick against 19 standing
+farms. Each conversion needs a whole unit of `LABOR`, and an individual issued
+0.392 can never make one — so the conversion is firm-only, and firms appear to
+run about one each per tick. That is the next thing to count.
+
+### Labour supply had no extensive margin at all
+
+Every individual dumped their whole endowment on the market every tick,
+however rich. The reservation wage already scaled with savings, so wealth
+expressed itself as a *price* — but participation was unconditional, which
+says people work for the love of it. Work is a disutility; you sell your
+labour when you cannot otherwise pay for the week.
+
+Added to `individual.lua`: a household stops offering wage labour once its
+balance covers `work_free_cover` ticks of the basket at market prices.
+Smallholders still work their own land at any wealth — living off what you own
+is the point, and a field is an asset. Config-driven so it can be swept.
+
+Two things the measurement forced:
+
+- **The cover measure has to be smoothed.** On one tick's prices the basket
+  swings 14 → 200 here, so on a crash tick the whole population reads as rich,
+  withdraws together, loses its only income and starves: **15 of 30 dead by
+  t150, against 0 with participation forced on.** Nobody had retired — a
+  one-tick price dip was mistaken for a fortune. An EMA (0.85) fixes it.
+- **Single-seed threshold comparisons are worthless here.** A sweep of the
+  threshold came back non-monotone, which is impossible from the logic. Every
+  `LABOR` sell_ordered movement decomposed exactly into mortality
+  (9.41 = 11.76 × 24/30, i.e. 6 dead), not withdrawal; the runs had simply
+  diverged chaotically, since `events_hash` seeds the harvest rolls.
+
+**The mechanism works and currently binds on nobody.** Individual-only,
+smoothed, cover peaks at 36.8 for the richest person at t30 and decays to 11.9
+by t150, median 10.3 → 0.39. At a threshold of 5 two workers do withdraw at
+t15 with all 30 alive, so it is live, not dead code. Nobody in this economy can
+live off what they own, which is a fact about the economy and consistent with
+everything else here. Default left at 40 — inert — rather than tuned down to
+bind on destitution, which would be fitting to the brokenness the calibration
+is trying to remove.
+
+Not yet done: the *investment* half of the same preference. Individuals have no
+way to buy shares or land at all, so surplus can only sit as cash. Until there
+is a portfolio choice, "prefers passive income" is only half expressible.
 
 ## Not yet done
 

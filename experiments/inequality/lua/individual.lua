@@ -112,8 +112,48 @@ end
 --    being rationed purely by whose script happened to run first.
 local reservation_wage = normal_food_price * SUBSISTENCE_FOOD * 0.6
 
+--    That is the INTENSIVE margin -- what you charge. It was the only one
+--    here, and it quietly assumed everybody turns up: a rentier with a
+--    fortune still put their whole labour endowment on the market every
+--    tick, just dearer. Nobody works because they enjoy it. Work is what you
+--    do when you cannot pay for the week otherwise, so the EXTENSIVE margin
+--    -- whether you offer at all -- belongs to whoever can already cover
+--    their outgoings without it.
+--
+--    Cover is measured against what a tick of ordinary living actually
+--    costs at market, NOT against this household's own normal prices. Those
+--    are defined as fractions of `spend_rate = balance / horizon`, so a
+--    ratio between them and the balance is the same number for a pauper and
+--    a landlord -- it would express nothing. Market prices are what make
+--    "enough to live on" mean something a poor household can fail.
+local basket_cost = routine_food * food_price
+                    + SHELTER_PER_TICK * market_price("SHELTER", 3)
+                    + ENERGY_PER_TICK * market_price("ENERGY", 3)
+                    + routine_clothes * market_price("CLOTHES", 3)
+-- Smoothed, and the smoothing is not cosmetic. Measured on one tick's prices
+-- this basket swings 14 -> 200 in this economy, so on any crash tick the whole
+-- population briefly reads as rich, withdraws together, loses the only income
+-- it has and starves: 15 of 30 dead by t150 against 0 with participation
+-- forced on. Nobody had actually retired -- a one-tick price dip had been
+-- mistaken for a fortune. Whether you can live off your assets is a judgement
+-- about the normal cost of living, not about this afternoon's spot price.
+local basket_ema = tonumber(ctx.state.basket_ema) or basket_cost
+basket_ema = 0.85 * basket_ema + 0.15 * basket_cost
+ctx.state.basket_ema = basket_ema
+-- Ticks of ordinary living the balance alone already funds.
+local cover = basket_ema > 0 and (balance / basket_ema) or 0
+-- Swept like the budget shares rather than baked in: this is the threshold
+-- for "rich enough not to bother", and where it sits decides how much of the
+-- labour force a given wealth distribution withdraws. See ScenarioConfig for
+-- why the default sits where it does -- it was read off the measured cover
+-- distribution, because a threshold nobody can reach models nothing.
+local WORK_FREE_COVER = tonumber(ctx.state.work_free_cover) or 40
+
 local spare_labor = math.max(0, holding_qty("LABOR") - reserved_labor)
-if spare_labor > 0.01 then
+-- Smallholders still work their OWN land whatever their balance (the farm
+-- intent above is not gated on this): living off your assets is the point,
+-- and a field you own is an asset. What withdraws is only wage labour.
+if spare_labor > 0.01 and cover < WORK_FREE_COVER then
   ctx.action.place_order("LABOR", "sell", amount_str(spare_labor),
                           amount_str(quote(reservation_wage, concede(fills, "LABOR"))),
                           account.id, 40)
