@@ -1121,6 +1121,89 @@ arms**. Compare within, not across. And `mobility_total` for a share arm is
 partly measuring an untraded allocation; it will mean something different once
 shares can move.
 
+## The matrix re-run at 250 ticks — and three arms that are one arm
+
+8 arms x 15 seeds x 250 ticks, `metrics_every=10`, 1h15m
+(`results/matrix_m20_n30_t250_s15.json`). Dashboard:
+https://claude.ai/code/artifact/c4c1ab25-2a0b-475c-8917-e21d7f8c9904
+
+**Deaths: 0 in all 120 runs**, as expected since the COND-WEAK decay fix.
+
+### The estate arms stopped being policies
+
+An estate rule is a rule about what happens when someone dies. Nothing dies
+here, so it never executes, and the three arms that differ only in their
+estate rule are not three policies:
+
+- **`tax_flat` and `estate_treasury` are bit-identical** — every seed, every
+  recorded key, the same values. Verified cell-by-cell, not inferred from the
+  means. `dashboard_data._identical_groups` detects this from the data rather
+  than asserting it, so the claim cannot outlive the condition that produced it.
+- **`estate_heir` is the same policy on a different genesis draw.**
+  `_assign_heirs` calls `rng.shuffle` (scenario.py:203) *before*
+  `_wire_scripts` draws from the same generator, so the heir arm plays
+  identical rules against a differently-wired set of firms.
+
+### Which makes it a free null replicate, and that is the useful part
+
+Same policy, different luck, 15 seeds. Nothing separates the two, and the gap
+they open is the floor below which no other arm difference on this matrix
+means anything:
+
+| measure | tax_flat | estate_heir | gap by luck | p |
+|---|---|---|---|---|
+| hunger (windowed) | 0.866 | 0.879 | **0.013** | 0.34 |
+| hunger (1 tick) | 0.857 | 0.897 | 0.040 | 0.18 |
+| COND-WEAK burden | 166.4 | 180.3 | **13.9** | 0.47 |
+| carriers | 24.60 | 25.60 | 1.00 | 0.14 |
+| gini (cash) | 0.030 | 0.031 | 0.001 | 0.79 |
+| gini (all wealth) | 0.131 | 0.122 | **0.010** | 0.37 |
+| mobility (all wealth) | −0.065 | −0.068 | 0.003 | 0.95 |
+
+Note the point-sampled hunger opens **three times** the luck gap of the
+windowed version (0.040 against 0.013) — an independent confirmation, from a
+direction not designed to test it, that reading hunger at one tick is mostly
+reading noise.
+
+**Apply it as a second gate.** A difference has to survive the Bonferroni
+correction *and* exceed this floor. It immediately caught two claims that
+would otherwise have gone out: `estate_heir` "wins" gini_total at 0.1216
+against `tax_progressive`'s 0.1227 — a 0.0011 margin against a 0.0096 floor,
+and from a duplicate policy at that. The honest statement is that **flat and
+progressive tax are indistinguishable on total-wealth gini**; what separates
+is tax against no tax.
+
+### Results at t250
+
+| arm | hunger (win) | burden | carriers | gini | gini (all) | mobility (all) |
+|---|---|---|---|---|---|---|
+| tax_progressive | **0.914** | 185.2 | 24.8 | **0.018** | 0.123 | −0.061 |
+| estate_heir | 0.879 | 180.3 | 25.6 | 0.031 | 0.122 | −0.068 |
+| share_equal | 0.872 | 217.5 | 17.1 | 0.301 | 0.293 | 0.372 |
+| tax_flat / estate_treasury | 0.866 | **166.4** | 24.6 | 0.030 | 0.131 | −0.065 |
+| share_wealth | 0.866 | 224.8 | 17.6 | 0.299 | 0.395 | 0.556 |
+| tax_none | 0.843 | 232.6 | 18.1 | 0.290 | 0.356 | 0.331 |
+| margin_00 | **0.789** | **296.1** | 20.3 | 0.377 | 0.441 | 0.294 |
+
+Standing reads, all clear of the luck floor: **`margin_00` is the worst arm on
+every measure**, which reproduces "the margin is the largest single lever" on
+a non-degenerate outcome. `tax_progressive` genuinely leads on hunger. The
+carriers/burden inversion holds — the tax arms put *more* people on the
+COND-WEAK register (24–26 of 30) while carrying a *lower* total burden than
+`tax_none` (18 carriers, 233 burden), which is deprivation spread thin rather
+than concentrated.
+
+### Caveats specific to this run
+
+- The 28 comparisons are not 28 independent questions: two arms are identical
+  and a third is the same policy, and the duplicate pair contributes a
+  guaranteed p = 1.0. That makes the correction conservative, not generous.
+- **Any arm that changes what genesis creates may also shift the random
+  stream**, so part of its gap against another arm is a different draw rather
+  than the policy. `estate_heir` is the measured case; the share arms allocate
+  holdings at genesis and have not been checked for the same effect. Worth
+  ruling out before the share comparison is quoted again.
+
 ## Not yet done
 
 - Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
@@ -1176,15 +1259,18 @@ shares can move.
 - ~~Give `COND-WEAK` a `decay_per_tick`.~~ **Done** (0.02), and it removed
   the mortality result outright — 0 deaths in 6/6 seeds at 400 ticks. See
   "Applied" above.
-- **Re-run the arm matrix on a non-degenerate outcome.** Deaths are now always
-  zero, so the eight arms need comparing on hunger satisfaction, COND-WEAK
-  burden, gini and mobility instead. Everything above this line that reports
-  deaths is superseded. **Horizon and n now settled enough to cost it**: 250
-  ticks preserves the ranking (0 sign flips in 30 comparisons) but not the
-  effect sizes, and the new outcomes separate hard enough at n=12 that 30
-  seeds is probably overkill — see "How long must a run be?" above. Run it at
-  400 if the write-up quotes magnitudes, at 250 if it only ranks arms; exclude
-  or re-check `margin_00` either way, since it is the one arm 250 misjudges.
+- ~~Re-run the arm matrix on a non-degenerate outcome.~~ **Done** at 250 ticks
+  x 15 seeds — see "The matrix re-run at 250 ticks" above. Everything above
+  that section reporting deaths is superseded.
+- **Replace the estate arms with policies that can fire.** Three of the eight
+  are inert while mortality is zero. Either give the matrix arms that differ
+  in something that happens to the living, or reintroduce a cause of death
+  that is not the COND-WEAK artifact. Until then the matrix is six arms.
+- **Check whether the share arms shift the random stream** the way
+  `_assign_heirs` does. If allocating holdings at genesis consumes draws that
+  `_wire_scripts` would otherwise have taken, part of every share-arm result
+  is a different economy rather than a different policy. `estate_heir` shows
+  the effect is real and roughly the size of the luck floor.
 - Land beats cash once the firm sector stops growing — **mechanism traced,
   needs a seed sweep**. Mean net worth of the landed against the landless
   goes 0.76 → 0.96 → **1.82** → 5.41 across ticks 50→350, and the crossover
