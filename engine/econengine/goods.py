@@ -158,6 +158,14 @@ def apply_decay(session: Session, tick_number: int) -> list[dict]:
             lost = (holding.quantity * good.decay_per_tick).quantize(
                 _QUANTUM, rounding=ROUND_HALF_UP
             )
+            # Proportional decay stalls once quantity * rate rounds below half
+            # a quantum, leaving a dust remainder that can never decay again.
+            # Harmless for a commodity; not for a condition, where ANY
+            # positive quantity keeps its modifier active (held_modifiers), so
+            # an entity that had fully recovered would carry the penalty
+            # forever and "recovery as decay_per_tick" would not recover.
+            if lost == 0 and holding.quantity > 0:
+                lost = holding.quantity
             if lost > 0:
                 holding.quantity -= lost
                 decayed += lost

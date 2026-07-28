@@ -95,6 +95,28 @@ class ScenarioConfig:
     smallholder_fraction: float = 0.15
     seed: int = 0
 
+    # --- Firm profit margin ------------------------------------------------
+    # Gross margin a firm requires on revenue, withheld from its labor bid and
+    # added back to its ask (firm.lua applies the two symmetrically, which is
+    # what keeps the price level from drifting -- see the note there).
+    #
+    # 0.20 chosen on evidence, not taste: at n=30 it is the lowest margin
+    # swept that holds all five firms solvent through tick 150, where margin 0
+    # has already lost two firms and 82% of the sector's capital, and 0.10
+    # holds 4.57. See NOTES.md "Firms with a margin".
+    #
+    # It is NOT chosen for its mortality effect, which is small (14.10 deaths
+    # against 15.53 at margin 0, n=30, t400). It is chosen because a firm
+    # sector that is still trading at the end of a run is the precondition for
+    # reading anything else off a long run at all -- at margin 0 most of a
+    # 400-tick run happens in a post-bankruptcy economy of one or two
+    # survivors, which is a confound in every arm comparison.
+    #
+    # WARNING for anyone reproducing older numbers: every result in NOTES.md
+    # above the "arm matrix at margin 0.20" section was measured at 0, and
+    # needs firm_margin=Decimal("0") passed explicitly to reproduce.
+    firm_margin: Decimal = Decimal("0.20")
+
     # --- Capital ownership (SHARE-FIRM-n) ---------------------------------
     # Without these the model has no capital-income channel at all: an
     # individual's only income is wages, so the main driver of real wealth
@@ -105,13 +127,14 @@ class ScenarioConfig:
     shares_per_firm: Decimal = Decimal("100")
     # Firms may only ever distribute cash ABOVE their genesis endowment, i.e.
     # real accumulated profit and never working capital. This is not a
-    # nicety: measured, firms *decapitalise* under this scenario's pricing
-    # (total firm cash 14.7k -> 0.8k by tick 150, four of five bankrupt),
-    # because a firm bids labour at exactly its marginal revenue product and
-    # prices output at exactly its labour cost -- an inverse pair with a
-    # margin of zero, so every friction (0.3/tick FOOD decay, 5% crop
-    # failure, concede() cutting asks below cost) is a pure loss. A payout
-    # rule with a lower reserve would simply speed the bankruptcies up.
+    # nicety: at firm_margin 0 firms *decapitalise*, so every friction
+    # (0.3/tick FOOD decay, 5% crop failure, concede() cutting asks below
+    # cost) is a pure loss and a payout rule with a lower reserve would simply
+    # speed the bankruptcies up. At the current 0.20 default firms hold their
+    # capital far longer, so this reserve now binds much less often and
+    # dividends start flowing earlier in a run -- which is the intended
+    # behaviour, but it does mean the share arms are not comparable to the
+    # ones recorded before the margin existed.
     firm_cash_reserve: Decimal = Decimal("3000")
     dividend_period: int = 10
     dividend_payout: Decimal = Decimal("0.5")   # fraction of profit paid per period
@@ -150,6 +173,14 @@ def build_economy(session: Session, config: ScenarioConfig) -> Scenario:
     # result JSON.
     if config.n_firms is None:
         config.n_firms = recommended_n_firms(config.n_individuals, config.smallholder_fraction)
+
+    # firm.lua clamps an out-of-range margin back to 0 rather than dividing by
+    # zero, which would silently run the baseline while the result JSON claimed
+    # otherwise. Fail here instead.
+    if not (0 <= config.firm_margin < 1):
+        raise ValueError(
+            f"firm_margin must be in [0, 1), got {config.firm_margin}"
+        )
 
     _create_goods(session)
     _create_needs(session)
@@ -209,10 +240,32 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "FOOD", decay_per_tick=Decimal("0.3"))
     goods.create_good(session, "CLOTHES", decay_per_tick=Decimal("0.05"))
     goods.create_good(session, "TOOLS")
+    # COND-WEAK recovers. It did not until now, and that was the single
+    # biggest distortion in this experiment: with no decay it is a LIFETIME
+    # counter of missed meals, so at tick resolution every hungry spell in a
+    # run is exactly one tick long (532 of them, none of length two) and
+    # people die of thirty non-consecutive bad days while solvent, bidding
+    # successfully, and surrounded by a 60-100% food surplus.
+    #
+    # conditions.py states the contract: proportional decay against a
+    # constant grant converges to grant/decay, and incapacitates_at must sit
+    # BELOW that equilibrium or it never fires. The grant is +1 per hungry
+    # tick, so with decay d an entity hungry a fraction f of the time settles
+    # at f/d, and dies iff f > 30d. At d = 0.02:
+    #
+    #   f = 1.00 (true famine)     equilibrium 50  -> dies after ~46 ticks
+    #   f > 0.60 (hungry most days) equilibrium >30 -> dies eventually
+    #   f = 0.134 (what was measured) equilibrium 6.7 -> survives, but stays
+    #                                 above 1, so keeps the labour penalty
+    #
+    # That is the intended shape: chronic hunger throttles you and a real
+    # famine still kills, but an intermittent miss no longer accumulates into
+    # a death sentence.
     goods.create_good(
         session, "COND-WEAK",
         modifies_pattern="LABOR*", modifies_factor=Decimal("0.7"),
         incapacitates_at=Decimal("30"),
+        decay_per_tick=Decimal("0.02"),
     )
 
 
@@ -479,6 +532,7 @@ def _wire_scripts(
                 "share_symbol": (
                     share_symbol(firm_index) if config.share_allocation != "none" else ""
                 ),
+                "firm_margin": str(config.firm_margin),
                 "firm_cash_reserve": str(config.firm_cash_reserve),
                 "dividend_period": config.dividend_period,
                 "dividend_payout": str(config.dividend_payout),

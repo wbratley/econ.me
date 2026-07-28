@@ -109,6 +109,23 @@ def summarise(result: dict) -> dict:
         # old result JSONs should still summarise rather than crash.
         "firm_cash_final": last.get("capital", {}).get("firm_cash_total", 0.0),
         "firms_solvent_final": last.get("capital", {}).get("firms_solvent", 0),
+        # Firm capital at fixed ticks, for the same reason deaths_at_* exist:
+        # the sector's decapitalisation is a trajectory, and comparing a
+        # margin arm against the baseline on final cash alone cannot separate
+        # "it never drained" from "it drained later". Sampled at the first
+        # snapshot at or after each tick, so it is robust to metrics_every.
+        **{
+            f"firm_cash_at_{t}": next(
+                (s.get("capital", {}).get("firm_cash_total", 0.0)
+                 for s in snapshots if s["tick"] >= t), 0.0)
+            for t in (50, 100, 150, 200, 300)
+        },
+        **{
+            f"firms_solvent_at_{t}": next(
+                (s.get("capital", {}).get("firms_solvent", 0)
+                 for s in snapshots if s["tick"] >= t), 0)
+            for t in (50, 100, 150, 200, 300)
+        },
         # Dividends are a per-tick flow and snapshots are every metrics_every
         # ticks, so this is a SAMPLE of the flow, not the cumulative total --
         # comparable across arms at equal sampling, not a payout figure.

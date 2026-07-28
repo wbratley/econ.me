@@ -119,6 +119,9 @@ def main() -> None:
                          choices=["burn", "treasury", "heir"])
     parser.add_argument("--redistribution-period", type=int, default=defaults.redistribution_period)
     parser.add_argument("--smallholder-fraction", type=float, default=defaults.smallholder_fraction)
+    parser.add_argument("--firm-margin", type=str, default=str(defaults.firm_margin),
+                         help="gross margin firms require on revenue, in [0, 1); "
+                              "0 reproduces every pre-margin result")
     parser.add_argument("--seed", type=int, default=defaults.seed)
     parser.add_argument("--metrics-every", type=int, default=1)
     parser.add_argument("--db", type=str, default=":memory:")
@@ -137,6 +140,7 @@ def main() -> None:
         estate_rule=args.estate_rule,
         redistribution_period=args.redistribution_period,
         smallholder_fraction=args.smallholder_fraction,
+        firm_margin=Decimal(args.firm_margin),
         seed=args.seed,
     )
 

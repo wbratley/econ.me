@@ -34,6 +34,34 @@ local farm_yield = unlocked_agronomy and FOOD_PER_FARM_TOOLED or FOOD_PER_FARM_H
 -- competitive outcome.
 local bid_factor = tonumber(ctx.state.bid_factor) or 1.0
 
+-- Required gross margin, as a fraction of revenue. At 0 (the default, and
+-- what every result before this reproduced) the firm bids labor at exactly
+-- its marginal revenue product and prices output at exactly its labor cost.
+-- Those are inverses, so the margin is zero BY CONSTRUCTION and every
+-- friction -- food rotting unsold, crop failure, conceded asks -- comes
+-- straight out of capital. Measured, that drains the sector's whole genesis
+-- endowment by tick ~150.
+--
+-- The wedge is deliberately SYMMETRIC: bid x (1 - margin) below, ask
+-- / (1 - margin) further down. That pairing matters, because the price level
+-- in this economy is a free parameter -- nothing pins it, so a one-sided
+-- wedge does not just change the margin, it makes prices drift forever.
+-- Mark the bid down only, and the wage settles at w = y*P*(1-margin), so the
+-- ask is w/y = P*(1-margin): next tick's price is (1-margin) times this
+-- one's, forever -- geometric deflation.
+-- Mark the ask up only and it inflates the same way. With both, the fixed
+-- point is ask = w/y/(1-margin) = P, unchanged, while labor cost per unit of
+-- output is P*(1-margin) -- a gross margin of exactly `margin` on revenue,
+-- and no drift.
+--
+-- Applied uniformly to every tranche, not just the ones valued at a sale
+-- price: the firm requires the same return on every hour it hires, and
+-- exempting (say) the research tranche would just make research the one use
+-- of labor the firm systematically overpays for.
+local margin = tonumber(ctx.state.firm_margin) or 0
+if margin < 0 or margin >= 1 then margin = 0 end
+local markup = 1 / (1 - margin)
+
 -- Persistent research-push timer: every 20 ticks, if enough LABOR is banked
 -- and AGRONOMY isn't unlocked yet, spend a tick converting 6 LABOR into 6
 -- LABOR-FARM (six back-to-back duration-0 conversions in one script call --
@@ -74,14 +102,13 @@ end
 --
 -- The reserve is the firm's genesis endowment, so only cash earned ABOVE
 -- what it started with is distributable. That is not conservatism for its
--- own sake -- firms in this economy decapitalise rather than accumulate,
--- because bidding labour at marginal revenue product while pricing output at
--- labour cost is an inverse pair with a margin of exactly zero, leaving
--- every friction (food rotting unsold, crop failure, conceded asks) as pure
--- loss. Paying out of working capital would just bankrupt them faster. What
--- this rule does capture is the late phase: once the sector consolidates,
--- the survivor faces less competition for labour, earns a genuine margin,
--- and only then does capital income start to flow.
+-- own sake: at margin 0 firms decapitalise rather than accumulate (see the
+-- note on `margin` above), and paying out of working capital would just
+-- bankrupt them faster. What the rule captures there is the late phase --
+-- once the sector consolidates, the survivor faces less competition for
+-- labour, earns a genuine margin, and only then does capital income flow.
+-- With a margin set, the same rule stops meaning "wait for a monopolist"
+-- and starts meaning what it says: distribute profit, retain capital.
 --
 -- The register is read live (ctx.query.holders), not cached in state, so a
 -- dividend follows the shares the moment any of them change hands.
@@ -125,14 +152,14 @@ end
 -- stock rot, but cannot compound its way to zero.
 local food = holding_qty("FOOD")
 if food > 0.01 then
-  local unit_cost = market_price("LABOR", 5) / farm_yield
+  local unit_cost = market_price("LABOR", 5) / farm_yield * markup
   ctx.action.place_order("FOOD", "sell", amount_str(food),
                           amount_str(quote(unit_cost, concede(fills, "FOOD"))),
                           account.id, 40)
 end
 local clothes = holding_qty("CLOTHES")
 if clothes > 0.01 then
-  local unit_cost = market_price("LABOR", 5) / CLOTHES_PER_LABOR
+  local unit_cost = market_price("LABOR", 5) / CLOTHES_PER_LABOR * markup
   ctx.action.place_order("CLOTHES", "sell", amount_str(clothes),
                           amount_str(quote(unit_cost, concede(fills, "CLOTHES"))),
                           account.id, 41)
@@ -147,7 +174,10 @@ end
 -- fills here would be actively wrong: at any real equilibrium the firm's
 -- low-value tranches are SUPPOSED to go unfilled, and treating that as a
 -- signal to bid higher would walk the firm straight back into paying more
--- for labor than the goods it makes are worth.
+-- for labor than the goods it makes are worth. With a margin the same
+-- argument holds one step in: the reservation price is marginal revenue
+-- product NET of the required margin, and bidding above it is precisely the
+-- decapitalisation the margin exists to stop.
 local tranches = {}
 
 if field_id then
@@ -179,9 +209,12 @@ end
 
 table.sort(tranches, function(a, b) return a.price > b.price end)
 
+-- The margin is withheld here rather than inside each tranche so it applies
+-- to every use of labor by construction, and so a tranche added later cannot
+-- quietly opt out of it.
 local spend_left = balance
 for _, t in ipairs(tranches) do
-  local price = t.price * bid_factor
+  local price = t.price * bid_factor * (1 - margin)
   if price >= 0.01 then
     local qty = math.min(t.qty, spend_left / price)
     if qty > 0.01 then

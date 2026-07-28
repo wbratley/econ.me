@@ -10,6 +10,13 @@ system that could not converge.
 Branch: `claude/inequality-experiment`. Nothing in `experiments/` is committed
 yet.
 
+> **Reading older numbers in this file.** `firm_margin` defaulted to 0 for
+> everything recorded before "Firms with a margin", and now defaults to
+> **0.20**. Sections above that one are all margin-0 measurements and are
+> still correct *as such* — pass `--firm-margin 0` (or the `margin_00` sweep
+> arm) to reproduce them. They are marked inline where the distinction
+> changes how a result reads.
+
 ## Goal
 
 Exercise econ.me as the "economic modelling software" consumer design.md
@@ -263,7 +270,8 @@ path and the two changes above bought enough headroom.
 
 ## First matrix on the rebuilt pricing
 
-30 individuals, 9 fields, 200 ticks, seed 0, one run per variant:
+30 individuals, 9 fields, 200 ticks, seed 0, one run per variant, all at
+`firm_margin` 0 (the default at the time — see the note at the top):
 
 | Variant | Gini (final) | Incapacitated | Mean hunger satisfaction |
 |---|---|---|---|
@@ -408,6 +416,9 @@ inspectable.
 
 ## Redistribution delays deaths; it does not prevent them
 
+*(All at `firm_margin` 0, the default at the time. Re-tested at the current
+0.20 default in "The arm matrix at margin 0.20" below.)*
+
 The headline result above ("either intervention usually does far better —
 medians of 2.5 and 4.5") is **correct at tick 200 and gone by tick 400**.
 Deaths out of 30, mean, from 30 seeds per arm measured at fixed ticks within
@@ -462,6 +473,12 @@ central open issue in this experiment rather than a modelling nicety: as
 built, the economy is a battery discharging, and every policy result so far
 is a measurement of how fast different policies drain it.
 
+**Followed up and confirmed causally** — giving firms a margin moves the
+capital-exhaustion point ~100 ticks later and moves the die-off with it, then
+converges to the same place anyway. See "Firms with a margin" below. The
+battery framing survives; the guess that firm pricing was the battery does
+not.
+
 ## Firms have no profit margin, and decapitalise
 
 Found while building shareholding: there was nothing for a firm to pay a
@@ -496,6 +513,301 @@ Two consequences that reach beyond shares:
   fix it and would recalibrate the entire economy, so it is left as an open
   modelling decision, not silently patched.
 
+**Resolved — the markup was built and swept. It does not fix it.** See
+"Firms with a margin" below; the prediction in the second bullet was wrong,
+and interestingly wrong.
+
+## Firms with a margin: the same result again, one level down
+
+`firm_margin` is now a scenario parameter (default 0, so every result above
+reproduces unchanged — verified: seed 0, 400 ticks gives 20 incapacitated /
+gini 0.823 against the 20 / 0.8225 recorded in `sweep_n100_t400.json`).
+
+**The wedge is symmetric, and it has to be.** The firm withholds the margin
+from its labour bid (`× (1 - m)`) and adds it back to its ask (`÷ (1 - m)`).
+A one-sided markup does not just create a margin — it makes the price level
+drift forever, because nothing in this economy pins the price level. Mark
+only the bid down and the wage settles at `y·P·(1-m)`, so the ask becomes
+`w/y = P·(1-m)` and next tick's price is `(1-m)` times this one's: geometric
+deflation, compounding. Mark only the ask up and it inflates the same way.
+With both, the fixed point is `ask = w/y/(1-m) = P` — unchanged — while
+labour cost per unit of output is `P·(1-m)`, a gross margin of exactly `m` on
+revenue. The markup is applied in the bid loop rather than per tranche, so a
+tranche added later cannot silently opt out of it.
+
+### It works, mechanically
+
+30 seeds per arm, 400 ticks, 30 individuals, no tax, burn estate — arms
+differ *only* in the margin (`results/sweep_margin_n30_t400.json`). Mean
+firm cash (genesis endowment: 5 × 3,000 = 15,000):
+
+| arm | t50 | t100 | t150 | t200 | t300 | final |
+|---|---|---|---|---|---|---|
+| tax_none (m=0) | 10,946 | 6,162 | 2,832 | 3,429 | 4,210 | 6,324 |
+| margin_10 | 11,543 | 8,028 | 3,623 | 2,282 | 2,503 | 4,371 |
+| margin_20 | 12,152 | 9,870 | **7,345** | **5,034** | 2,329 | 2,876 |
+
+Mean firms solvent, of 5:
+
+| arm | t50 | t100 | t150 | t200 | t300 | final |
+|---|---|---|---|---|---|---|
+| tax_none | 5.00 | 5.00 | 3.17 | 2.23 | 1.93 | 1.87 |
+| margin_10 | 5.00 | 5.00 | 4.57 | 2.53 | 1.97 | 1.77 |
+| margin_20 | 5.00 | 5.00 | **5.00** | **4.67** | 3.20 | 1.90 |
+
+At m=0.20 the whole sector is still solvent at tick 150, where the baseline
+has already lost two firms and 82% of its capital. So the margin does what
+it was supposed to do.
+
+### And it reproduces the redistribution result exactly
+
+Mean deaths out of 30:
+
+| arm | t100 | t150 | t200 | t250 | t300 | t400 |
+|---|---|---|---|---|---|---|
+| tax_none | 0.13 | 4.60 | **13.73** | 15.20 | 15.30 | 15.53 |
+| margin_10 | 0.80 | 4.20 | 12.23 | 14.20 | 14.47 | 14.57 |
+| margin_20 | 1.33 | 5.10 | **7.03** | 9.37 | 11.60 | **14.10** |
+
+tax_none vs margin_20, Welch (\* survives Bonferroni at α=0.05/3):
+
+| measure | none | m=0.20 | diff | p |
+|---|---|---|---|---|
+| deaths at t200 | 13.73 | 7.03 | +6.70 | 0.00000 \* |
+| deaths at t300 | 15.30 | 11.60 | +3.70 | 0.00001 \* |
+| deaths at t400 | 15.53 | 14.10 | **+1.43** | 0.00727 \* |
+| first death tick | 141.1 | **115.6** | +25.5 | 0.00003 \* |
+
+This is the same shape as "Redistribution delays deaths" above, down to the
+detail that the intervention **kills someone earlier** — first death at 115.6
+against 141.1 — because withholding the margin from wages pushes
+subsistence-margin households under sooner, exactly as taxing them did. A
+6.7-death advantage at t200 decays to 1.43 by t400. The residual is real and
+survives correction, but it is a fifth of the mid-run effect, and the
+mid-run effect is what a naive read of the t200 table would have reported.
+
+**This is stronger evidence for the old mechanism than the old evidence
+was.** "The die-off tracks the exhaustion of firm capital" was an
+observational alignment between two curves. Here that alignment was
+*intervened on*: moving the capital-exhaustion point ~100 ticks later moved
+the die-off ~100 ticks later with it, dose-responsively. The correlation
+turned out to be causal in the direction assumed.
+
+### The economy is still a battery, and no margin in this range changes that
+
+Firm cash still ends below the genesis endowment in **30 of 30 runs in every
+arm**, including m=0.20. Runs ending with ≥3 of 5 firms solvent: 0/30, 0/30,
+2/30. A margin re-times the discharge; it does not convert the firm sector
+into a going concern.
+
+Why not — total money, 3 seeds, individuals + firms + treasury:
+
+| margin | t1 | t50 | t100 | t150 | t200 | t400 |
+|---|---|---|---|---|---|---|
+| 0 (seed 0) | 28,154 | 28,154 | 28,154 | 18,760 | 18,760 | 18,253 |
+| 0.20 (seed 0) | 28,154 | 28,154 | 27,846 | 25,502 | 25,502 | 22,708 |
+
+**Money is conserved to the cent until the first death**, then falls in steps
+that land exactly on deaths — burn-estate destroying the deceased's cash. So
+the drain is not a leak in normal operation, and this was worth ruling out
+before theorising further. What actually happens is a one-way circular flow:
+firms pay out more in wages than they recover in sales (money moves firm →
+household and stays there — at m=0, seed 0, firms go 14,356 → 4,341 while
+households go 13,798 → 23,813 with the total flat), because food decays,
+crops fail, and `concede()` sells below cost. The margin slows that flow
+without reversing it. Note also the late-run *rise* in baseline firm cash
+(771 at t150 → 6,453 at t400): once the sector consolidates the survivor is
+a monopsonist and the flow finally turns around — long after the deaths.
+
+So the honest statement of what the margin settled: the firm sector's zero
+margin was a real defect and it was worth fixing, it was **not** what made
+the baseline degrade, and every policy result above stands. The battery is
+the circular flow, not the pricing rule.
+
+## The arm matrix at margin 0.20
+
+Every policy arm re-run at the new default, since everything above it was
+measured in a world where the firm sector was structurally doomed. 8 arms ×
+30 seeds × 400 ticks, 3h47m (`results/sweep_matrix_m20_n30_t400.json`).
+`margin_00` is the old regime, carried as the anchor.
+
+**Read the caveat below first** — "deaths" here means the `COND-WEAK` counter,
+not starvation.
+
+| arm | t100 | t150 | t200 | t300 | **t400** | sd | gini | hunger |
+|---|---|---|---|---|---|---|---|---|
+| tax_none | 1.33 | 5.10 | 7.03 | 11.60 | 14.10 | 2.19 | 0.629 | 0.587 |
+| tax_flat | 0.80 | 1.07 | 2.33 | 10.47 | 13.43 | 3.22 | 0.713 | 0.602 |
+| **tax_progressive** | 0.83 | 1.73 | 2.90 | 10.60 | **12.03** | 1.47 | **0.585** | **0.628** |
+| estate_treasury | 0.80 | 1.17 | 2.00 | 11.00 | 13.93 | 2.36 | 0.688 | 0.574 |
+| estate_heir | 0.80 | 1.40 | 3.63 | 9.77 | 13.70 | 2.35 | 0.692 | 0.574 |
+| share_wealth | 1.57 | 5.17 | 7.03 | 11.10 | 13.17 | 1.70 | 0.614 | 0.610 |
+| share_equal | 1.53 | 4.80 | 7.00 | 11.63 | 13.50 | 1.48 | 0.624 | 0.594 |
+| **margin_00** | 0.13 | 4.63 | 13.90 | 15.37 | **15.63** | 1.83 | 0.641 | 0.534 |
+
+Seven of 28 pairwise comparisons survive Bonferroni (α=0.00179):
+
+| comparison | diff | p |
+|---|---|---|
+| tax_progressive vs margin_00 | −3.60 | <1e-6 |
+| share_wealth vs margin_00 | −2.47 | 1e-6 |
+| share_equal vs margin_00 | −2.13 | 7e-6 |
+| tax_none vs tax_progressive | +2.07 | 0.000079 |
+| tax_progressive vs share_equal | −1.47 | 0.000300 |
+| tax_progressive vs estate_treasury | −1.90 | 0.000489 |
+| estate_heir vs margin_00 | −1.93 | 0.000788 |
+
+### Three things changed, one did not
+
+**1. The margin is the largest single lever in the matrix.** `margin_00` is
+the worst arm at 15.63, worse than every arm run at 0.20, and four of those
+comparisons survive correction. Nothing on the redistribution side moves the
+number as far as simply letting firms hold their capital. That is the
+strongest available justification for the default change.
+
+**2. Progressive tax stops being a wash and becomes the best arm.** At margin
+0 the tax arms were indistinguishable at t400 (15.53 / 15.30 / 14.94 at
+n=100). Here `tax_progressive` reaches 12.03 and beats `tax_none`,
+`estate_treasury`, `share_equal` and `margin_00` under correction — the only
+arm with a residual effect at t400 rather than a delay that decays. It also
+has the **lowest** sd (1.47), the **lowest** gini (0.585) and the **highest**
+hunger satisfaction (0.628) of any arm.
+
+**3. That dissolves an old open question.** "Understand why progressive tax
+ends more unequal than flat tax while feeding people better" — it no longer
+does. With a margin it ends *most equal* (0.585 against flat tax's 0.713)
+*and* feeds people best. The puzzle was an artifact of the zero-margin world.
+
+**4. Capital ownership is still null, and now that means something.** The
+prediction on making the change was that the share arms were "genuinely
+re-opened" because dividends would now flow during the window that decides
+who lives. **The prediction was wrong.** The channel did open — dividends
+sampled are 398 (`share_wealth`) and 311 (`share_equal`) against 0 for every
+non-share arm, where at margin 0 nothing paid out before t300 — but
+`share_wealth` vs `share_equal` is 13.17 vs 13.50, p=0.42. Who owns the firms
+still does not change who survives, and this is now a real negative result
+with the mechanism live rather than an untested one with the mechanism
+switched off.
+
+### The delay pattern survives the margin
+
+`tax_flat` at t150 is 1.07 against `tax_none`'s 5.10, and 13.43 against 14.10
+by t400. `estate_treasury`: 1.17 → 13.93. The mid-run rescue that decays to
+nothing is exactly the shape recorded in "Redistribution delays deaths", and
+a margin does not change it. Only `tax_progressive` breaks the pattern.
+
+Note also that `margin_00` has the *fewest* early deaths (0.13 at t100 against
+0.8–1.6 for the margin arms) and the most by t200 — the same "buys delay at
+the cost of an earlier first death" trade documented above, seen from the
+other side.
+
+## What "incapacitated" actually measures — read this before any mortality result
+
+Prompted by a plain question about the dashboard: people show 100% hunger
+satisfaction and a rising cash balance in the sample before they die. How?
+
+Measured at **tick resolution** (`metrics_every=1`, seed 0, margin 0, 150
+ticks) rather than the usual 5, because 5-tick sampling aliases the answer
+away — it reported 9 fed↔unfed flips per person where the truth is 59.
+
+**Every single hungry spell in the run is exactly one tick long.** 532 spells
+across the population, none of length 2, mean length 1.00. One person's
+trace, ticks 60–119 (`.` fed, `H` hungry, `x` dead):
+
+```
+...H.H......H.H.H.H.H....H...H.H...H...H...H......H...H...xx
+```
+
+So nobody in this economy starves. What kills them is `COND-WEAK`:
+`+1` per hungry tick, **no `decay_per_tick` at all**, `incapacitates_at=30`.
+Thirty *non-consecutive* missed meals, spread over 150 ticks, with full
+recovery in between and no recovery in the counter. 13.4% of person-ticks are
+hungry; the median person banks exactly 30 and dies.
+
+Three things rule out the economic explanations:
+
+- **There was no shortage.** Food output ran 39–48/tick against a subsistence
+  need of 24/tick — a 60–100% surplus — straight through the die-off.
+- **They were not broke.** Cash *rises* monotonically to the death tick
+  (376→460, 450→538). The zero that follows is the burn-estate rule.
+- **They were not outbid.** A hungry household bids
+  `normal_food_price × (1 + 20 × urgency)`, and `normal_food_price` scales
+  with its own balance — ~105 against a market price of ~3. It wins whenever
+  it bids, which is exactly why the tick after every dip is back at 100%.
+
+The actual mechanism is the pantry, and it has a hard threshold. Tier-1
+buying is `0.8 × urgency`, so a fed household buys **nothing**; restocking
+bids `0.6 × normal_food_price`; FOOD decays 0.3/tick. That lowball clears
+only above ~470 balance:
+
+| balance | restock bid | vs market 3.08 |
+|---|---|---|
+| 250 | 1.63 | fails |
+| ~470 | ~3.08 | the line |
+| 1000 | 6.52 | clears |
+
+Above it you hold a buffer and never dip; below it you never build one and
+ride a period-2 oscillation until the counter fills. The people dying held
+376–538 — straddling exactly that line.
+
+**What this does and does not invalidate.** Every arm shares this mechanism,
+so the *comparisons* still compare something real: an arm that reduces deaths
+is genuinely reducing how often households fall below the pantry threshold.
+What is not supported is the natural reading of the word — "incapacitated"
+here means *missed roughly one meal in seven, thirty times, while solvent and
+surrounded by surplus food*, not "starved". Any claim of the form
+"redistribution saved lives" should be stated as "redistribution kept
+households above the restock threshold for longer".
+
+**The fix is a condition that recovers.** `COND-WEAK` with a small
+`decay_per_tick` would make it a hunger *stock* that heals — the thing it was
+described as — rather than an unforgiving lifetime counter.
+
+### Applied: `decay_per_tick = 0.02`, and the mortality result disappears entirely
+
+Rate picked off the contract in `conditions.py` (proportional decay against a
+constant grant converges to grant/decay). Grant is +1 per hungry tick, so an
+entity hungry a fraction `f` of the time settles at `f/d` and dies iff
+`f > 30d`. At d=0.02: a true famine (f=1) settles at 50 and kills in ~46
+ticks; you die if hungry more than 60% of the time; the measured f=0.134
+settles at 6.7.
+
+Measured, 6 seeds, 400 ticks, current defaults:
+
+| | before (no decay) | after (d=0.02) |
+|---|---|---|
+| deaths at t400 | 14.10 mean | **0, every seed** |
+| peak COND-WEAK | 30 (the threshold) | 9.7–19.7, then falls |
+| mean hunger satisfaction | 0.53–0.63 | **0.70–1.00** |
+| final gini | 0.585–0.713 | **0.428–0.507** |
+
+Mean COND-WEAK settles at 6.71 against the 6.7 the arithmetic predicted —
+the model behaves exactly as the contract says it should once the contract is
+honoured.
+
+**So the honest summary of this whole experiment to date: the mortality it
+measured was an artifact.** An economy carrying a 60–100% food surplus does
+not kill anybody once missing a meal is survivable, which is the right
+answer; the old runs killed half the population because the damage counter
+had no way down. Every "deaths" number above this section is a measurement of
+that artifact, including the margin result and the arm matrix.
+
+**The outcome variable has to change.** Deaths are now degenerate (always 0),
+so the arm comparisons need a measure with variance in it. The obvious
+candidates, all already collected: mean hunger satisfaction, the COND-WEAK
+burden itself (a continuous measure of chronic deprivation — which is also
+what "separate how much deprivation from how concentrated" in Not-yet-done
+was asking for), gini, and mobility.
+
+### Engine fix that this depended on
+
+Proportional decay stalls: `lost = quantize(quantity × rate)` rounds to zero
+once `quantity × rate < 0.00005`, so a holding sticks at ~0.0024 forever.
+Harmless dust for a commodity — but `held_modifiers` applies a condition's
+modifier at **any** positive quantity, so a recovered entity would have
+carried the 0.7 labour throttle permanently and "recovery" would not have
+recovered. `apply_decay` now sweeps the remainder when decay has stalled.
+
 ## Capital ownership: SHARE-FIRM-n
 
 The model had no capital-income channel at all — wages were an individual's
@@ -528,6 +840,11 @@ allocation): 8 cumulative by tick 200, 1,008 by tick 300, 4,350 by tick 400.
 So capital income redistributes wealth among *survivors* without changing
 who survives — the deaths are over by tick 200, long before the first
 dividend.
+
+**"Late" was an artifact of `firm_margin` 0**, where a firm could only clear
+its reserve by outliving its competitors. At the current 0.20 default firms
+earn a margin from the start, so dividends flow during the period that
+decides who lives. Re-measured in "The arm matrix at margin 0.20" below.
 
 A single seed of `wealth` vs `equal` ends at gini 0.557 vs 0.523, both with
 15 incapacitated. **That is n=1 and proves nothing** — this project's own
@@ -565,13 +882,51 @@ dividend reads it every payout period. Two notes:
   not). The calibration sweep in particular was a single seed.
 - Understand why progressive tax ends more unequal than flat tax while
   feeding people better.
-- Decide whether firms should carry a profit margin (see "Firms have no
-  profit margin" above). It shapes two separate findings — the baseline's
-  endless degradation, and capital income arriving too late to affect
-  mortality — so it is the highest-leverage open modelling question.
-- Run the capital-ownership comparison properly:
-  `sweep.py --arms tax_none,share_wealth,share_equal --seeds 100`. The n=1
-  result recorded above is not evidence.
+- ~~Decide whether firms should carry a profit margin.~~ **Done**: built,
+  swept at n=30, and it delays the die-off without preventing it — the same
+  result redistribution gave. See "Firms with a margin" above. It did not
+  shape either finding it was expected to: the baseline still degrades, and
+  the residual mortality effect at t400 is 1.4 deaths.
+- Pick a margin for the default scenario, now that one *can* be picked on
+  evidence. Left at 0 deliberately: every result in this file was measured
+  there, and re-baselining the whole experiment is a separate decision from
+  establishing what the margin does. m=0.20 is the natural candidate — it is
+  the only arm that holds the sector solvent through tick 150.
+- ~~Give `COND-WEAK` a `decay_per_tick`.~~ **Done** (0.02), and it removed
+  the mortality result outright — 0 deaths in 6/6 seeds at 400 ticks. See
+  "Applied" above.
+- **Re-run the arm matrix on a non-degenerate outcome.** Deaths are now always
+  zero, so the eight arms need comparing on hunger satisfaction, COND-WEAK
+  burden, gini and mobility instead. Everything above this line that reports
+  deaths is superseded; do the performance work first, since the matrix is
+  ~4h at current throughput.
+- Land beats cash once the firm sector stops growing — **mechanism traced,
+  needs a seed sweep**. Mean net worth of the landed against the landless
+  goes 0.76 → 0.96 → **1.82** → 5.41 across ticks 50→350, and the crossover
+  tracks the bankruptcies (it moves to ~300 in the margin arm). The mechanism
+  is *not* rent extraction: food price **falls** over the divergence (4.33 at
+  t200 → 1.10 at t400), and the gap is almost entirely cash, not goods or
+  asset value. It is the wage market dying. `P_LABOR` peaks at 15.39 (t100)
+  and collapses 84% to 2.37 as solvent firms go 5 → 3 → 2 → 1, because firms
+  are the only buyers of labour in this economy. From t175 the landless lose
+  cash **every single period** (−147, −228, −173, −126, −92, −67, −46, −40)
+  while the landed gain in every period without exception: a smallholder's
+  income comes from a field and does not require any firm to exist, so when
+  wages go, owning the productive asset is the only way to have an income at
+  all. Cash is a stock that depletes; land is a flow that continues. (The
+  late uptick in landless *mean* cash is survivorship — the median keeps
+  falling, 242 → 169, as the poorest are removed by dying.) Only 3–4 landed
+  people in one seed, so the direction is worth chasing and the magnitude is
+  not yet a number.
+- Find what actually stops the circular flow running one way, since the
+  margin only slows it. Candidates: firms that hold inventory instead of
+  conceding below cost, FOOD decay (0.3/tick is punishing for a good the
+  economy is short of), or households that spend down rather than accumulate
+  cash they cannot convert into food.
+- ~~Run the capital-ownership comparison properly.~~ **Done at n=30** in the
+  margin-0.20 matrix above: `share_wealth` 13.17 vs `share_equal` 13.50,
+  p=0.42, with dividends actually flowing. Null, and now a meaningful null.
+  n=100 would tighten it but the direction is not there to find.
 - Empirically time and pick a large-scale target (§ Scale in the original
   plan); throughput is now flat across a run and profiled in detail (see
   "Performance" above), which also answers part of the design.md §7
@@ -604,6 +959,11 @@ non-payment of tax/debts (jail, asset seizure, loss of services).
 # single run
 .venv/bin/python -m experiments.inequality.run --individuals 30 --ticks 200 \
   --db /path/to/scratch.db --out /path/to/result.json
+
+# ...the same run in the pre-margin regime every section above
+# "Firms with a margin" was measured in
+.venv/bin/python -m experiments.inequality.run --individuals 30 --ticks 200 \
+  --firm-margin 0 --out /path/to/result.json
 
 # 5-variant matrix (firm count derived from population unless --firms given)
 # variants run in parallel, one process each; --workers 1 forces serial

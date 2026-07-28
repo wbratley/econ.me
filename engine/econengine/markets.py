@@ -29,6 +29,11 @@ from .services import CurrencyMismatchError
 
 _QUANTUM = Decimal("0.0001")
 
+# Key for the per-session symbol -> Market memo held in Session.info. Scoped to
+# the session rather than the module so two sessions (parallel runs, tests)
+# never see each other's rows.
+_MARKET_CACHE = "_econengine_market_cache"
+
 
 class InsufficientHoldingsError(ValueError):
     pass
@@ -46,13 +51,39 @@ def create_market(session: Session, symbol: str, currency: str, name: str = "") 
     market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name)
     session.add(market)
     session.flush()
+    session.info.setdefault(_MARKET_CACHE, {})[market.symbol] = market
     return market
 
 
 def get_market(session: Session, symbol: str) -> Market | None:
-    return session.execute(
-        select(Market).where(Market.symbol == str(symbol).upper())
+    """Symbol -> Market, memoised per session.
+
+    Called ~220 times a tick (every quote, order and settlement resolves its
+    market by symbol), and the lookup is by symbol rather than primary key so
+    the ORM identity map never short-circuits it. Measured, near enough all of
+    this engine's runtime is per-statement ORM overhead rather than SQLite
+    itself, so a repeated lookup costs real time even though the row is
+    trivially cached.
+
+    Caching the mapped OBJECT is safe where caching a value would not be:
+    `last_price` mutates on every trade, but it mutates *on this instance*, so
+    a cached reference sees the update. Only found rows are cached, so a
+    market created later is still discovered; `create_market` seeds the entry,
+    and a session rollback drops the cache since objects may be detached.
+    """
+    sym = str(symbol).upper()
+    cache = session.info.setdefault(_MARKET_CACHE, {})
+    hit = cache.get(sym)
+    if hit is not None and hit in session:
+        return hit
+    market = session.execute(
+        select(Market).where(Market.symbol == sym)
     ).scalar_one_or_none()
+    if market is not None:
+        cache[sym] = market
+    elif hit is not None:
+        cache.pop(sym, None)
+    return market
 
 
 def get_holding(session: Session, entity_id: str, symbol: str) -> Holding | None:
