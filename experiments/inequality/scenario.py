@@ -240,10 +240,32 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "FOOD", decay_per_tick=Decimal("0.3"))
     goods.create_good(session, "CLOTHES", decay_per_tick=Decimal("0.05"))
     goods.create_good(session, "TOOLS")
+    # COND-WEAK recovers. It did not until now, and that was the single
+    # biggest distortion in this experiment: with no decay it is a LIFETIME
+    # counter of missed meals, so at tick resolution every hungry spell in a
+    # run is exactly one tick long (532 of them, none of length two) and
+    # people die of thirty non-consecutive bad days while solvent, bidding
+    # successfully, and surrounded by a 60-100% food surplus.
+    #
+    # conditions.py states the contract: proportional decay against a
+    # constant grant converges to grant/decay, and incapacitates_at must sit
+    # BELOW that equilibrium or it never fires. The grant is +1 per hungry
+    # tick, so with decay d an entity hungry a fraction f of the time settles
+    # at f/d, and dies iff f > 30d. At d = 0.02:
+    #
+    #   f = 1.00 (true famine)     equilibrium 50  -> dies after ~46 ticks
+    #   f > 0.60 (hungry most days) equilibrium >30 -> dies eventually
+    #   f = 0.134 (what was measured) equilibrium 6.7 -> survives, but stays
+    #                                 above 1, so keeps the labour penalty
+    #
+    # That is the intended shape: chronic hunger throttles you and a real
+    # famine still kills, but an intermittent miss no longer accumulates into
+    # a death sentence.
     goods.create_good(
         session, "COND-WEAK",
         modifies_pattern="LABOR*", modifies_factor=Decimal("0.7"),
         incapacitates_at=Decimal("30"),
+        decay_per_tick=Decimal("0.02"),
     )
 
 

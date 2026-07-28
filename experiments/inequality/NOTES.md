@@ -761,9 +761,52 @@ households above the restock threshold for longer".
 
 **The fix is a condition that recovers.** `COND-WEAK` with a small
 `decay_per_tick` would make it a hunger *stock* that heals — the thing it was
-described as — rather than an unforgiving lifetime counter. That single
-change is likely to move every mortality number in this file, so it is
-recorded here and deliberately not applied mid-matrix.
+described as — rather than an unforgiving lifetime counter.
+
+### Applied: `decay_per_tick = 0.02`, and the mortality result disappears entirely
+
+Rate picked off the contract in `conditions.py` (proportional decay against a
+constant grant converges to grant/decay). Grant is +1 per hungry tick, so an
+entity hungry a fraction `f` of the time settles at `f/d` and dies iff
+`f > 30d`. At d=0.02: a true famine (f=1) settles at 50 and kills in ~46
+ticks; you die if hungry more than 60% of the time; the measured f=0.134
+settles at 6.7.
+
+Measured, 6 seeds, 400 ticks, current defaults:
+
+| | before (no decay) | after (d=0.02) |
+|---|---|---|
+| deaths at t400 | 14.10 mean | **0, every seed** |
+| peak COND-WEAK | 30 (the threshold) | 9.7–19.7, then falls |
+| mean hunger satisfaction | 0.53–0.63 | **0.70–1.00** |
+| final gini | 0.585–0.713 | **0.428–0.507** |
+
+Mean COND-WEAK settles at 6.71 against the 6.7 the arithmetic predicted —
+the model behaves exactly as the contract says it should once the contract is
+honoured.
+
+**So the honest summary of this whole experiment to date: the mortality it
+measured was an artifact.** An economy carrying a 60–100% food surplus does
+not kill anybody once missing a meal is survivable, which is the right
+answer; the old runs killed half the population because the damage counter
+had no way down. Every "deaths" number above this section is a measurement of
+that artifact, including the margin result and the arm matrix.
+
+**The outcome variable has to change.** Deaths are now degenerate (always 0),
+so the arm comparisons need a measure with variance in it. The obvious
+candidates, all already collected: mean hunger satisfaction, the COND-WEAK
+burden itself (a continuous measure of chronic deprivation — which is also
+what "separate how much deprivation from how concentrated" in Not-yet-done
+was asking for), gini, and mobility.
+
+### Engine fix that this depended on
+
+Proportional decay stalls: `lost = quantize(quantity × rate)` rounds to zero
+once `quantity × rate < 0.00005`, so a holding sticks at ~0.0024 forever.
+Harmless dust for a commodity — but `held_modifiers` applies a condition's
+modifier at **any** positive quantity, so a recovered entity would have
+carried the 0.7 labour throttle permanently and "recovery" would not have
+recovered. `apply_decay` now sweeps the remainder when decay has stalled.
 
 ## Capital ownership: SHARE-FIRM-n
 
@@ -849,11 +892,14 @@ dividend reads it every payout period. Two notes:
   there, and re-baselining the whole experiment is a separate decision from
   establishing what the margin does. m=0.20 is the natural candidate — it is
   the only arm that holds the sector solvent through tick 150.
-- Give `COND-WEAK` a `decay_per_tick` so hunger damage recovers, and re-run
-  everything. See "What 'incapacitated' actually measures" — as built it is a
-  lifetime counter of non-consecutive missed meals, so the mortality outcome
-  measures something much weaker than the word implies. Highest-priority open
-  item: it sits underneath every result in this file.
+- ~~Give `COND-WEAK` a `decay_per_tick`.~~ **Done** (0.02), and it removed
+  the mortality result outright — 0 deaths in 6/6 seeds at 400 ticks. See
+  "Applied" above.
+- **Re-run the arm matrix on a non-degenerate outcome.** Deaths are now always
+  zero, so the eight arms need comparing on hunger satisfaction, COND-WEAK
+  burden, gini and mobility instead. Everything above this line that reports
+  deaths is superseded; do the performance work first, since the matrix is
+  ~4h at current throughput.
 - Land beats cash once the firm sector stops growing — **mechanism traced,
   needs a seed sweep**. Mean net worth of the landed against the landless
   goes 0.76 → 0.96 → **1.82** → 5.41 across ticks 50→350, and the crossover
