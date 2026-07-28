@@ -1548,6 +1548,56 @@ Not yet done: the *investment* half of the same preference. Individuals have no
 way to buy shares or land at all, so surplus can only sit as cash. Until there
 is a portfolio choice, "prefers passive income" is only half expressible.
 
+### Three bugs later, the economy works — and only hunger still fails
+
+`results/calibration_farm_throughput.json`, same grid, same four criteria,
+30m18s (the run takes twice as long as it used to because the economy is now
+actually doing something).
+
+| across the whole grid | bills (control) | labour | **now** |
+|---|---|---|---|
+| hunger | 0.35–0.47 | 0.30–0.46 | **0.59–0.75** |
+| shelter | 0.39–0.52 | 0.52–0.69 | **0.88–1.00** |
+| power | 0.22–0.35 | 0.31–0.59 | **0.80–1.00** |
+| worst deaths | 5.7 | 18.3 | **0.0** |
+
+**Shelter and power now clear the 0.85 bar in almost every config, and nobody
+dies anywhere in the grid.** Three fixes did it, none of them a parameter:
+
+1. `LABOR_PER_LET` / `LABOR_PER_GENERATE` were stale in the prelude after the
+   recipes changed, so firms charged 2.5x and 3.3x their true cost. Most of
+   the clearing gap — sell-through went ~70% → ~90%.
+2. A firm farmed `farm_parcel()`, the FIRST field it owned, so 19 standing
+   farms produced 2.4 harvests a tick between them.
+3. The farm loop gated on `labor` read *before* the auction, so a firm asked
+   for the work it could already pay for rather than the work it was about to.
+   Worth 12.4 FOOD/tick against 23.2 on identical land.
+
+Note what all three have in common: none was a scarcity. The economy had the
+land, the labour and the demand the whole time.
+
+**Still nothing passes, and hunger is now the only need failing** — 0.59–0.75
+against 0.85. Six of sixteen configs fail on hunger *alone*; the rest also
+trip a fill ceiling. Best is `cost_weighted|h5` at worst-need 0.75.
+
+The two remaining failures have one cause. Land: 13 farms, 5 dwellings, 5
+plants and **6 parcels still bare**, and `firm.lua` stops building at tick 8
+of 150. The build gate at line ~199 is the same stale pre-auction reading as
+(3): it wants `labor >= 4` for a dwelling or 6 for a plant *in hand when the
+script runs*, and after the genesis stock is spent a firm never holds that
+much again — labour decays 0.5/tick and lets, generation and farming take it
+first. So:
+
+  * hunger stays at 0.75 because there are 13 farms and no more are built;
+  * shelter and energy trip TIGHT at fill 0.99–1.00 because 5 dwellings x 6
+    units serves exactly 30 people, so every unit made is sold *by
+    construction* and the market has no slack to price against.
+
+Both want the same thing: the bare land built on. The comment above that gate
+explains it was added because firing while short "fails the intent silently,
+every tick, forever" — true when written, no longer true since the engine
+retries an input-starved `start_process` after clearing.
+
 ## Not yet done
 
 - Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
