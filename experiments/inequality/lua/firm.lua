@@ -31,6 +31,7 @@ local farm_yield = unlocked_agronomy and FOOD_PER_FARM_TOOLED or FOOD_PER_FARM_H
 
 local dwellings = parcels_with("DWELLING")
 local plants = parcels_with("POWER-PLANT")
+local farms = parcels_with("FARM")
 
 -- Firms are not identical: this is seeded per firm at genesis. Without it
 -- every firm quotes the same number for the same tranche and the auction
@@ -86,12 +87,45 @@ if research_push then
   end
   ctx.state.research_timer = 0
 else
+  -- Work every field that is standing and idle, exactly as the dwelling and
+  -- plant loops below do. This used to farm `farm_parcel()` -- the FIRST field
+  -- only -- which capped the whole sector at one harvest per firm per tick
+  -- however much land it held: 19 standing farms produced 2.4 harvests a tick
+  -- between them, with spare labour on the market and ZERO rejections. The
+  -- fields were not failing to run, they were never being asked to.
+  --
+  -- Priority 23/24 puts farming BEHIND lets and generation, which is a change
+  -- of order and deliberate. While this was one field it did not matter; a
+  -- firm that can now spend every hour it owns on land would starve the
+  -- utilities from priority 10, which is the exact failure the note above the
+  -- dwelling loop records. It also agrees with the firm's own bid schedule: an
+  -- hour let is worth 6 SHELTER (0.2 -> 6), an hour generating 20 ENERGY
+  -- (0.3 -> 6), an hour farmed 4.95 FOOD. Land is the least valuable hour of
+  -- the three unless food is dear, so it goes last of the three.
+  --
+  -- WORK_AS_FARMER is duration-0 and completes inline, so each conversion is
+  -- in hand before the priority-24 farm intent that spends it.
   local reserved = 0
-  if labor >= 1 and field_id then
-    ctx.action.start_process("WORK_AS_FARMER", nil, 10)
-    reserved = reserved + 1
-    if not running_on(field_id) then
-      ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", field_id, 20)
+  for _, pid in ipairs(dwellings) do
+    if not running_on(pid) then reserved = reserved + LABOR_PER_LET end
+  end
+  for _, pid in ipairs(plants) do
+    if not running_on(pid) then reserved = reserved + LABOR_PER_GENERATE end
+  end
+  -- Queued for every idle field without checking the labour on hand, exactly
+  -- as the dwelling and plant loops do. `labor` is read when the script runs,
+  -- which is BEFORE this tick's auction, so it counts only what was bought
+  -- last tick -- gating on it made the firm ask for work it could already pay
+  -- for rather than work it was about to. That capped output at ~2.5 harvests
+  -- a tick across 17 fields even after the one-field bug was gone. The engine
+  -- retries a start_process rejected for want of inputs after clearing, so
+  -- asking for every field and letting the market decide is now both the
+  -- honest statement of intent and the one that gets fed.
+  for _, pid in ipairs(farms) do
+    if not running_on(pid) then
+      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
+      reserved = reserved + 1
+      ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", pid, 24)
     end
   end
   if labor - reserved >= 3 and holding_qty("TOOLS") < 3 then
