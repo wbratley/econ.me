@@ -13,9 +13,54 @@ from econengine.models import (
     Entity, EntityStatus, Facility, Holding, Need, NeedState, Parcel, Tick,
 )
 
-from .scenario import Scenario
+from .scenario import _FOOD_PER_FIELD_TICK, Scenario, share_symbol
 
 _PRICED_GOODS = ("FOOD", "CLOTHES", "TOOLS", "LABOR", "LABOR-FARM")
+
+# --- Valuing the two assets that have no market price ----------------------
+#
+# No script trades parcels or shares, so every SHARE-FIRM-n market sits at
+# last_price None and parcels have no market at all. They still have to appear
+# in a wealth measure. Leaving them out is not neutral: 4 of 30 people own all
+# the productive land, and a net worth blind to that reports `tax_progressive`
+# at gini 0.018 -- near-perfect equality -- while it remains true.
+#
+# LAND is valued as capitalised Ricardian rent: what a field yields per tick,
+# less the labour it takes to work it, capitalised at a discount rate.
+#
+#     rent = expected FOOD yield x P_FOOD  -  labour per field-tick x P_LABOR
+#
+# That residual is what accrues to the land itself rather than to the worker,
+# and it is the same quantity whoever holds the field: a firm collects it as
+# its margin (which is exactly `m x yield x P` by construction -- see NOTES
+# "Firms with a margin"), a smallholder collects it by not paying themselves a
+# wage. Floored at zero, since nobody is forced to work a field that costs
+# more in labour than it yields.
+#
+# SHARES are valued at book -- the firm's net assets (cash + priced goods +
+# its own land at the above) over shares outstanding. Deliberately not
+# earnings-based: firm earnings here swing from nothing to monopsony rents
+# inside one run (see "the circular flow reverses at ~tick 200"), and any
+# multiple applied to them would amplify that swing rather than measure it.
+_LABOR_PER_FIELD_TICK = 1.0     # FARM_FOOD_HAND burns 1 LABOR-FARM, from 1 LABOR
+
+# A field is worth 100 ticks of its net rent. This is a modelling choice and
+# it scales how much land dominates the wealth distribution, so it is exposed
+# rather than buried: capitalising a perpetuity at any realistic annual rate
+# is meaningless in a world that ends at tick 400, and 100 ticks is a quarter
+# of a standard run. Vary it to check a result is not an artifact of the rate.
+LAND_DISCOUNT_PER_TICK = 0.01
+
+
+def field_value(prices: dict[str, float | None],
+                discount_per_tick: float = LAND_DISCOUNT_PER_TICK) -> float:
+    """Capitalised net rent of one FIELD. See the note above."""
+    food = prices.get("FOOD")
+    if not food:
+        return 0.0
+    wage = prices.get("LABOR") or prices.get("LABOR-FARM") or 0.0
+    rent = _FOOD_PER_FIELD_TICK * food - _LABOR_PER_FIELD_TICK * wage
+    return max(0.0, rent) / discount_per_tick if discount_per_tick > 0 else 0.0
 
 
 def gini(values: list[float]) -> float:
@@ -204,20 +249,60 @@ def _farmland(session: Session, scenario: Scenario) -> tuple[dict[str, int], dic
     return {"working": working, "idle": idle, "treasury_held": treasury_held}, by_owner
 
 
-def _shares_by_entity(session: Session) -> dict[str, float]:
-    """Total SHARE-FIRM-n held per entity, in one query rather than one per
-    person. Shares were allocated at genesis and then never measured again,
-    so "who owns the firms" was only ever knowable for tick 0 -- which is
-    exactly the wrong tick if the question is whether ownership concentrates.
-    Markets exist for these symbols, so they can move even though no script
-    currently trades them."""
+def _share_register(session: Session) -> tuple[dict[str, float], dict[tuple[str, str], float],
+                                                dict[str, float]]:
+    """The share register in one query: total per entity, per (entity, symbol),
+    and shares outstanding per symbol.
+
+    Shares were allocated at genesis and then never measured again, so "who
+    owns the firms" was only ever knowable for tick 0 -- which is exactly the
+    wrong tick if the question is whether ownership concentrates. Markets exist
+    for these symbols, so they can move even though no script currently trades
+    them. The per-symbol breakdown is what lets a holding be *valued*: firms
+    differ, so one share of a solvent firm is not one share of a broke one.
+    """
     rows = session.execute(
         select(Holding).where(Holding.symbol.like("SHARE-FIRM-%"))
     ).scalars().all()
-    totals: dict[str, float] = {}
+    by_entity: dict[str, float] = {}
+    by_entity_symbol: dict[tuple[str, str], float] = {}
+    outstanding: dict[str, float] = {}
     for holding in rows:
-        totals[holding.entity_id] = totals.get(holding.entity_id, 0.0) + float(holding.quantity)
-    return totals
+        quantity = float(holding.quantity)
+        by_entity[holding.entity_id] = by_entity.get(holding.entity_id, 0.0) + quantity
+        key = (holding.entity_id, holding.symbol)
+        by_entity_symbol[key] = by_entity_symbol.get(key, 0.0) + quantity
+        outstanding[holding.symbol] = outstanding.get(holding.symbol, 0.0) + quantity
+    return by_entity, by_entity_symbol, outstanding
+
+
+def _share_unit_values(
+    session: Session, scenario: Scenario, prices: dict[str, float | None],
+    fields_by_owner: dict[str, int], per_field: float, outstanding: dict[str, float],
+) -> dict[str, float]:
+    """Book value of one share of each SHARE-FIRM-n: the firm's net assets
+    (cash + priced goods + its own fields) over shares outstanding.
+
+    Note what this does NOT do: in arms with `share_allocation="none"` no
+    shares exist, so firm net assets belong to nobody and appear in no one's
+    wealth. That is the model being honest -- those firms genuinely have no
+    owners -- but it means total measured household wealth is not comparable
+    between share arms and non-share arms. Compare within, not across.
+    """
+    values: dict[str, float] = {}
+    for index, firm_id in enumerate(scenario.firm_ids):
+        symbol = share_symbol(index)
+        shares = outstanding.get(symbol, 0.0)
+        if shares <= 0:
+            continue
+        firm = session.get(Entity, firm_id)
+        if firm is None:
+            continue
+        cash = float(firm.accounts[0].balance) if firm.accounts else 0.0
+        net_assets = (cash + _holdings_value(session, firm_id, prices)
+                      + fields_by_owner.get(firm_id, 0) * per_field)
+        values[symbol] = max(0.0, net_assets) / shares
+    return values
 
 
 def _holding_qty(session: Session, entity_id: str, symbol: str) -> float:
@@ -241,7 +326,20 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
     """Per-tick aggregate + per-individual metrics."""
     prices = _last_prices(session)
     farmland, fields_by_owner = _farmland(session, scenario)
-    shares_by_owner = _shares_by_entity(session)
+    shares_by_owner, shares_by_owner_symbol, shares_outstanding = _share_register(session)
+    per_field = field_value(prices)
+    share_unit_values = _share_unit_values(
+        session, scenario, prices, fields_by_owner, per_field, shares_outstanding)
+    # Priced once per holder here rather than per entity inside the loop below,
+    # which would rescan the whole register for each person -- O(entities x
+    # holdings) per snapshot, and population scaling is the axis this harness
+    # is expected to grow along (measured linear, 15->120 individuals).
+    shares_value_by_owner: dict[str, float] = {}
+    for (holder, symbol), quantity in shares_by_owner_symbol.items():
+        shares_value_by_owner[holder] = (
+            shares_value_by_owner.get(holder, 0.0)
+            + quantity * share_unit_values.get(symbol, 0.0)
+        )
 
     entities: list[dict] = []
     for entity_id in scenario.individual_ids:
@@ -249,11 +347,24 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         account = entity.accounts[0] if entity.accounts else None
         cash = float(account.balance) if account else 0.0
         net_worth = cash + _holdings_value(session, entity_id, prices)
+        # The two assets a market price cannot supply. Kept as separate
+        # components rather than folded straight into one number, because
+        # "who is rich" and "rich in what" turn out to be different questions
+        # here -- land and cash diverge hard once the wage market dies.
+        land_value = fields_by_owner.get(entity_id, 0) * per_field
+        shares_value = shares_value_by_owner.get(entity_id, 0.0)
         entities.append({
             "entity_id": entity_id,
             "status": entity.status.value,
             "cash": cash,
+            # `net_worth` stays cash + priced goods, unchanged, because every
+            # gini and mobility figure recorded in NOTES.md is measured on it
+            # and silently redefining it would invalidate all of them at once.
+            # `total_wealth` is the one that sees everything a person owns.
             "net_worth": net_worth,
+            "land_value": land_value,
+            "shares_value": shares_value,
+            "total_wealth": net_worth + land_value + shares_value,
             "hunger_satisfaction": _satisfaction(session, entity_id, "HUNGER"),
             "comfort_satisfaction": _satisfaction(session, entity_id, "COMFORT"),
             # COND-WEAK has no decay_per_tick, so it never recovers: it is a
@@ -273,6 +384,7 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         })
 
     net_worths = [e["net_worth"] for e in entities]
+    total_wealths = [e["total_wealth"] for e in entities]
     incapacitated = sum(1 for e in entities if e["status"] == EntityStatus.INCAPACITATED.value)
     treasury = session.get(Entity, scenario.treasury_id)
 
@@ -285,6 +397,22 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         "median_net_worth": median(net_worths) if net_worths else 0.0,
         "top10_share": wealth_share(net_worths, 0.10),
         "bottom50_share": bottom_share(net_worths, 0.50),
+        # The same three on total wealth: cash + goods + land + shares. Land
+        # is the one that moves them -- it is held by 4 of 30 people and
+        # valued at 100 ticks of net rent, so `gini` and `gini_total` answer
+        # noticeably different questions and both are worth having.
+        "gini_total": gini(total_wealths),
+        "mean_total_wealth": (sum(total_wealths) / len(total_wealths)) if total_wealths else 0.0,
+        "median_total_wealth": median(total_wealths) if total_wealths else 0.0,
+        "top10_share_total": wealth_share(total_wealths, 0.10),
+        "bottom50_share_total": bottom_share(total_wealths, 0.50),
+        "wealth_components": {
+            "field_value": per_field,
+            "cash": sum(e["cash"] for e in entities),
+            "goods": sum(e["net_worth"] - e["cash"] for e in entities),
+            "land": sum(e["land_value"] for e in entities),
+            "shares": sum(e["shares_value"] for e in entities),
+        },
         "incapacitated_count": incapacitated,
         "mean_hunger_satisfaction": (
             sum(e["hunger_satisfaction"] for e in entities) / len(entities) if entities else 0.0
@@ -301,17 +429,25 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
     }
 
 
-def mobility_correlation(first_snapshot: dict, last_snapshot: dict) -> float:
-    """Pearson correlation between starting net worth (first tick) and
-    ending net worth (last tick) across individuals -- the actual "does your
-    starting position determine your ending position" answer. 1 = rigid
-    hierarchy, 0 = no relationship, negative = reversal."""
-    first_by_id = {e["entity_id"]: e["net_worth"] for e in first_snapshot["entities"]}
+def mobility_correlation(first_snapshot: dict, last_snapshot: dict,
+                          key: str = "net_worth") -> float:
+    """Pearson correlation between starting wealth (first tick) and ending
+    wealth (last tick) across individuals -- the actual "does your starting
+    position determine your ending position" answer. 1 = rigid hierarchy,
+    0 = no relationship, negative = reversal.
+
+    `key` selects the wealth measure: "net_worth" (cash + priced goods, the
+    default, and what every mobility figure in NOTES.md was measured on) or
+    "total_wealth" (also land and shares). They can differ sharply, since
+    land is the asset that does not move between people.
+    """
+    first_by_id = {e["entity_id"]: e.get(key, e["net_worth"])
+                   for e in first_snapshot["entities"]}
     xs, ys = [], []
     for e in last_snapshot["entities"]:
         if e["entity_id"] in first_by_id:
             xs.append(first_by_id[e["entity_id"]])
-            ys.append(e["net_worth"])
+            ys.append(e.get(key, e["net_worth"]))
     n = len(xs)
     if n < 2:
         return 0.0

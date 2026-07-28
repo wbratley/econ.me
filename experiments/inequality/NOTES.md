@@ -54,10 +54,13 @@ engine's mechanism/data/policy split this leans on throughout.
   and the Treasury's own POLICY script redistributes only from its own
   collected balance.
 - `metrics.py` — pure-Python Gini/percentile/share/mobility stats (no
-  numpy/pandas in this repo's `.venv`).
+  numpy/pandas in this repo's `.venv`), on two wealth measures: `net_worth`
+  (cash + priced goods) and `total_wealth`, which also values land and shares.
 - `run.py` — single-scenario CLI + `run_scenario()` for programmatic use.
 - `matrix.py` — runs the 5-variant sweep (tax none/flat/progressive ×
   estate burn/treasury/heir) and writes one JSON per variant.
+- `horizon.py` — how long a run has to be. Scores the whole arm comparison at
+  a cheap tick against a long one, measured inside the same runs.
 
 ## Bugs found and fixed (chronological)
 
@@ -868,8 +871,286 @@ dividend reads it every payout period. Two notes:
   that for `FOOD`. If per-symbol visibility should be votable data,
   `build_queries` is where it would be gated. Deliberately not gated yet.
 
+## How long must a run be? 250 keeps the ranking, not the magnitude
+
+The re-run matrix is ~4h at 400 ticks and ~2.5h at 250, and the saving is only
+worth taking if the *comparison* survives the shorter horizon. "Have the
+metrics settled by 250" is the wrong test for that: a metric can still be
+moving at 250 while every arm moves together (gap already decided), and a
+metric can look flat while two arms are mid-crossing. What has to hold is that
+the conclusion drawn at t250 is the conclusion drawn at t400.
+
+`horizon.py` runs the arms to 400 with every outcome recorded at both ticks
+**inside the same run**, so run-to-run luck is removed from the comparison
+entirely — seed 3's t250 and seed 3's t400 are one economy at two moments.
+It then runs the identical pairwise Welch analysis twice and asks whether the
+verdicts match. 4 arms x 12 seeds x 400 ticks, `metrics_every=10`, 50m01s
+(`results/horizon_n30_t400.json`). Arms chosen to span the effect range:
+`tax_none` (baseline), `tax_progressive` (the only arm with a residual effect
+at t400 on the old outcome), `estate_treasury` (a pure delay-pattern arm),
+`margin_00` (the largest lever, and the only one that moves *production*).
+
+| outcome | pairs agreeing | sign flips | arm-ordering rank r |
+|---|---|---|---|
+| gini | **6/6** | 0 | **+1.00** |
+| mobility | **6/6** | 0 | +0.80 |
+| COND-WEAK burden | 5/6 | 0 | **+1.00** |
+| COND-WEAK carriers | 5/6 | 0 | +0.89 |
+| mean hunger (point sample) | 4/6 | 0 | +0.80 |
+| deaths | — | — | 0.000 in all four arms at every tick |
+
+**Zero sign flips in 30 comparisons.** No pair of arms crosses over between
+250 and 400, on any outcome. Arm means at the two horizons:
+
+| arm | hunger | COND-WEAK | carriers | gini | mobility |
+|---|---|---|---|---|---|
+| tax_none | 0.801 → 0.803 | 230 → 289 | 17.5 → 23.3 | 0.284 → 0.456 | 0.643 → 0.291 |
+| tax_progressive | 0.930 → 0.869 | 186 → 242 | 24.6 → 26.1 | 0.020 → 0.018 | −0.006 → −0.074 |
+| estate_treasury | 0.843 → 0.860 | 161 → 230 | 24.6 → 25.9 | 0.031 → 0.030 | −0.011 → −0.025 |
+| margin_00 | 0.809 → 0.753 | 306 → 339 | 20.3 → 23.3 | 0.372 → 0.554 | 0.482 → 0.246 |
+
+**The magnitudes do not survive.** diff@250 / diff@400 per pair runs from 0.32
+to 2.74, and the bias has a *direction per outcome* rather than being noise:
+t250 overstates carrier gaps (x2.58, x2.74, x1.68) and mobility gaps (x1.78,
+x2.07, x1.82, x1.52), and understates every gini gap (x0.59, x0.60, x0.65,
+x0.66, x0.90, x0.91). A 250-tick matrix would rank the arms correctly and then
+misreport how much any of it matters, in opposite directions depending on
+which row you read. That is a milder version of the same trap the old deaths
+table set — 6.70 at t200 was really 1.43 at t400.
+
+Four pairs disagree. Two are p-values straddling the Bonferroni line
+(a=0.00833) rather than genuine changes of mind — `tax_none` vs
+`tax_progressive` on hunger (0.0027 → 0.0168) and `tax_progressive` vs
+`margin_00` on carriers (0.0089 → 0.0000). Two are substantive:
+
+| pair | outcome | diff@250 | p | diff@400 | p |
+|---|---|---|---|---|---|
+| estate_treasury vs margin_00 | hunger | +0.035 | 0.329 | +0.107 | 0.0012 |
+| tax_none vs margin_00 | COND-WEAK | −76.0 | 0.0054 | −50.2 | 0.124 |
+
+Both involve `margin_00`, the arm still moving fastest at 250 (gini 0.372 →
+0.554, burden 306 → 339 over that stretch). **So: 250 is safe for "which arms
+differ and in which direction", and specifically unsafe for `margin_00`.**
+
+Two caveats on the test itself. n=12, so the significance calls are themselves
+noisy, and "the horizons disagree" is partly conflated with "n=12 straddles
+the threshold" — which is exactly what the two borderline pairs are.
+And **neither horizon is a steady state**: `tax_none` gini goes 0.286 → 0.326
+→ 0.397 → 0.453 → 0.507 across t200–t400 with no sign of levelling. The
+ordering is stable; the economy is not.
+
+### The new outcomes separate the arms far harder than deaths ever did
+
+This is the bigger cost lever. At n=12, most gini and mobility pairs are
+already at p<0.0001 — the arms are separated by 0.018 against 0.554 on gini,
+and −0.074 against 0.291 on mobility. The old matrix needed 30 seeds because
+deaths had sd 1.5–3.2 around means 12–16. If the re-run is judged on gini or
+mobility, n=12–15 may be enough, which saves more than the tick reduction
+does. Size it on the smallest gap worth detecting, not the largest one here.
+
+### The carriers/burden split is now separable
+
+`tax_none` has *fewer* people carrying `COND-WEAK` (23.3) but a *higher* total
+burden (289) than `tax_progressive` (26.1 carriers, 242 burden). Redistribution
+spreads deprivation across more people while reducing its total. That is the
+"separate how much deprivation from how concentrated" item below — and unlike
+the twelve-replicate version, where the two were collinear at r=+0.90, they
+now move in **opposite directions across arms**, so they are separable
+without needing new conditions.
+
+## Two things found while checking the horizon
+
+### Point-sampled hunger is too noisy to be an outcome; the stocks are fine
+
+`metrics_every=10` samples only *even* ticks, which given the period-2 hunger
+oscillation looked like a worse version of the `metrics_every=5` aliasing that
+hid the mortality artifact for this project's whole life. Measured at
+`metrics_every=1`, seed 0, 400 ticks — **the parity worry was wrong, and a
+different problem is real.**
+
+| outcome | all ticks | even only | odd only | even − odd |
+|---|---|---|---|---|
+| hunger | 0.8456 | 0.8377 | 0.8534 | −0.0157 |
+| COND-WEAK burden | 195.01 | 195.45 | 194.57 | +0.88 |
+| carriers | 16.09 | 16.10 | 16.08 | +0.02 |
+| gini | 0.3859 | 0.3855 | 0.3862 | −0.0007 |
+
+No phase lock. But the horizon comparison reads a *single tick*, not an
+average, and one tick of hunger is very noisy — against its two odd
+neighbours it is +0.053 at t250 and +0.086 at t400, while the stocks move
+under 2%:
+
+| | at the tick | odd neighbours | gap |
+|---|---|---|---|
+| hunger @ t250 | 0.8345 | 0.7811 | **+0.053** |
+| hunger @ t400 | 0.8392 | 0.7528 | **+0.086** |
+| COND-WEAK @ t250 | 277.67 | 278.15 | −0.48 (0.2%) |
+| gini @ t250 | 0.3264 | 0.3216 | +0.005 (1.5%) |
+| carriers @ t250 | 16.00 | 16.00 | 0.00 |
+
+The entire spread across all eight arms of the last matrix was 0.534 to 0.628
+— 0.094. So one tick of measurement noise is about as large as the whole
+effect. Hunger is a fast square wave (63.8 fed↔unfed flips per person over
+400 ticks, down from the pre-decay 59-in-150) and an instant of it carries
+almost no information. `summarise()` now also records `hunger_win_at_*`, a
+mean over ±50 ticks. The stocks need no such treatment because they integrate
+history rather than sampling it. **The 4/6 hunger agreement above is measured
+on the point version and should be redone on the windowed one.**
+
+### The circular flow reverses at ~tick 200, and redistribution accelerates it
+
+Chasing an implausible number: `tax_progressive` reports gini 0.018–0.025,
+near-perfect equality, and `gini()` returns 0.0 for an all-zero population, so
+that reading is ambiguous between "equal" and "broke". It is genuinely equal —
+seed 0 at t400, everyone in a band around 320, and the *median* person is 22%
+better off than under no tax (323 against 265). But total household net worth
+is **21,271 under no tax against 9,725 under progressive tax**, with zero
+deaths, and NOTES says money is conserved to the cent absent a burned estate.
+
+It is conserved — 28,154 at every tick in both arms. The money is in the firms:
+
+| tick | no tax: household / firms / solvent | progressive: household / firms / solvent |
+|---|---|---|
+| 0 | 13,154 / 15,000 / 5 | 13,154 / 15,000 / 5 |
+| 100 | 18,436 / 9,717 / 5 | 19,482 / 7,240 / 5 |
+| 200 | 25,633 / 2,521 / 4 | 24,134 / 2,584 / **2** |
+| 250 | 24,135 / 4,019 / 3 | 20,321 / 6,678 / 2 |
+| 400 | 21,169 / 6,985 / 3 | **9,604 / 18,181** / 2 |
+
+**The battery discharges until ~t200 and then recharges from the households.**
+The late-run rise in firm cash was already recorded above as monopsony rents
+after consolidation; what is new is that it is not a mild uptick but a
+reversal of the whole circular flow, and that **redistribution roughly triples
+it** (+15,597 against +4,464 from the t200 trough). The mechanism is velocity:
+redistribution keeps poor households spending on food, and with a 0.20 margin
+on every sale, a faster circular flow drains the household sector into a
+two-firm oligopoly faster. Doing nothing leaves the money hoarded by a rich
+household that still only eats 0.8/tick — 2,814 sitting idle at t400.
+
+This also puts a health warning on gini as the matrix's headline. **Net worth
+excludes land**: `_holdings_value()` prices only FOOD, CLOTHES, TOOLS, LABOR
+and LABOR-FARM, and parcels are not holdings, so a smallholder's field counts
+zero. "Progressive tax achieves gini 0.018" means *cash and goods* are
+near-equal while 4 of 30 people still own all the productive land — measured
+by an instrument that structurally cannot see the asset the "land beats cash"
+item below says ends up deciding everything. **Fixed below.**
+
+## Land and shares now count as wealth, and it moves two results
+
+Neither asset has a market price — no script trades parcels or shares, so every
+`SHARE-FIRM-n` market sits at `last_price` None and parcels have no market at
+all. Leaving them out of wealth was never neutral, so they are now valued
+(`metrics.field_value`, `metrics._share_unit_values`):
+
+- **Land: capitalised Ricardian rent.** `rent = 4.95 x P_FOOD - 1 x P_LABOR`,
+  the residual accruing to the field rather than to whoever works it, floored
+  at zero and divided by a discount rate. It is the same quantity whoever
+  holds the field: a firm collects it as its margin (exactly `m x yield x P`
+  by construction), a smallholder collects it by not paying themselves a wage.
+- **Shares: book value.** Firm net assets (cash + priced goods + its own land)
+  over shares outstanding. Deliberately not earnings-based — firm earnings
+  swing from nothing to monopsony rents inside one run, and any multiple on
+  them would amplify that swing rather than measure it.
+
+`LAND_DISCOUNT_PER_TICK = 0.01`, i.e. a field is worth 100 ticks of net rent
+(~1,025 at P_FOOD 3.08 / P_LABOR 5.00). This is a modelling choice, not a
+measurement: capitalising a perpetuity at any realistic annual rate is
+meaningless in a world that ends at tick 400, and 100 ticks is a quarter of a
+standard run. It is exposed as a constant so results can be checked against it.
+
+**`net_worth` is unchanged** — still cash + priced goods — because every gini
+and mobility number recorded above is measured on it, and redefining it in
+place would silently invalidate all of them. The new measure is
+`total_wealth`, with `gini_total`, `mobility_total`, `top10_share_total` and a
+`wealth_components` breakdown alongside.
+
+4 seeds, 400 ticks (t400 means):
+
+| arm | gini | gini_total | mobility | mobility_total | land % of wealth |
+|---|---|---|---|---|---|
+| tax_none | 0.477 | 0.514 | 0.324 | 0.257 | 9.5% |
+| tax_progressive | **0.018** | **0.146** | −0.001 | −0.049 | 15.1% |
+| share_wealth | 0.483 | 0.492 | 0.324 | **0.567** | 6.9% |
+
+**1. `tax_progressive`'s near-perfect equality was largely the blind spot.**
+gini 0.018 → gini_total 0.146, eight times higher. It is still the most equal
+arm by a wide margin, but "near-perfect equality" and "meaningfully unequal"
+are different claims and only the second one survives seeing the land.
+
+**2. Concentrated share ownership entrenches position, and the old instrument
+could not see it.** `share_wealth` mobility goes 0.324 → **0.567**: including
+shares makes the hierarchy *more* rigid, not less. Mechanically that has to
+happen — shares were allocated by starting wealth and no script trades them,
+so the register is a frozen record of everyone's genesis position. But it
+bears on the standing null: "who owns the firms does not change who survives"
+was tested on deaths and is probably still true there, while the *inequality
+and mobility* half of the ownership question was never actually measured,
+because the measure omitted the shares. Worth re-running the ownership pair on
+`gini_total` / `mobility_total`.
+
+### How much of this is the discount rate?
+
+All of the magnitude and none of the ranking. Seed 0, t400, recomputed off one
+snapshot since land value scales as 1/r:
+
+| rate | ticks of rent | field $ (none / prog) | tax_none gini_total | tax_progressive gini_total |
+|---|---|---|---|---|
+| 0.050 | 20 | 102 / 144 | 0.514 | **0.072** |
+| 0.020 | 50 | 254 / 360 | 0.523 | 0.134 |
+| **0.010** | **100** | **508 / 719** | **0.538** | **0.217** |
+| 0.005 | 200 | 1,016 / 1,438 | 0.565 | 0.338 |
+| 0.002 | 500 | 2,540 / 3,595 | 0.623 | **0.527** |
+
+`tax_progressive` is the more equal arm at every rate, so that conclusion is
+not an artifact of the choice. The *size* of the advantage is: a 7x gap at 20
+ticks of rent, 1.2x at 500. **State the ranking, not the multiple.**
+
+Note also that land is a larger share of wealth under progressive tax (22.8%
+against 8.7%) partly because `P_LABOR` has collapsed further there — 0.52
+against 3.44. Lower wages mechanically raise Ricardian rent, so this land
+valuation is coupled to the wage collapse documented in "land beats cash"
+rather than independent of it. That is arguably correct — it is what land being
+the residual claimant *means* — but it does mean the measure moves most in
+exactly the arms where the labour market has broken down.
+
+Two limits to keep in view. Under `share_allocation="none"` no shares exist,
+so firm net assets belong to nobody and enter no one's wealth — that is the
+model being honest (those firms genuinely have no owners), but it means total
+measured household wealth is **not comparable between share and non-share
+arms**. Compare within, not across. And `mobility_total` for a share arm is
+partly measuring an untraded allocation; it will mean something different once
+shares can move.
+
 ## Not yet done
 
+- Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
+  than the point sample, which is too noisy to carry an outcome (above). The
+  other four outcomes need no re-run.
+- ~~Put land into net worth.~~ **Done**, with shares — see "Land and shares now
+  count as wealth" above. It cut `tax_progressive`'s apparent equality by 8x
+  and flipped the sign of the ownership arms' mobility story.
+- **Re-run the ownership pair (`share_wealth` vs `share_equal`) on
+  `gini_total` / `mobility_total`.** The existing null was measured on deaths
+  and on a wealth measure that omitted the shares themselves, so the
+  distributional half of the question is untested rather than answered.
+- **Make land and shares tradable.** The valuation above is the half that was
+  missing: a trading script needs a reservation price and `field_value()` is
+  one. The open design question is what triggers a listing or a bid.
+  Sketch: a field is worth capitalised rent *to someone who can work it*
+  (needs `SKILL-FARM` above the `WORK_AS_FARMER` threshold), so an owner who
+  has lost that ability values it below what a working farmer would pay —
+  a real asymmetry rather than an arbitrary one. For shares, bid when the
+  dividend yield beats holding cash, and sell under distress: a household
+  below the pantry-restock threshold liquidating an asset to eat is the
+  wealth-concentration channel this model currently cannot express at all,
+  and it is the one most likely to overturn the ownership null, since it
+  would make the register move instead of sitting at its genesis allocation.
+  `ctx.query.holders()` already reads the register live, so the engine side
+  is ready.
+- Work out what stops the firm sector re-absorbing the whole household sector
+  after t200 — the reversal above is now the dominant late-run dynamic and it
+  makes every t400 number a measurement of oligopoly extraction as much as of
+  policy. Related to the existing circular-flow item below.
 - ~~Establish whether the matrix numbers are steady states or points on a
   slope.~~ **Done**: they were points on a slope, and the slope was the
   whole result. See "Redistribution delays deaths" above.
@@ -898,8 +1179,12 @@ dividend reads it every payout period. Two notes:
 - **Re-run the arm matrix on a non-degenerate outcome.** Deaths are now always
   zero, so the eight arms need comparing on hunger satisfaction, COND-WEAK
   burden, gini and mobility instead. Everything above this line that reports
-  deaths is superseded; do the performance work first, since the matrix is
-  ~4h at current throughput.
+  deaths is superseded. **Horizon and n now settled enough to cost it**: 250
+  ticks preserves the ranking (0 sign flips in 30 comparisons) but not the
+  effect sizes, and the new outcomes separate hard enough at n=12 that 30
+  seeds is probably overkill — see "How long must a run be?" above. Run it at
+  400 if the write-up quotes magnitudes, at 250 if it only ranks arms; exclude
+  or re-check `margin_00` either way, since it is the one arm 250 misjudges.
 - Land beats cash once the firm sector stops growing — **mechanism traced,
   needs a seed sweep**. Mean net worth of the landed against the landless
   goes 0.76 → 0.96 → **1.82** → 5.41 across ticks 50→350, and the crossover
@@ -973,6 +1258,12 @@ non-payment of tax/debts (jail, asset seizure, loss of services).
 # seed sweep, one process per seed
 .venv/bin/python -m experiments.inequality.tipping --seeds 10 --ticks 200 \
   --out /path/to/tipping.json
+
+# is a cheaper horizon good enough? runs to --late, scores the arm comparison
+# at --early against it. --reanalyse re-scores a saved file without re-running.
+.venv/bin/python -m experiments.inequality.horizon --seeds 12 --ticks 400 \
+  --arms tax_none,tax_progressive,estate_treasury,margin_00 \
+  --metrics-every 10 --out results/horizon_n30_t400.json
 ```
 
 `run.py` and serial sweeps write a progress bar with an ETA to stderr;
