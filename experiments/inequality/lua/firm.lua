@@ -196,9 +196,21 @@ if #bare > 0 and not building_now() then
     -- intent silently, every tick, forever -- which is exactly what happened
     -- the first time and left every parcel bare for a whole run. The labour
     -- is bid for below, so the build lands a tick or two after the decision.
-    if labor >= best.labor then
-      ctx.action.start_process(best.recipe, bare[1], 29)
-    end
+    -- Queued whether or not the labour is in hand yet, for the same reason the
+    -- farm loop no longer checks: `labor` is read before this tick's auction,
+    -- so it is last tick's leftovers after a round of decay. A build wants 4-6
+    -- units at once and lets, generation and farming are served first, so a
+    -- firm essentially never holds that much when its script runs -- building
+    -- stopped at tick 8 of 150 and left 6 parcels bare for the rest of the run.
+    --
+    -- The gate was right when it was written: start_process consumed inputs at
+    -- start, so firing while short failed silently every tick forever, which is
+    -- what left every parcel bare the first time. The engine now retries an
+    -- input-starved start_process after clearing, and the build labour is bid
+    -- for below, so the ask lands rather than evaporating. `building_now()`
+    -- still holds this to one build at a time, which is what keeps it from
+    -- becoming the spending spree that gate was guarding against.
+    ctx.action.start_process(best.recipe, bare[1], 29)
   end
 end
 
