@@ -29,10 +29,12 @@ local labor_price = market_price("LABOR", 5)
 -- what starts the poverty condition -- a few ticks of cover is the trade.
 local FOOD_PANTRY = 5
 local CLOTHES_STOCK = 1
-local FOOD_BUDGET_SHARE = 0.5     -- of ordinary spending
-local SHELTER_BUDGET_SHARE = 0.20
-local ENERGY_BUDGET_SHARE = 0.10
-local CLOTHES_BUDGET_SHARE = 0.15
+-- Swept by calibrate.py, so these are read off script state with the old
+-- hardcoded values as fallbacks. See ScenarioConfig for what they anchor.
+local FOOD_BUDGET_SHARE = tonumber(ctx.state.food_budget_share) or 0.5
+local SHELTER_BUDGET_SHARE = tonumber(ctx.state.shelter_budget_share) or 0.20
+local ENERGY_BUDGET_SHARE = tonumber(ctx.state.energy_budget_share) or 0.10
+local CLOTHES_BUDGET_SHARE = tonumber(ctx.state.clothes_budget_share) or 0.15
 -- How far above the normal price each bill is worth chasing when it is
 -- already unpaid. Well below food's premium of 20: a cold night is worse than
 -- an ordinary one and nothing like a hungry one, and pricing them equally
@@ -65,7 +67,7 @@ end
 -- last trade was. It also makes wealth into purchasing power directly: two
 -- people equally hungry but unequally rich quote very different numbers for
 -- the same loaf, and the richer one eats.
-local spend_rate = balance / PLANNING_HORIZON
+local spend_rate = balance / (tonumber(ctx.state.planning_horizon) or PLANNING_HORIZON)
 local routine_food = SUBSISTENCE_FOOD + FOOD_DECAY * FOOD_PANTRY
 local routine_clothes = COMFORT_CLOTHES + CLOTHES_DECAY * CLOTHES_STOCK
 local normal_food_price = (spend_rate * FOOD_BUDGET_SHARE) / routine_food

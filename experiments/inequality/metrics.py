@@ -305,6 +305,19 @@ def _share_unit_values(
     return values
 
 
+def _land_use(session: Session) -> dict[str, int]:
+    """Parcels by what stands on them, plus the ones still bare. Counted per
+    PARCEL rather than per facility, since one use per parcel is the rule the
+    firm script keeps (see the BUILD_ recipes in scenario.py) and counting
+    facilities would quietly hide a breach of it."""
+    counts: dict[str, int] = {"BARE": 0}
+    for parcel in session.execute(select(Parcel)).scalars().unique().all():
+        types = sorted({f.facility_type for f in parcel.facilities})
+        key = "+".join(types) if types else "BARE"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def _holding_qty(session: Session, entity_id: str, symbol: str) -> float:
     holding = session.execute(
         select(Holding).where(Holding.entity_id == entity_id, Holding.symbol == symbol)
@@ -417,6 +430,21 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
         "mean_hunger_satisfaction": (
             sum(e["hunger_satisfaction"] for e in entities) / len(entities) if entities else 0.0
         ),
+        # Every need, not just hunger. Rent and power are needs the population
+        # can fail independently of food, and the whole point of the priority
+        # ordering is that they fail FIRST -- an aggregate that only watches
+        # hunger would report a comfortable economy while everyone is cold.
+        "needs": {
+            code: (
+                sum(_satisfaction(session, e["entity_id"], code) for e in entities)
+                / len(entities) if entities else 0.0
+            )
+            for code in ("HUNGER", "SHELTER", "POWER", "COMFORT")
+        },
+        # What the land ended up being used for -- the output of the build
+        # mechanic, and the only place the three sectors' competition for a
+        # fixed pool is visible as a number.
+        "land_use": _land_use(session),
         "cond_weak_total": sum(e["cond_weak"] for e in entities),
         "cond_weak_carriers": sum(1 for e in entities if e["cond_weak"] > 0),
         "produced": _production(session, tick_number),

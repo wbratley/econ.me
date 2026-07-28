@@ -107,6 +107,19 @@ class ScenarioConfig:
     # to over-build one sector, drop it to 0 and the economy reverts to
     # farming only, which is every result recorded before rent and bills.
     bare_land_per_firm: int = 2
+
+    # --- The household nominal anchor (swept by calibrate.py) -------------
+    # A household commits `balance / planning_horizon` per tick and splits it
+    # across goods by these shares. The horizon is what pins the price level
+    # (see bug 8), so it cannot be widened casually -- but it was calibrated
+    # against a basket of food alone, and rent and power tripled the real flow
+    # it has to fund.
+    planning_horizon: float = 20.0
+    food_budget_share: float = 0.5
+    shelter_budget_share: float = 0.20
+    energy_budget_share: float = 0.10
+    clothes_budget_share: float = 0.15
+
     seed: int = 0
 
     # --- Firm profit margin ------------------------------------------------
@@ -709,6 +722,15 @@ def _wire_scripts(
                 "tax_rate": str(config.tax_rate),
                 "tax_threshold": str(config.tax_threshold),
                 "treasury_account_id": treasury_account.id,
+                # The nominal anchor, exposed so it can be swept. These were
+                # Lua constants tuned for an economy whose only recurring
+                # purchase was food; with rent and power they decide whether
+                # the basket is affordable at all. See calibrate.py.
+                "planning_horizon": str(config.planning_horizon),
+                "food_budget_share": str(config.food_budget_share),
+                "shelter_budget_share": str(config.shelter_budget_share),
+                "energy_budget_share": str(config.energy_budget_share),
+                "clothes_budget_share": str(config.clothes_budget_share),
             },
         ))
 

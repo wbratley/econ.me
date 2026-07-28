@@ -1348,12 +1348,60 @@ clothes 0.15, which is a guess, not a measurement — energy costs 1 labour per
 6 units against shelter's 0.5 per 6, so a cost-proportional split would look
 nothing like that.
 
-**This needs the same treatment the field count got**: a sweep over the budget
-shares and the planning horizon, checking that all three markets stay tight
-(most of what is offered sells, prices move, scarcity bites at the margin)
-without any need collapsing. Until that is done, nothing here is comparable to
-any result above, and `bare_land_per_firm = 0` is the switch that reverts the
-economy to farming only.
+### The calibration sweep: the demand side is not the problem
+
+`calibrate.py`, 4 budget splits x 4 planning horizons x 3 seeds x 150 ticks,
+17m46s (`results/calibration_bills.json`). Pass needs all four of MET (every
+need >= 0.85), TIGHT (sell-side fill in 0.55-0.98), ALIVE, and prices moving —
+ranking on satisfaction alone would pick the slackest economy in the grid.
+
+**Nothing passed, and the grid barely moved:**
+
+| | hunger | shelter | power |
+|---|---|---|---|
+| best config in grid | 0.47 | 0.52 | 0.35 |
+| worst config in grid | 0.35 | 0.39 | 0.22 |
+
+Across a 4x range of planning horizon (20 → 5, quadrupling what a household
+will commit per tick) and four radically different budget splits, hunger moves
+0.12 and power never gets above 0.35. **That is the demand side ruled out**,
+and it is worth having on record rather than treating as a failed run.
+
+### It is labour, and the arithmetic was there to be done
+
+Counted directly: **~11.8 LABOR clears per tick for the whole economy against
+~17.5 needed just to staff the facilities.** Most of them sit idle:
+
+| tick | farms run | lets run | generation runs | failed starts |
+|---|---|---|---|---|
+| 30 | 3 of 10 | 3 of 5 | 1 of 5 | LET x2, GEN x4 |
+| 60 | 2 of 10 | 2 of 5 | 2 of 5 | LET x3, GEN x3, BUILD x2 |
+| 90 | 2 of 10 | 2 of 5 | 2 of 5 | LET x3, GEN x3, BUILD x2 |
+
+Serving 30 people across three sectors needs ~15 facilities, since a parcel
+serves ~6 whatever is on it. Staffing them costs 10x1 + 5x0.5 + 5x1 = 17.5
+labour a tick. Supply is 30 people x 1 unit, cut ~30% by the stacked
+conditions, so ~21. **The facilities alone want 83% of all the labour in the
+economy** before clothes, tools or any building — and the market only clears
+11.8 of it. No budget share can reach that, which is exactly why power sat
+flat at 0.22-0.35 across all sixteen configs while its market cleared
+80-90% of the little it offered.
+
+**The lever is labour intensity, not household budgets.** Housing and power
+are utilities — capital-intensive, low ongoing labour — and they were given
+farm-like labour costs (0.5 and 1.0 per parcel-tick) on no evidence. At ~0.2
+and ~0.3 the sector total drops to 12.5 and leaves the rest of the economy
+room to function. That is both the realistic shape and the knob the
+measurement points at. Not yet done; the grid and criteria in `calibrate.py`
+are already built, so it is one command once the recipes change.
+
+One thing that did work as designed: `COND-EXPOSED` incapacitation fired in
+the worst runs (5.7 dead at `legacy|h12`, 1.0-1.3 in three others) and nowhere
+else. That is the f > 0.8 tail doing precisely what the arithmetic said it
+would — sustained near-total destitution, never an intermittent miss.
+
+Until this is settled, nothing here is comparable to any result above, and
+`bare_land_per_firm = 0` reverts the economy to farming only.
 
 ## Not yet done
 
@@ -1413,10 +1461,12 @@ economy to farming only.
 - ~~Re-run the arm matrix on a non-degenerate outcome.~~ **Done** at 250 ticks
   x 15 seeds — see "The matrix re-run at 250 ticks" above. Everything above
   that section reporting deaths is superseded.
-- **Calibrate the three-bill economy** (budget shares + planning horizon), the
-  way the field count was calibrated. Everything in "Rent and bills" above is
-  a working mechanism on an uncalibrated economy, and no arm comparison should
-  be run on it until all three needs can be met.
+- **Calibrate the three-bill economy.** Half done: the budget-share and
+  planning-horizon grid is swept and comes back empty (above), which rules the
+  demand side out. The open half is labour intensity — cut `LET_DWELLING` to
+  ~0.2 LABOR and `GENERATE_POWER` to ~0.3, then re-run `calibrate.py`
+  unchanged. No arm comparison should run on this economy until all three
+  needs can be met.
 - With bills in, revisit **loss-of-services for delinquency** — the
   `COND-DELINQUENT` idea below is now mostly built, since a missed bill
   already credits a condition that cuts what you can earn. That is the poverty

@@ -1,0 +1,1706 @@
+{
+  "config": {
+    "seeds": 3,
+    "ticks": 150,
+    "individuals": 30,
+    "share_sets": {
+      "legacy": {
+        "food": 0.5,
+        "shelter": 0.2,
+        "energy": 0.1,
+        "clothes": 0.15
+      },
+      "cost_weighted": {
+        "food": 0.45,
+        "shelter": 0.12,
+        "energy": 0.25,
+        "clothes": 0.08
+      },
+      "shelter_heavy": {
+        "food": 0.4,
+        "shelter": 0.25,
+        "energy": 0.22,
+        "clothes": 0.08
+      },
+      "food_light": {
+        "food": 0.33,
+        "shelter": 0.2,
+        "energy": 0.3,
+        "clothes": 0.07
+      }
+    },
+    "horizons": [
+      20.0,
+      12.0,
+      8.0,
+      5.0
+    ]
+  },
+  "wall_clock_seconds": 1066.0545996670262,
+  "rows": {
+    "legacy|h20": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.40544444444444444,
+          "SHELTER": 0.4,
+          "POWER": 0.3288888888888889
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 1.0,
+          "ENERGY": 0.8222222222222222
+        },
+        "price_cv": {
+          "FOOD": 0.4748361493883089,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.5863,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.4944
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 25146.2742,
+        "gini_total": 0.7790618694759461,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4084246666666667,
+          "SHELTER": 0.5311111111111111,
+          "POWER": 0.2888888888888889
+        },
+        "fill": {
+          "FOOD": 0.9950833333333334,
+          "SHELTER": 0.8851851851851852,
+          "ENERGY": 0.7222222222222222
+        },
+        "price_cv": {
+          "FOOD": 0.3371845043857686,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 21.3184,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 29.3806
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 24239.7882,
+        "gini_total": 0.7894865748629538,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.39944444444444444,
+          "SHELTER": 0.52,
+          "POWER": 0.26
+        },
+        "fill": {
+          "FOOD": 0.9022222222222224,
+          "SHELTER": 0.8666666666666667,
+          "ENERGY": 0.65
+        },
+        "price_cv": {
+          "FOOD": 0.4935747868620928,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 11.4378,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.719
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 22954.7519,
+        "gini_total": 0.8070555904770913,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "legacy|h12": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.3675046666666667,
+          "SHELTER": 0.44222222222222224,
+          "POWER": 0.25333333333333335
+        },
+        "fill": {
+          "FOOD": 0.8456274074074075,
+          "SHELTER": 0.8018518518518518,
+          "ENERGY": 0.6666666666666666
+        },
+        "price_cv": {
+          "FOOD": 0.5054760311119383,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 12.9608,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.1722
+        },
+        "incapacitated": 2,
+        "firms_solvent": 3,
+        "firm_cash": 26122.2741,
+        "gini_total": 0.8281933204548937,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.3196928888888889,
+          "SHELTER": 0.4177777777777778,
+          "POWER": 0.19333333333333333
+        },
+        "fill": {
+          "FOOD": 0.7079061706747216,
+          "SHELTER": 0.662962962962963,
+          "ENERGY": 0.4888888888888889
+        },
+        "price_cv": {
+          "FOOD": 0.791105550018613,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 121.709,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 258.6037
+        },
+        "incapacitated": 15,
+        "firms_solvent": 2,
+        "firm_cash": 21438.9131,
+        "gini_total": 0.903775931764295,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.3776997777777778,
+          "SHELTER": 0.4111111111111111,
+          "POWER": 0.22
+        },
+        "fill": {
+          "FOOD": 0.8763844444444445,
+          "SHELTER": 0.7518518518518519,
+          "ENERGY": 0.5814814814814815
+        },
+        "price_cv": {
+          "FOOD": 0.7162814680184725,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 10.742,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 28.4446
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 23108.0429,
+        "gini_total": 0.7805195751511098,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "legacy|h8": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.42368022222222224,
+          "SHELTER": 0.5111111111111111,
+          "POWER": 0.31333333333333335
+        },
+        "fill": {
+          "FOOD": 0.9355600000000002,
+          "SHELTER": 0.8518518518518519,
+          "ENERGY": 0.8277777777777777
+        },
+        "price_cv": {
+          "FOOD": 0.6632771443508906,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.8218,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.1722
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 27057.2406,
+        "gini_total": 0.8302361283886637,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.3811028888888889,
+          "SHELTER": 0.5666666666666667,
+          "POWER": 0.32666666666666666
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 0.9444444444444444,
+          "ENERGY": 0.85
+        },
+        "price_cv": {
+          "FOOD": 0.1509897749267476,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.4401,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.9898
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 27541.3166,
+        "gini_total": 0.8318318014606567,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.4083535555555555,
+          "SHELTER": 0.48444444444444446,
+          "POWER": 0.27555555555555555
+        },
+        "fill": {
+          "FOOD": 0.958088888888889,
+          "SHELTER": 0.9037037037037037,
+          "ENERGY": 0.9107142857142857
+        },
+        "price_cv": {
+          "FOOD": 0.826676422394399,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 26.7758,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.4915
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 23754.8172,
+        "gini_total": 0.8528647121654644,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "legacy|h5": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.4203111111111111,
+          "SHELTER": 0.3688888888888889,
+          "POWER": 0.30666666666666664
+        },
+        "fill": {
+          "FOOD": 0.9977777777777779,
+          "SHELTER": 0.9222222222222223,
+          "ENERGY": 0.7666666666666666
+        },
+        "price_cv": {
+          "FOOD": 0.14006137597949522,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 10.7443,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.4944
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27660.3747,
+        "gini_total": 0.8523759887910785,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.44088733333333335,
+          "SHELTER": 0.4666666666666667,
+          "POWER": 0.16
+        },
+        "fill": {
+          "FOOD": 0.926293421001536,
+          "SHELTER": 0.8592592592592593,
+          "ENERGY": 0.5576923076923077
+        },
+        "price_cv": {
+          "FOOD": 0.6667252336600612,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 83.6887,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 90.7124
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 25024.0554,
+        "gini_total": 0.8479431110135685,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.375,
+          "SHELTER": 0.4111111111111111,
+          "POWER": 0.25333333333333335
+        },
+        "fill": {
+          "FOOD": 1.0,
+          "SHELTER": 0.9055555555555556,
+          "ENERGY": 0.6666666666666666
+        },
+        "price_cv": {
+          "FOOD": 0.4561792628785839,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 35.0792,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 44.0371
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 24030.503099999998,
+        "gini_total": 0.8506791375940137,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "cost_weighted|h20": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.402,
+          "SHELTER": 0.3888888888888889,
+          "POWER": 0.32666666666666666
+        },
+        "fill": {
+          "FOOD": 0.9580000000000001,
+          "SHELTER": 0.8425925925925926,
+          "ENERGY": 0.8166666666666667
+        },
+        "price_cv": {
+          "FOOD": 0.634230640013506,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 14.2002,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 22.6441
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 25276.8306,
+        "gini_total": 0.7817048006949752,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.44166666666666665,
+          "SHELTER": 0.3977777777777778,
+          "POWER": 0.3022222222222222
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 0.9296296296296296,
+          "ENERGY": 0.7555555555555555
+        },
+        "price_cv": {
+          "FOOD": 0.619437508660874,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 6.9994,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 8.8474
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 26007.6947,
+        "gini_total": 0.7713537615158346,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.420982,
+          "SHELTER": 0.44222222222222224,
+          "POWER": 0.2888888888888889
+        },
+        "fill": {
+          "FOOD": 0.9331904900080721,
+          "SHELTER": 0.8722222222222222,
+          "ENERGY": 0.8222222222222222
+        },
+        "price_cv": {
+          "FOOD": 0.4635291507959943,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 10.6677,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.983
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 21007.9086,
+        "gini_total": 0.7113953325640416,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "cost_weighted|h12": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.37666666666666665,
+          "SHELTER": 0.38666666666666666,
+          "POWER": 0.34222222222222226
+        },
+        "fill": {
+          "FOOD": 0.9866666666666667,
+          "SHELTER": 0.9,
+          "ENERGY": 0.8555555555555555
+        },
+        "price_cv": {
+          "FOOD": 0.7178371185385323,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 8.5583,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.1722
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27180.7323,
+        "gini_total": 0.8218650470372788,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4011111111111111,
+          "SHELTER": 0.37777777777777777,
+          "POWER": 0.3466666666666667
+        },
+        "fill": {
+          "FOOD": 0.968888888888889,
+          "SHELTER": 0.8444444444444444,
+          "ENERGY": 0.8666666666666667
+        },
+        "price_cv": {
+          "FOOD": 0.5106740389217631,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.0315,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.9898
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27433.9241,
+        "gini_total": 0.8107530121626085,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.3761111111111111,
+          "SHELTER": 0.4022222222222222,
+          "POWER": 0.34222222222222226
+        },
+        "fill": {
+          "FOOD": 0.9807407407407409,
+          "SHELTER": 0.8814814814814815,
+          "ENERGY": 0.8555555555555555
+        },
+        "price_cv": {
+          "FOOD": 0.32767737300943617,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.3241,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.983
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 24230.7013,
+        "gini_total": 0.8160102601038108,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "cost_weighted|h8": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.4311111111111111,
+          "SHELTER": 0.33111111111111113,
+          "POWER": 0.33555555555555555
+        },
+        "fill": {
+          "FOOD": 0.9955555555555556,
+          "SHELTER": 0.8277777777777777,
+          "ENERGY": 0.8388888888888889
+        },
+        "price_cv": {
+          "FOOD": 0.0974815878300205,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.2257,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.1722
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27612.7025,
+        "gini_total": 0.8321856741255931,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4485,
+          "SHELTER": 0.4355555555555556,
+          "POWER": 0.3666666666666667
+        },
+        "fill": {
+          "FOOD": 0.9791483333333335,
+          "SHELTER": 0.9259259259259259,
+          "ENERGY": 0.9166666666666666
+        },
+        "price_cv": {
+          "FOOD": 0.8607632174118697,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.4737,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.9898
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27954.138899999998,
+        "gini_total": 0.835370590734168,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.37755555555555553,
+          "SHELTER": 0.40222222222222226,
+          "POWER": 0.31333333333333335
+        },
+        "fill": {
+          "FOOD": 0.9822222222222223,
+          "SHELTER": 0.9462962962962963,
+          "ENERGY": 0.7833333333333333
+        },
+        "price_cv": {
+          "FOOD": 1.17551543875278,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.1302,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.983
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 24643.609800000002,
+        "gini_total": 0.8327581084600226,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "cost_weighted|h5": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.425,
+          "SHELTER": 0.44222222222222224,
+          "POWER": 0.32666666666666666
+        },
+        "fill": {
+          "FOOD": 0.9994599658345733,
+          "SHELTER": 0.9018518518518518,
+          "ENERGY": 0.85
+        },
+        "price_cv": {
+          "FOOD": 1.1768468400712038,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 6.6987,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.745
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 27906.513499999997,
+        "gini_total": 0.8467221032674348,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.43194266666666664,
+          "SHELTER": 0.35555555555555557,
+          "POWER": 0.3577777777777778
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 0.8888888888888888,
+          "ENERGY": 0.8944444444444445
+        },
+        "price_cv": {
+          "FOOD": 0.10163552063254011,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 7.3927,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.3514
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 28149.5525,
+        "gini_total": 0.8477608847265174,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.3779444444444444,
+          "SHELTER": 0.4066666666666667,
+          "POWER": 0.34444444444444444
+        },
+        "fill": {
+          "FOOD": 0.9992222222222223,
+          "SHELTER": 0.8425925925925926,
+          "ENERGY": 0.8611111111111112
+        },
+        "price_cv": {
+          "FOOD": 1.075840803837816,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 8.4888,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.719
+        },
+        "incapacitated": 0,
+        "firms_solvent": 2,
+        "firm_cash": 24860.060100000002,
+        "gini_total": 0.8498508138474739,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "shelter_heavy|h20": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.34482311111111114,
+          "SHELTER": 0.4288888888888889,
+          "POWER": 0.2644444444444445
+        },
+        "fill": {
+          "FOOD": 0.9135520806392786,
+          "SHELTER": 0.7453703703703703,
+          "ENERGY": 0.7944444444444444
+        },
+        "price_cv": {
+          "FOOD": 0.2670290332757425,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 72.0584,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 101.0693
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 16248.748,
+        "gini_total": 0.7828615090223043,
+        "land": {
+          "BARE": 7,
+          "FARM": 12,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.44166666666666665,
+          "SHELTER": 0.5155555555555555,
+          "POWER": 0.33333333333333337
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 0.8592592592592593,
+          "ENERGY": 0.8333333333333334
+        },
+        "price_cv": {
+          "FOOD": 0.3323616208629009,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 27.7027,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 39.4517
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 23246.076100000002,
+        "gini_total": 0.7760897169195411,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.39266666666666666,
+          "SHELTER": 0.48,
+          "POWER": 0.28
+        },
+        "fill": {
+          "FOOD": 1.0000000000000002,
+          "SHELTER": 0.8222222222222222,
+          "ENERGY": 0.7333333333333333
+        },
+        "price_cv": {
+          "FOOD": 0.1237508118350318,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 58.3605,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 85.3068
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 15084.9762,
+        "gini_total": 0.7787419905399673,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "shelter_heavy|h12": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.43333333333333335,
+          "SHELTER": 0.49333333333333335,
+          "POWER": 0.33333333333333337
+        },
+        "fill": {
+          "FOOD": 0.9466666666666668,
+          "SHELTER": 0.8444444444444444,
+          "ENERGY": 0.8333333333333334
+        },
+        "price_cv": {
+          "FOOD": 0.16110677189613137,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 51.4321,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 79.2513
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 23280.3659,
+        "gini_total": 0.8143235243890479,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4139268888888889,
+          "SHELTER": 0.49333333333333335,
+          "POWER": 0.34222222222222226
+        },
+        "fill": {
+          "FOOD": 0.9721685185185187,
+          "SHELTER": 0.8444444444444444,
+          "ENERGY": 0.9222222222222223
+        },
+        "price_cv": {
+          "FOOD": 0.2267876033464885,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 75.6964,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 127.3954
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 21183.0798,
+        "gini_total": 0.8097847776213889,
+        "land": {
+          "BARE": 7,
+          "FARM": 12,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.38382222222222223,
+          "SHELTER": 0.48,
+          "POWER": 0.32222222222222224
+        },
+        "fill": {
+          "FOOD": 0.9761904761904763,
+          "SHELTER": 0.7999999999999999,
+          "ENERGY": 0.8055555555555556
+        },
+        "price_cv": {
+          "FOOD": 0.21429187720111154,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 48.2523,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 73.2587
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 20634.9438,
+        "gini_total": 0.8150998663198674,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "shelter_heavy|h8": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.37491111111111114,
+          "SHELTER": 0.52,
+          "POWER": 0.31333333333333335
+        },
+        "fill": {
+          "FOOD": 0.8866666666666667,
+          "SHELTER": 0.8666666666666667,
+          "ENERGY": 0.7833333333333333
+        },
+        "price_cv": {
+          "FOOD": 0.4163080173382575,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 33.6122,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 49.0723
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 26074.2068,
+        "gini_total": 0.8328233725976097,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.45136377777777775,
+          "SHELTER": 0.44222222222222224,
+          "POWER": 0.21333333333333335
+        },
+        "fill": {
+          "FOOD": 0.8795685316720161,
+          "SHELTER": 0.8388888888888889,
+          "ENERGY": 0.7666666666666667
+        },
+        "price_cv": {
+          "FOOD": 0.7734115134242094,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 209.8591,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 23.0939
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 16378.662999999999,
+        "gini_total": 0.8462328320874577,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.37515777777777776,
+          "SHELTER": 0.5111111111111111,
+          "POWER": 0.33111111111111113
+        },
+        "fill": {
+          "FOOD": 0.9439822222222223,
+          "SHELTER": 0.8518518518518519,
+          "ENERGY": 0.8277777777777777
+        },
+        "price_cv": {
+          "FOOD": 0.26924875190465214,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 8.6794,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 12.3457
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 24508.1159,
+        "gini_total": 0.8297922512289113,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "shelter_heavy|h5": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.4006777777777778,
+          "SHELTER": 0.48,
+          "POWER": 0.3511111111111111
+        },
+        "fill": {
+          "FOOD": 0.9618713450292399,
+          "SHELTER": 0.8444444444444444,
+          "ENERGY": 0.8777777777777778
+        },
+        "price_cv": {
+          "FOOD": 0.6010754817410966,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 6.6323,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 10.1722
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 27907.2878,
+        "gini_total": 0.8466711141492382,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.33933844444444444,
+          "SHELTER": 0.48,
+          "POWER": 0.3688888888888889
+        },
+        "fill": {
+          "FOOD": 0.8974074074074074,
+          "SHELTER": 0.8296296296296296,
+          "ENERGY": 0.8611111111111112
+        },
+        "price_cv": {
+          "FOOD": 0.6102497868009853,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 9.8299,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 11.0622
+        },
+        "incapacitated": 4,
+        "firms_solvent": 3,
+        "firm_cash": 27951.4882,
+        "gini_total": 0.8802626937019222,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.3878333333333333,
+          "SHELTER": 0.45555555555555555,
+          "POWER": 0.3422222222222222
+        },
+        "fill": {
+          "FOOD": 0.8503703703703704,
+          "SHELTER": 0.8037037037037037,
+          "ENERGY": 0.8555555555555555
+        },
+        "price_cv": {
+          "FOOD": 1.1011313149223518,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 6.3024,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 9.983
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 24901.1483,
+        "gini_total": 0.8433187785417753,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "food_light|h20": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.4654615555555556,
+          "SHELTER": 0.49333333333333335,
+          "POWER": 0.29333333333333333
+        },
+        "fill": {
+          "FOOD": 0.920058360720175,
+          "SHELTER": 0.9777777777777777,
+          "ENERGY": 0.9666666666666667
+        },
+        "price_cv": {
+          "FOOD": 0.5773911015744063,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 56.6172,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 145.373
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 16381.4537,
+        "gini_total": 0.7215368822609278,
+        "land": {
+          "BARE": 6,
+          "FARM": 13,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4625737777777778,
+          "SHELTER": 0.45555555555555555,
+          "POWER": 0.2866666666666667
+        },
+        "fill": {
+          "FOOD": 0.8996101364522419,
+          "SHELTER": 0.825925925925926,
+          "ENERGY": 0.7833333333333333
+        },
+        "price_cv": {
+          "FOOD": 0.15814532406920365,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 92.8804,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 223.1059
+        },
+        "incapacitated": 1,
+        "firms_solvent": 3,
+        "firm_cash": 9449.3925,
+        "gini_total": 0.7363148125450931,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.4830111111111111,
+          "SHELTER": 0.5111111111111111,
+          "POWER": 0.2977777777777778
+        },
+        "fill": {
+          "FOOD": 0.9364275462953033,
+          "SHELTER": 0.9518518518518518,
+          "ENERGY": 0.8888888888888888
+        },
+        "price_cv": {
+          "FOOD": 0.39113383591264017,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 76.882,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 177.246
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 9500.0723,
+        "gini_total": 0.7312199384226568,
+        "land": {
+          "BARE": 6,
+          "FARM": 13,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "food_light|h12": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.3781,
+          "SHELTER": 0.48,
+          "POWER": 0.28
+        },
+        "fill": {
+          "FOOD": 0.8355555555555556,
+          "SHELTER": 0.8555555555555555,
+          "ENERGY": 0.7111111111111111
+        },
+        "price_cv": {
+          "FOOD": 0.38701011538108443,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 37.0655,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 101.0055
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 23064.3232,
+        "gini_total": 0.7558861507750365,
+        "land": {
+          "BARE": 7,
+          "FARM": 12,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.3710371111111111,
+          "SHELTER": 0.4111111111111111,
+          "POWER": 0.3066666666666667
+        },
+        "fill": {
+          "FOOD": 0.901312791575812,
+          "SHELTER": 0.8055555555555556,
+          "ENERGY": 0.8
+        },
+        "price_cv": {
+          "FOOD": 0.31042589862264647,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 39.0203,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 77.6164
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 24111.1138,
+        "gini_total": 0.7993966368910506,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.4543888888888889,
+          "SHELTER": 0.4711111111111111,
+          "POWER": 0.3666666666666667
+        },
+        "fill": {
+          "FOOD": 0.9720965824306477,
+          "SHELTER": 0.9333333333333333,
+          "ENERGY": 0.9055555555555556
+        },
+        "price_cv": {
+          "FOOD": 0.4926227108384054,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 6.2494,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 16.2315
+        },
+        "incapacitated": 3,
+        "firms_solvent": 3,
+        "firm_cash": 24346.0274,
+        "gini_total": 0.7956070521936873,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "food_light|h8": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.44649555555555553,
+          "SHELTER": 0.46,
+          "POWER": 0.33555555555555555
+        },
+        "fill": {
+          "FOOD": 0.9438666666666667,
+          "SHELTER": 0.8592592592592593,
+          "ENERGY": 0.85
+        },
+        "price_cv": {
+          "FOOD": 0.658423644464982,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 18.7686,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 21.2675
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 26747.4445,
+        "gini_total": 0.8330438596623997,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.40857933333333335,
+          "SHELTER": 0.5066666666666667,
+          "POWER": 0.3577777777777778
+        },
+        "fill": {
+          "FOOD": 0.9533333333333334,
+          "SHELTER": 0.9555555555555556,
+          "ENERGY": 0.9277777777777778
+        },
+        "price_cv": {
+          "FOOD": 0.6461462434558563,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 31.2177,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 95.929
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 25597.9736,
+        "gini_total": 0.7760728017255509,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.499134,
+          "SHELTER": 0.5022222222222222,
+          "POWER": 0.26666666666666666
+        },
+        "fill": {
+          "FOOD": 0.860088579248938,
+          "SHELTER": 0.9907407407407407,
+          "ENERGY": 0.9666666666666667
+        },
+        "price_cv": {
+          "FOOD": 0.790464706028626,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 5.6612,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 27.7222
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 12673.229,
+        "gini_total": 0.04235648857659213,
+        "land": {
+          "BARE": 8,
+          "FARM": 11,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ],
+    "food_light|h5": [
+      {
+        "seed": 0,
+        "needs": {
+          "HUNGER": 0.46123555555555557,
+          "SHELTER": 0.46444444444444444,
+          "POWER": 0.34444444444444444
+        },
+        "fill": {
+          "FOOD": 0.9121387552021577,
+          "SHELTER": 0.8851851851851852,
+          "ENERGY": 0.8444444444444444
+        },
+        "price_cv": {
+          "FOOD": 0.3782749886620484,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 97.8405,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 219.8697
+        },
+        "incapacitated": 3,
+        "firms_solvent": 3,
+        "firm_cash": 23102.1803,
+        "gini_total": 0.8726223101594124,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 1,
+        "needs": {
+          "HUNGER": 0.4221111111111111,
+          "SHELTER": 0.5222222222222223,
+          "POWER": 0.35555555555555557
+        },
+        "fill": {
+          "FOOD": 0.9457128810226156,
+          "SHELTER": 0.9148148148148149,
+          "ENERGY": 0.9222222222222223
+        },
+        "price_cv": {
+          "FOOD": 0.4671954904393174,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 19.8027,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 47.0742
+        },
+        "incapacitated": 0,
+        "firms_solvent": 3,
+        "firm_cash": 27426.4784,
+        "gini_total": 0.8278734759700725,
+        "land": {
+          "BARE": 10,
+          "FARM": 9,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      },
+      {
+        "seed": 2,
+        "needs": {
+          "HUNGER": 0.3546111111111111,
+          "SHELTER": 0.47777777777777775,
+          "POWER": 0.35555555555555557
+        },
+        "fill": {
+          "FOOD": 0.8622804827299211,
+          "SHELTER": 0.8518518518518519,
+          "ENERGY": 0.8888888888888888
+        },
+        "price_cv": {
+          "FOOD": 0.32404549803388494,
+          "SHELTER": NaN,
+          "ENERGY": NaN
+        },
+        "prices": {
+          "FOOD": 101.813,
+          "SHELTER": null,
+          "ENERGY": null,
+          "LABOR": 165.243
+        },
+        "incapacitated": 1,
+        "firms_solvent": 3,
+        "firm_cash": 20291.9718,
+        "gini_total": 0.8421249068350818,
+        "land": {
+          "BARE": 9,
+          "FARM": 10,
+          "DWELLING": 5,
+          "POWER-PLANT": 5
+        }
+      }
+    ]
+  }
+}
