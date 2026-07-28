@@ -1204,6 +1204,119 @@ than concentrated.
   holdings at genesis and have not been checked for the same effect. Worth
   ruling out before the share comparison is quoted again.
 
+## Rent and bills: housing and energy sectors, both competing for land
+
+Built, runs, **not yet calibrated** — read the calibration section before
+using any number out of it.
+
+### It needed no engine changes at all
+
+Every piece was already there, which is worth recording because it was not
+obvious going in:
+
+- `Parcel` carries a zoning tag and `Facility` is a built improvement on one,
+  so a dwelling and a power plant are the same primitive as a farm.
+- **Facility capacity is already a reservation rule** — one facility backs one
+  running process per tick — which is exactly the semantics housing wants:
+  one dwelling houses a fixed number of households and the only way to house
+  more is to build more.
+- `Deposit` regenerates toward a capacity, so an energy plot has a `FUEL-SEAM`
+  the way a field has `SOIL-FERTILITY`. Land has *quality*, not just a permit.
+- `builds_facility` erects on the bound parcel at completion, `ctx.parcels`
+  reports each parcel's facilities and deposits, and `start_process(recipe,
+  parcel_id)` is exposed to Lua. That is the whole build-and-convert mechanic.
+
+**Rent dodges the ownership invariant the same way taxation does.** A landlord
+cannot reach into a tenant's account any more than a treasury can. So rent is
+not taken, it is *bought*: `SHELTER` and `ENERGY` decay **completely** every
+tick, consumption runs after the auction and before decay, and a household
+buys exactly this tick's occupancy and this tick's power or does without.
+Next tick the bill falls due again regardless. Eviction is the absence of a
+purchase — no forced transfer, no seizure, no new primitive. That same total
+decay is what makes them bills rather than shopping: there is no pantry, so
+nobody can stockpile a year of rent in a good week.
+
+### Land is now genuinely rival
+
+One fixed pool. Every parcel carries *both* deposits whatever gets built on
+it, because endowing only the farming parcels with soil would decide the
+allocation at genesis under another name — and the allocation is meant to be
+the run's output. Three `BUILD_` recipes are mutually exclusive uses of the
+same acre: a dwelling is a field that is not growing food. A firm reads which
+of its parcels are bare, prices the three uses off their own output net of the
+labour to work them, and puts up whichever pays. **One use per parcel is
+enforced in `firm.lua`, not by the engine** — nothing stops a farm and a
+dwelling sharing an acre. That is the right split (zoning is policy, not
+mechanism) but the invariant is only as good as the script.
+
+Yields are set so one parcel serves ~6 people whichever way it is used (a
+field feeds 4.95/0.8 = 6.2), so "which use pays best" is decided by prices
+rather than by an accident of units.
+
+Genesis: 5 firms x (1 farm + 1 dwelling + 1 plant + 2 bare) + 4 smallholder
+farms = 29 parcels, of which 9 farms — the calibrated food number, preserved.
+
+### Two bootstrap deadlocks, both measured
+
+Same family as the `SKILL-FARM` deadlock (bug 3) and worth the same warning:
+
+1. **Nothing was ever built.** `BUILD_DWELLING` wants 4 LABOR held at once and
+   the firm only ever bid for one or two, so the intent failed silently every
+   tick for a whole run. Every parcel stayed bare, the population failed
+   shelter and power for 120 ticks, and because `COND-EXPOSED` and `COND-COLD`
+   both cut labour productivity on top of `COND-WEAK`, the *food* economy went
+   with them: food price 3 → 111, hunger satisfaction 0.03. Fixed by bidding
+   for build labour as its own tranche and only starting the build once the
+   hours are in hand.
+2. **Housing stock has to exist at genesis.** Even with the labour, no firm
+   can assemble a build before the whole population has failed both new needs
+   for the entire bootstrap. Real economies start with a housing stock; this
+   one has to as well. The build mechanic then operates at the *margin*, which
+   is where a build-or-not decision is interesting anyway.
+
+And one ordering bug that is pure engine-semantics: **intent priority decides
+who gets the firm's labour**, and generation was last. `GENERATE_POWER` failed
+on all five plants nearly every tick for sixty ticks — energy output flat zero
+against a standing demand of 30 — while clothes were made on schedule. An hour
+generating is worth six units of energy; an hour on clothes is worth one and a
+half units of clothes. The bid schedule already said so; the intent priorities
+did not. Letting and generation now sit at 21/22, ahead of tools and clothes.
+
+### Calibration: NOT done, and the numbers show it
+
+120 ticks, seed 0, after all three fixes:
+
+| tick | farms | dwellings | plants | bare | P_FOOD | P_SHELTER | P_ENERGY | hunger | shelter | power |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 15 | 9 | 5 | 5 | 10 | 34.7 | 15.9 | 13.0 | 0.29 | 0.50 | 0.00 |
+| 45 | 10 | 5 | 5 | 9 | 14.5 | 3.0 | 7.5 | 0.53 | 0.80 | 0.60 |
+| 90 | 10 | 5 | 5 | 9 | 9.4 | 3.6 | 8.9 | 0.53 | 0.60 | 0.40 |
+| 120 | 10 | 5 | 5 | 9 | 8.9 | 11.1 | 7.0 | 0.50 | 0.50 | 0.60 |
+
+The mechanism works — both sectors produce and sell, bills get paid, and a
+firm converted bare land into a farm on its own (9 → 10 farms). **The economy
+cannot afford its own basket.** All three needs sit at 0.4–0.6 satisfaction
+indefinitely, where food alone used to sit at 0.85+.
+
+The cause is the nominal anchor, and it is structural rather than a bad
+number. `spend_rate = balance / PLANNING_HORIZON` caps what a household will
+commit per tick at a twentieth of its savings — about 15 for a median holder
+— while the basket at current prices costs 0.8xFOOD + 1xSHELTER + 1xENERGY
+≈ 25. That anchor was calibrated for an economy whose only recurring purchase
+was food, and it is the thing that pins the price level (bug 8), so it cannot
+be casually widened. The budget shares are the other half: they were
+food 0.5 / clothes 0.15 and are now food 0.5 / shelter 0.20 / energy 0.10 /
+clothes 0.15, which is a guess, not a measurement — energy costs 1 labour per
+6 units against shelter's 0.5 per 6, so a cost-proportional split would look
+nothing like that.
+
+**This needs the same treatment the field count got**: a sweep over the budget
+shares and the planning horizon, checking that all three markets stay tight
+(most of what is offered sells, prices move, scarcity bites at the margin)
+without any need collapsing. Until that is done, nothing here is comparable to
+any result above, and `bare_land_per_firm = 0` is the switch that reverts the
+economy to farming only.
+
 ## Not yet done
 
 - Redo the hunger row of the horizon comparison on `hunger_win_at_*` rather
@@ -1262,6 +1375,15 @@ than concentrated.
 - ~~Re-run the arm matrix on a non-degenerate outcome.~~ **Done** at 250 ticks
   x 15 seeds — see "The matrix re-run at 250 ticks" above. Everything above
   that section reporting deaths is superseded.
+- **Calibrate the three-bill economy** (budget shares + planning horizon), the
+  way the field count was calibrated. Everything in "Rent and bills" above is
+  a working mechanism on an uncalibrated economy, and no arm comparison should
+  be run on it until all three needs can be met.
+- With bills in, revisit **loss-of-services for delinquency** — the
+  `COND-DELINQUENT` idea below is now mostly built, since a missed bill
+  already credits a condition that cuts what you can earn. That is the poverty
+  trap, and it wants measuring: does a household that misses rent once ever
+  climb back?
 - **Replace the estate arms with policies that can fire.** Three of the eight
   are inert while mortality is zero. Either give the matrix arms that differ
   in something that happens to the living, or reintroduce a cause of death

@@ -34,6 +34,15 @@ _SOIL_QUANTITY = Decimal("50")
 _SOIL_CAPACITY = Decimal("50")
 _SOIL_REGEN = Decimal("2")
 
+# A fuel seam regenerates more slowly than soil and holds less, so a plant run
+# flat out outruns its own land and has to idle -- energy is the sector where
+# land quality bites hardest. GENERATE_POWER draws 1 per tick against a regen
+# of 1.2, so a single plant is sustainable and a second on the same parcel
+# would not be.
+_FUEL_QUANTITY = Decimal("30")
+_FUEL_CAPACITY = Decimal("30")
+_FUEL_REGEN = Decimal("1.2")
+
 
 # Expected FOOD from one field-tick under FARM_FOOD_HAND, from the branch
 # table in _create_recipes below.
@@ -93,6 +102,11 @@ class ScenarioConfig:
     estate_rule: str = "burn"  # burn | treasury | heir
     redistribution_period: int = 5
     smallholder_fraction: float = 0.15
+    # Bare parcels each firm holds on top of its working farm. This is the
+    # land the build mechanic gets to allocate: raise it and firms have room
+    # to over-build one sector, drop it to 0 and the economy reverts to
+    # farming only, which is every result recorded before rent and bills.
+    bare_land_per_firm: int = 2
     seed: int = 0
 
     # --- Firm profit margin ------------------------------------------------
@@ -268,16 +282,68 @@ def _create_goods(session: Session) -> None:
         decay_per_tick=Decimal("0.02"),
     )
 
+    # --- Rent and bills ----------------------------------------------------
+    #
+    # SHELTER and ENERGY decay COMPLETELY each tick, which is the whole trick
+    # that makes a recurring obligation work without a new engine mechanism.
+    # Consumption runs after the auction and before decay, so buying exactly
+    # this tick's requirement satisfies the need and nothing carries over: you
+    # are buying one tick's occupancy and one tick's power, and next tick the
+    # bill is due again. Nobody can stockpile a year of rent in a good week.
+    #
+    # It also sidesteps the ownership invariant the same way taxation does. A
+    # landlord cannot reach into a tenant's account any more than a treasury
+    # can (design.md § military, and see the taxation note above) -- so rent
+    # is not taken, it is *bought*, and the consequence of not paying is
+    # simply that the need goes unmet. No forced transfer, no seizure, no new
+    # primitive. Eviction is the absence of a purchase.
+    goods.create_good(session, "SHELTER", decay_per_tick=Decimal("1"))
+    goods.create_good(session, "ENERGY", decay_per_tick=Decimal("1"))
+
+    # Both condition goods carry decay FROM THE START. The COND-WEAK artifact
+    # above is the reason: a damage counter with no way down turns an
+    # intermittent miss into a death sentence and invalidated every mortality
+    # number this project produced. Neither of these incapacitates at all --
+    # going cold is a drag on what you can earn, which is enough to make a
+    # poverty trap, and re-introducing a route to death is a separate decision
+    # to take deliberately rather than as a side effect of adding bills.
+    goods.create_good(
+        session, "COND-EXPOSED",
+        modifies_pattern="LABOR*", modifies_factor=Decimal("0.85"),
+        decay_per_tick=Decimal("0.02"),
+    )
+    goods.create_good(
+        session, "COND-COLD",
+        modifies_pattern="LABOR*", modifies_factor=Decimal("0.9"),
+        decay_per_tick=Decimal("0.02"),
+    )
+
 
 def _create_needs(session: Session) -> None:
+    # Priority is the order the consumption pass draws in, and here it is also
+    # the order a household goes under: food before rent before power before
+    # clothes. That ordering is the mechanism by which a squeeze shows up as
+    # cold and crowded rather than as starvation -- the essential need is
+    # served first, so the bills are what get missed. Making it explicit
+    # matters because it is a claim about behaviour, not a tie-break.
     needs.create_need(
         session, "HUNGER", Decimal("0.8"), ["FOOD"],
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="COND-WEAK", condition_quantity=Decimal("1"),
     )
     needs.create_need(
-        session, "COMFORT", Decimal("0.2"), ["CLOTHES"],
+        session, "SHELTER", Decimal("1"), ["SHELTER"],
         entity_type=EntityType.INDIVIDUAL, priority=1,
+        condition_symbol="COND-EXPOSED", condition_quantity=Decimal("1"),
+    )
+    needs.create_need(
+        session, "POWER", Decimal("1"), ["ENERGY"],
+        entity_type=EntityType.INDIVIDUAL, priority=2,
+        condition_symbol="COND-COLD", condition_quantity=Decimal("1"),
+    )
+    needs.create_need(
+        session, "COMFORT", Decimal("0.2"), ["CLOTHES"],
+        entity_type=EntityType.INDIVIDUAL, priority=3,
     )
 
 
@@ -293,7 +359,8 @@ def share_symbol(firm_index: int) -> str:
 
 
 def _create_markets(session: Session, config: ScenarioConfig) -> None:
-    for symbol in ("LABOR", "LABOR-FARM", "FOOD", "CLOTHES", "TOOLS"):
+    for symbol in ("LABOR", "LABOR-FARM", "FOOD", "CLOTHES", "TOOLS",
+                    "SHELTER", "ENERGY"):
         markets.create_market(session, symbol, "USD")
     if config.share_allocation != "none":
         # Shares are tradable in principle from the start. No script places
@@ -346,13 +413,90 @@ def _create_recipes(session: Session) -> None:
         duration_ticks=5, unlocks=["AGRONOMY"],
     )
 
+    # --- Housing and power: the two other things land can be ---------------
+    #
+    # These are what make land contested rather than merely required. A parcel
+    # is bare until something is built on it, and the three BUILD_ recipes are
+    # mutually exclusive uses of the same acre -- a dwelling is a field that is
+    # not growing food. Because `builds_facility` erects on the bound parcel at
+    # completion and `ctx.parcels` reports each parcel's facilities, a firm can
+    # see which of its land is empty, price the three uses off their own
+    # output, and put up whichever pays best. Land allocation becomes something
+    # the run produces, not something genesis decides.
+    #
+    # One-use-per-parcel is enforced in firm.lua (build only where
+    # `#facilities == 0`), NOT by the engine, which is happy to stack a farm
+    # and a dwelling on one parcel. That is the right split -- zoning is a
+    # policy question and belongs in behaviour, not in mechanism -- but it does
+    # mean the invariant is only as good as the script.
+    production.create_recipe(
+        session, "BUILD_FARM",
+        inputs={"LABOR": Decimal("2")}, outputs={},
+        duration_ticks=3, builds_facility="FARM",
+    )
+    production.create_recipe(
+        session, "BUILD_DWELLING",
+        inputs={"LABOR": Decimal("4"), "TOOLS": Decimal("0.5")}, outputs={},
+        duration_ticks=5, builds_facility="DWELLING",
+    )
+    production.create_recipe(
+        session, "BUILD_POWER_PLANT",
+        inputs={"LABOR": Decimal("6"), "TOOLS": Decimal("1")}, outputs={},
+        duration_ticks=8, builds_facility="POWER-PLANT",
+    )
 
-def _grant_field(session: Session, owner: Entity) -> None:
-    parcel = parcels.create_parcel(session, "FIELD", name=f"{owner.name}'s Field", owner=owner)
-    parcels.add_facility(session, parcel, "FARM", built_tick=None)
+    # Letting takes upkeep, not construction: a dwelling already standing
+    # produces occupancy for several households a tick against a little
+    # maintenance labour. Facility capacity does the rest -- one DWELLING backs
+    # one running LET_DWELLING, so housing more people means building more.
+    # Yields are set so one parcel serves about the same number of people
+    # whatever is built on it: a field feeds 4.95/0.8 = 6.2 mouths a tick, so a
+    # dwelling houses 6 and a plant powers 6. Without that parity the choice
+    # between uses would be decided by an accident of units rather than by
+    # prices, and "which use pays best" is the question the build mechanic
+    # exists to ask.
+    production.create_recipe(
+        session, "LET_DWELLING",
+        inputs={"LABOR": Decimal("0.5")}, outputs={"SHELTER": Decimal("6")},
+        duration_ticks=1, requires_facility="DWELLING",
+    )
+    # Power draws a regenerating seam, so an energy plot has land *quality*
+    # the way a field has soil, and generating flat out drains it faster than
+    # it comes back.
+    production.create_recipe(
+        session, "GENERATE_POWER",
+        inputs={"LABOR": Decimal("1")}, outputs={"ENERGY": Decimal("6")},
+        duration_ticks=1, requires_facility="POWER-PLANT",
+        deposit_inputs={"FUEL-SEAM": Decimal("1")},
+    )
+
+
+def _grant_field(
+    session: Session, owner: Entity, name: str = "", built: bool = True,
+    facility: str = "FARM",
+) -> None:
+    """One parcel of land, optionally with a farm already standing on it.
+
+    Every parcel carries BOTH deposits regardless of what gets built, because
+    the point of the fixed land pool is that a given acre could have been any
+    of the three things. Endowing only the parcels destined to farm with soil
+    would decide the allocation at genesis under another name, and the
+    allocation is meant to be the run's output.
+
+    `built=False` hands over bare land: no facility, so a firm has to choose a
+    use and pay to build it before that acre produces anything at all.
+    """
+    parcel = parcels.create_parcel(
+        session, "LAND", name=name or f"{owner.name}'s Land", owner=owner)
+    if built:
+        parcels.add_facility(session, parcel, facility, built_tick=None)
     parcels.add_deposit(
         session, parcel, "SOIL-FERTILITY", _SOIL_QUANTITY,
         capacity=_SOIL_CAPACITY, regen_per_tick=_SOIL_REGEN,
+    )
+    parcels.add_deposit(
+        session, parcel, "FUEL-SEAM", _FUEL_QUANTITY,
+        capacity=_FUEL_CAPACITY, regen_per_tick=_FUEL_REGEN,
     )
 
 
@@ -361,7 +505,23 @@ def _create_firms(session: Session, config: ScenarioConfig) -> list[str]:
     for i in range(config.n_firms):
         firm = services.create_entity(session, f"Firm {i + 1}", EntityType.BUSINESS)
         services.create_account(session, firm, "USD", initial_balance=Decimal("3000"))
-        _grant_field(session, firm)
+        # A working farm, a dwelling and a power plant each, plus bare land.
+        #
+        # The housing and power stock has to EXIST at genesis, not be built
+        # from nothing. Measured without it: no firm can assemble the 4-6 LABOR
+        # a build needs before the whole population has failed shelter and
+        # power for the entire bootstrap, and since both conditions cut labour
+        # productivity on top of COND-WEAK, the food economy goes with them --
+        # food price 3 -> 111, hunger satisfaction 0.03, and not one dwelling
+        # ever built. Real economies start with a housing stock; this one has
+        # to as well. At 6 served per parcel, one of each per firm covers the
+        # population exactly, so the build mechanic operates at the MARGIN --
+        # which is where a build-or-not decision is interesting anyway.
+        _grant_field(session, firm, name=f"{firm.name}'s Field")
+        _grant_field(session, firm, name=f"{firm.name}'s Houses", facility="DWELLING")
+        _grant_field(session, firm, name=f"{firm.name}'s Works", facility="POWER-PLANT")
+        for j in range(config.bare_land_per_firm):
+            _grant_field(session, firm, name=f"{firm.name}'s Plot {j + 1}", built=False)
         # Standing agronomist -- what lets a firm self-convert bought raw
         # LABOR into LABOR-FARM instead of depending on a thin market for it.
         # Headroom above the good_requirements threshold (>= 1): SKILL-FARM

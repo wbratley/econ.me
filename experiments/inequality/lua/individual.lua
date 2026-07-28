@@ -30,7 +30,15 @@ local labor_price = market_price("LABOR", 5)
 local FOOD_PANTRY = 5
 local CLOTHES_STOCK = 1
 local FOOD_BUDGET_SHARE = 0.5     -- of ordinary spending
+local SHELTER_BUDGET_SHARE = 0.20
+local ENERGY_BUDGET_SHARE = 0.10
 local CLOTHES_BUDGET_SHARE = 0.15
+-- How far above the normal price each bill is worth chasing when it is
+-- already unpaid. Well below food's premium of 20: a cold night is worse than
+-- an ordinary one and nothing like a hungry one, and pricing them equally
+-- would have households bidding rent money away from dinner.
+local SHELTER_PREMIUM = 8
+local POWER_PREMIUM = 4
 local HUNGER_PREMIUM = 20         -- multiple of the normal price a starving
                                   -- person will pay rather than go without
 
@@ -62,6 +70,11 @@ local routine_food = SUBSISTENCE_FOOD + FOOD_DECAY * FOOD_PANTRY
 local routine_clothes = COMFORT_CLOTHES + CLOTHES_DECAY * CLOTHES_STOCK
 local normal_food_price = (spend_rate * FOOD_BUDGET_SHARE) / routine_food
 local normal_clothes_price = (spend_rate * CLOTHES_BUDGET_SHARE) / routine_clothes
+-- No decay term in the denominator for these two, unlike food and clothes:
+-- they decay ENTIRELY, so the routine quantity is just the tick's
+-- requirement. Nothing spoils on the shelf because nothing reaches the shelf.
+local normal_shelter_price = (spend_rate * SHELTER_BUDGET_SHARE) / SHELTER_PER_TICK
+local normal_energy_price = (spend_rate * ENERGY_BUDGET_SHARE) / ENERGY_PER_TICK
 
 -- 2. Work the land, if any (smallholder path): convert 1 LABOR -> 1
 --    LABOR-FARM (gated on holding >= 1 SKILL-FARM, checked not consumed),
@@ -180,6 +193,40 @@ if hunger and budget > 0 then
     end
   end
 end
+
+-- Rent and the electricity bill, bought after food and before clothes to
+-- match the need priorities in scenario.py, and out of whatever food left
+-- behind.
+--
+-- These are BILLS, not shopping, and the mechanism that makes them so is
+-- total decay: there is no pantry to draw on and no stock to build up, so the
+-- household buys exactly this tick's requirement or does without it, and the
+-- same amount falls due again next tick regardless. A single tier, therefore
+-- -- the two-tier split that gives food its demand curve has nothing to
+-- describe here, because "stock up on cheap rent" is not a thing a tenant can
+-- do.
+--
+-- The consequence of the ordering is that a squeezed household goes cold
+-- before it goes hungry. That is deliberate, and it is where the poverty trap
+-- lives: COND-EXPOSED and COND-COLD both cut what you can earn, so a missed
+-- bill lowers next tick's income, which makes the next bill harder.
+local function buy_bill(need_code, symbol, normal_price, premium, prio)
+  local need = need_by_code(need_code)
+  if not (need and budget > 0) then return end
+  local urgency = 1 - tonumber(need.satisfaction)
+  local due = tonumber(need.quantity_per_tick) - holding_qty(symbol)
+  if due <= 0.01 then return end
+  local price = quote(normal_price * (1 + premium * urgency), 1, nil, budget / due)
+  local qty = math.min(due, budget / price)
+  if qty > 0.01 then
+    ctx.action.place_order(symbol, "buy", amount_str(qty), amount_str(price),
+                            account.id, prio)
+    budget = budget - qty * price
+  end
+end
+
+buy_bill("SHELTER", "SHELTER", normal_shelter_price, SHELTER_PREMIUM, 32)
+buy_bill("POWER", "ENERGY", normal_energy_price, POWER_PREMIUM, 33)
 
 -- Clothes are discretionary: quoted at the normal price with none of
 -- food's urgency term, and only out of what food left behind. A hungry
