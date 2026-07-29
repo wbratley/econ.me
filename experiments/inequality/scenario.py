@@ -530,7 +530,17 @@ def _create_recipes(session: Session) -> None:
     # mean the invariant is only as good as the script.
     production.create_recipe(
         session, "BUILD_FARM",
-        inputs={"LABOR": Decimal("2")}, outputs={},
+        # Paid as a flow over the construction period (per_tick_inputs) rather
+        # than a 2-LABOR lump up front. The lump form was unreachable for the
+        # same reason RESEARCH_AGRONOMY's was: LABOR decays 0.5/tick and farming
+        # spends the firm's inflow as it arrives, so no 2-unit lump ever
+        # accumulated -- builds stalled after tick 3 and left land bare for the
+        # whole run. The flow form needs only ~0.67 LABOR held per tick, which
+        # the firm supplies by idling one field while building (firm.lua leaves
+        # one WORK_AS_FARMER conversion un-run so that raw LABOR survives to
+        # the step-7c draw). Total labour is unchanged: 2/3 per tick x 3.
+        inputs={}, outputs={},
+        per_tick_inputs={"LABOR": Decimal("0.666667")},
         duration_ticks=3, builds_facility="FARM",
     )
     production.create_recipe(
@@ -828,6 +838,11 @@ def _wire_scripts(
                 # Staggered so the research pushes (and the labor demand
                 # spike each one brings) don't all land on the same tick.
                 "research_timer": rng.randrange(20),
+                # Seed for the per-firm RNG firm.lua reseeds every tick (a
+                # fresh LuaRuntime is built per call, so Lua's own
+                # math.random state never persists). Used to jitter build
+                # timing so firms don't all break ground the same tick.
+                "rng": rng.randrange(1, 2000000000),
             },
         ))
 

@@ -68,6 +68,16 @@ local margin = tonumber(ctx.state.firm_margin) or 0
 if margin < 0 or margin >= 1 then margin = 0 end
 local markup = 1 / (1 - margin)
 
+-- Per-firm RNG for investment timing. A fresh LuaRuntime is built every tick
+-- (lua_engine), so Lua's math.random state never persists across ticks:
+-- without reseeding from this stored seed every firm would draw the same
+-- number every tick. Seeded once per firm at genesis (scenario.py) and
+-- advanced here each tick, so the stream is deterministic given the scenario
+-- seed yet differs across firms and ticks.
+math.randomseed(tonumber(ctx.state.rng) or 1)
+local invest_roll = math.random()
+ctx.state.rng = math.random(1, 2000000000)
+
 -- Persistent research-push timer: every 20 ticks, if enough LABOR is banked
 -- and AGRONOMY isn't unlocked yet, spend a tick converting 6 LABOR into 6
 -- LABOR-FARM (six back-to-back duration-0 conversions in one script call --
@@ -103,6 +113,55 @@ if (not unlocked_agronomy) and (not researching) and research_timer >= 20 then
   -- finds nothing, FAILED.
   researching = true
 end
+
+-- What to put on bare land. Hoisted ABOVE the farm loop on purpose:
+-- BUILD_FARM pays its labour as a per-tick flow, so the process's FIRST draw
+-- runs at step 7c of the very tick it is created. If the firm only learned it
+-- was building *after* farming, every build would starve its first draw and
+-- die -- a single missed per-tick draw fails the whole process. Deciding
+-- first lets the farm loop idle one field THIS tick to feed it. The firm
+-- prices each use by what the parcel earns per tick net of its labour;
+-- whichever pays most wins the acre (a dwelling is a field not growing food,
+-- and which gets built is an outcome of prices, not a genesis setting). One
+-- build at a time (`not building_now()`), never below a positive net margin.
+local wage = market_price("LABOR", 5)
+local bare = bare_parcels()
+local intended_build = nil
+if #bare > 0 and not building_now() then
+  local uses = {
+    { recipe = "BUILD_FARM",        labor = 2,
+      value = farm_yield * food_price - wage },
+    { recipe = "BUILD_DWELLING",    labor = 4,
+      value = SHELTER_PER_DWELLING * shelter_price - LABOR_PER_LET * wage },
+    { recipe = "BUILD_POWER_PLANT", labor = 6,
+      value = ENERGY_PER_PLANT * energy_price - LABOR_PER_GENERATE * wage },
+  }
+  table.sort(uses, function(a, b) return a.value > b.value end)
+  local best = uses[1]
+  if best.value * (1 - margin) > 0.01 and balance >= best.labor * wage then
+    -- Real-options entry. Irreversible investment under uncertainty is not
+    -- exercised the instant net value turns positive: firms wait for the
+    -- surplus to clear a hurdle, and the more compelling the opportunity the
+    -- shorter the wait. So the per-tick commit probability rises with the
+    -- build's net surplus relative to its labour outlay -- near equilibrium
+    -- (value ~ 0) it is ~0 (and the value>0 gate already enforces that),
+    -- while when food is scarce and the parcel is a windfall it saturates
+    -- toward 1 and the market pulls capital in quickly. This is the
+    -- market-price decision (value folds in P_FOOD and wage) layered with a
+    -- small random element (the per-firm die) -- the two ingredients of
+    -- staggered entry in reality, not a fixed probability that waits as long
+    -- for a marginal build as for a windfall.
+    local commit_prob = 1 - math.exp(-best.value / (best.labor * wage))
+    if invest_roll < commit_prob then
+      intended_build = best
+      ctx.action.start_process(best.recipe, bare[1], 29)
+    end
+  end
+end
+-- A build is active this tick if one is already running OR was just queued.
+-- The farm loop reads this to leave one field's raw LABOR unconverted for the
+-- per-tick draw at step 7c.
+local building = building_now() or (intended_build ~= nil)
 
 -- Work every field that is standing and idle, exactly as the dwelling and
 -- plant loops below do. This used to farm `farm_parcel()` -- the FIRST field
@@ -147,13 +206,27 @@ end
 -- research process at tick step 7c. Same total labour as a full farm tick;
 -- one fewer harvest is the cost of funding R&D.
 local skipped_for_research = false
+local skipped_for_build = false
 for _, pid in ipairs(farms) do
   if not running_on(pid) then
-    ctx.action.start_process("WORK_AS_FARMER", nil, 23)
-    reserved = reserved + 1
-    if researching and not skipped_for_research then
+    -- While a BUILD_* process runs, leave ONE field unconverted: the raw
+    -- LABOR it would have absorbed stays held and feeds the build's per-tick
+    -- draw at step 7c. This is the analogue of the research skip one stage
+    -- earlier: research consumes LABOR-FARM (DOWNSTREAM of the conversion) so
+    -- it keeps the conversion and skips a harvest; builds consume raw LABOR
+    -- (UPSTREAM of the conversion) so they skip the conversion itself. The
+    -- freed labour is still counted in `reserved` so the tools/clothes gates
+    -- below do not expand into the gap and reclaim it before the draw runs.
+    if building and not skipped_for_build then
+      skipped_for_build = true
+      reserved = reserved + 1
+    elseif researching and not skipped_for_research then
+      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
+      reserved = reserved + 1
       skipped_for_research = true
     else
+      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
+      reserved = reserved + 1
       ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", pid, 24)
     end
   end
@@ -185,62 +258,6 @@ for _, pid in ipairs(dwellings) do
 end
 for _, pid in ipairs(plants) do
   if not running_on(pid) then ctx.action.start_process("GENERATE_POWER", pid, 22) end
-end
-
--- What to put on bare land.
---
--- The firm prices each use the same way it prices labour: by what the parcel
--- would earn per tick, net of the labour it takes to work it. Whichever pays
--- most wins the acre. That is the whole point of the fixed land pool -- a
--- dwelling is a field that is not growing food, and which one gets built is
--- an outcome of prices rather than a setting in genesis.
---
--- Two deliberate conservatisms. Rent per tick is compared against a build
--- that costs labour once, so the firm is comparing a flow to a stock and will
--- always build if any use is profitable at all; the brake is that it only
--- ever starts ONE build at a time, so over-building takes many ticks and the
--- prices it is reading move underneath it. And it will not build while it
--- cannot cover the labour, which is what stops a broke firm sinking its last
--- cash into a hole in the ground.
-local wage = market_price("LABOR", 5)
-local bare = bare_parcels()
-local intended_build = nil
-if #bare > 0 and not building_now() then
-  local uses = {
-    { recipe = "BUILD_FARM",        labor = 2,
-      value = farm_yield * food_price - wage },
-    { recipe = "BUILD_DWELLING",    labor = 4,
-      value = SHELTER_PER_DWELLING * shelter_price - LABOR_PER_LET * wage },
-    { recipe = "BUILD_POWER_PLANT", labor = 6,
-      value = ENERGY_PER_PLANT * energy_price - LABOR_PER_GENERATE * wage },
-  }
-  table.sort(uses, function(a, b) return a.value > b.value end)
-  local best = uses[1]
-  -- Net of the margin, like every other use of labour: a firm that builds at
-  -- exactly break-even is decapitalising itself one acre at a time.
-  if best.value * (1 - margin) > 0.01 and balance >= best.labor * wage then
-    intended_build = best
-    -- Only start it once the labour is actually in hand. start_process
-    -- consumes its inputs at start, so firing this while short just fails the
-    -- intent silently, every tick, forever -- which is exactly what happened
-    -- the first time and left every parcel bare for a whole run. The labour
-    -- is bid for below, so the build lands a tick or two after the decision.
-    -- Queued whether or not the labour is in hand yet, for the same reason the
-    -- farm loop no longer checks: `labor` is read before this tick's auction,
-    -- so it is last tick's leftovers after a round of decay. A build wants 4-6
-    -- units at once and lets, generation and farming are served first, so a
-    -- firm essentially never holds that much when its script runs -- building
-    -- stopped at tick 8 of 150 and left 6 parcels bare for the rest of the run.
-    --
-    -- The gate was right when it was written: start_process consumed inputs at
-    -- start, so firing while short failed silently every tick forever, which is
-    -- what left every parcel bare the first time. The engine now retries an
-    -- input-starved start_process after clearing, and the build labour is bid
-    -- for below, so the ask lands rather than evaporating. `building_now()`
-    -- still holds this to one build at a time, which is what keeps it from
-    -- becoming the spending spree that gate was guarding against.
-    ctx.action.start_process(best.recipe, bare[1], 29)
-  end
 end
 
 -- Dividends: distribute real profit to the share register, never capital.
@@ -383,18 +400,16 @@ end
 -- farm tranches don't already bid for. The firm farms one fewer field while a
 -- RESEARCH_AGRONOMY process runs; that is the whole cost.
 
--- Labour to put up whatever the firm decided to build. Without this tranche
--- the firm decides to build every tick and never has the hours to do it: the
--- build recipes want 2-6 LABOR held at once, and ordinary operations bid for
--- one or two. Valued at a farm hour, the same conservative floor the research
--- push uses -- the honest value is the discounted stream the building would
--- earn, and pricing it that way would have the firm outbid the entire economy
--- for construction labour.
-if intended_build then
-  local shortfall = intended_build.labor - labor
-  if shortfall > 0 then
-    tranches[#tranches + 1] = { qty = shortfall, price = farm_yield * food_price }
-  end
+-- Feed the running build's per-tick draw. Fires every tick a build is
+-- active (running OR just queued), not only the tick it was queued: the
+-- per-tick draw runs at step 7c of EVERY tick the process is alive, and a
+-- build that draws labour only on its first tick starves on the second and
+-- dies (measured before this: 99 of 111 builds failed on their 2nd draw).
+-- One unit covers the 0.67-LABOR/tick draw with margin; the farm-loop skip
+-- (above) keeps a conversion from reclaiming it before the draw runs. Valued
+-- at a farm hour -- the same conservative floor the research push uses.
+if building then
+  tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price }
 end
 
 table.sort(tranches, function(a, b) return a.price > b.price end)
