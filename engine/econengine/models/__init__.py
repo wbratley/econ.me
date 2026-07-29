@@ -11,7 +11,7 @@ from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
 from .recipe import (
     Recipe, RecipeBranch, RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement,
-    RecipeInput, RecipeOutput, RecipeRequirement, RecipeUnlock,
+    RecipeInput, RecipeOutput, RecipePerTickInput, RecipeRequirement, RecipeUnlock,
 )
 from .process import Process, ProcessStatus
 from .parcel import Parcel, Facility, Deposit
@@ -45,6 +45,7 @@ __all__ = [
     "RecipeGoodRequirement",
     "RecipeInput",
     "RecipeOutput",
+    "RecipePerTickInput",
     "RecipeRequirement",
     "RecipeUnlock",
     "Process",

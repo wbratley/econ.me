@@ -15,7 +15,15 @@ from econengine.models import (
 
 from .scenario import _FOOD_PER_FIELD_TICK, Scenario, share_symbol
 
-_PRICED_GOODS = ("FOOD", "CLOTHES", "TOOLS", "LABOR", "LABOR-FARM")
+# SHELTER and ENERGY were missing here from the moment they were introduced,
+# which is why every report showed their price as blank while their auctions
+# were in fact clearing normally (1.92 and 4.01 at t60, seed 0). Scripts read
+# `market.last_price` directly and were never affected -- this list is only
+# what the metrics layer looks up -- but it meant calibrate.py's price series,
+# and so its "prices are moving rather than pinned" check, were unevaluable
+# for exactly the two sectors the bills work added.
+_PRICED_GOODS = ("FOOD", "CLOTHES", "TOOLS", "LABOR", "LABOR-FARM",
+                 "SHELTER", "ENERGY")
 
 # --- Valuing the two assets that have no market price ----------------------
 #

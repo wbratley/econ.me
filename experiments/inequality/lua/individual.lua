@@ -112,6 +112,17 @@ end
 --    being rationed purely by whose script happened to run first.
 local reservation_wage = normal_food_price * SUBSISTENCE_FOOD * 0.6
 
+--    A minimum wage, if set: the least anyone will sell an hour for, as a
+--    hard floor under the reservation wage above. With persistent excess
+--    demand for labour (firms order far more than the condition-capped supply
+--    can meet), the going wage is pinned by worker reservations -- below the
+--    firms' marginal product -- so a floor here transfers that rent back to
+--    workers. Because employment is supply-constrained, a moderate floor does
+--    not cost jobs; one set above the farm marginal product does (farms stop
+--    hiring), which is the realistic distortionary case.
+local min_wage = tonumber(ctx.state.min_wage) or 0
+if reservation_wage < min_wage then reservation_wage = min_wage end
+
 --    That is the INTENSIVE margin -- what you charge. It was the only one
 --    here, and it quietly assumed everybody turns up: a rentier with a
 --    fortune still put their whole labour endowment on the market every

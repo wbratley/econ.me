@@ -54,7 +54,17 @@ SHARE_SETS = {
     "shelter_heavy":  dict(food=0.40, shelter=0.25, energy=0.22, clothes=0.08),
     "food_light":     dict(food=0.33, shelter=0.20, energy=0.30, clothes=0.07),
 }
-HORIZONS = [20.0, 12.0, 8.0, 5.0]
+# 3 and 2 were added after the build fix put the best arm's hunger at 0.83
+# against a 0.85 bar with the optimum sitting ON the boundary: cost_weighted
+# ran 0.62, 0.65, 0.68, 0.83 across h20 -> h5, still climbing at the edge of
+# the grid. A grid whose winner is its own endpoint has not found an optimum,
+# it has run out of room. Shortening the horizon makes a household spend a
+# bigger slice of its balance per tick (`spend_rate = balance / horizon`), so
+# it bids harder for food -- P_FOOD is 8.51 at h5 against 1.36 at h8 -- which
+# is what pulls supply toward it. The floor is not free: at some point a
+# household spends its buffer faster than it can earn, so ALIVE is the
+# criterion that decides how far down this can sensibly go.
+HORIZONS = [20.0, 12.0, 8.0, 5.0, 3.0, 2.0]
 
 NEEDS = ("HUNGER", "SHELTER", "POWER")
 MET_FLOOR = 0.85          # every need must reach this
