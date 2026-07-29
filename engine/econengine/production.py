@@ -66,7 +66,7 @@ from .markets import InsufficientHoldingsError, adjust_holding, get_holding, res
 from .models import (
     Entity, EntityStatus, Parcel, Process, ProcessStatus, Recipe, RecipeBranch,
     RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement, RecipeInput,
-    RecipeOutput, RecipeRequirement, RecipeUnlock, Tick,
+    RecipeOutput, RecipePerTickInput, RecipeRequirement, RecipeUnlock, Tick,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -91,6 +91,7 @@ def create_recipe(
     branches: list[dict] | None = None,
     good_requirements: dict[str, Decimal] | None = None,
     deposit_inputs: dict[str, Decimal] | None = None,
+    per_tick_inputs: dict[str, Decimal] | None = None,
     requires_facility: str | None = None,
     builds_facility: str | None = None,
 ) -> Recipe:
@@ -150,6 +151,7 @@ def create_recipe(
         unlocks=tech_rows(RecipeUnlock, unlocks),
         good_requirements=rows(RecipeGoodRequirement, good_requirements or {}),
         deposit_inputs=rows(RecipeDepositInput, deposit_inputs or {}),
+        per_tick_inputs=rows(RecipePerTickInput, per_tick_inputs or {}),
     )
     session.add(recipe)
     session.flush()
@@ -323,6 +325,63 @@ def complete_processes(session: Session, tick_number: int) -> list[dict]:
                 "scope": unlock.technology.scope.value,
             })
     if due:
+        session.flush()
+    return events
+
+
+def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
+    """Draw each RUNNING process's per_tick_inputs from its entity's holdings,
+    once this tick. The recurring-cost counterpart to the lump-sum draw at
+    start_process: a duration-N recipe with per_tick_inputs pays them N
+    times over its run.
+
+    Runs AFTER the auction and the intent retry (tick step 7c), so an entity
+    can convert this tick's freshly bought labour (WORK_AS_FARMER, a
+    duration-0 process retried in 7b) and feed a running process with it
+    BEFORE the decay pass (9) takes half. That ordering is what lets a flow
+    income fund a multi-tick process where banking the stock could not (with
+    0.5/tick decay on the labour goods, no lump ever accumulates).
+
+    A process whose entity cannot meet a per-tick input on a given tick is
+    abandoned: status FAILED, no outputs and no unlocks credited, everything
+    already paid forfeit -- the same consequence as a cancellation, but
+    engine-initiated for want of an input rather than owner-initiated. The
+    engine never partially draws a per-tick input: a process is all-or-nothing
+    per tick, so a recipe's declared transform is always whole. Deterministic
+    by created_at/id, like every process pass."""
+    running = session.execute(
+        select(Process)
+        .where(Process.status == ProcessStatus.RUNNING)
+        .order_by(Process.created_at, Process.id)
+    ).scalars().all()
+    events: list[dict] = []
+    for process in running:
+        recipe = process.recipe
+        if not recipe.per_tick_inputs:
+            continue
+        entity = process.entity
+        # Check every input against the unreserved balance BEFORE drawing
+        # any, so a shortfall leaves the holdings untouched (the process is
+        # forfeited whole, not partially consumed).
+        short: str | None = None
+        for item in recipe.per_tick_inputs:
+            if _available_quantity(session, entity, item.symbol) < item.quantity:
+                short = item.symbol
+                break
+        if short is not None:
+            process.status = ProcessStatus.FAILED
+            events.append({
+                "type": "process_failed",
+                "entity_id": entity.id,
+                "process_id": process.id,
+                "recipe": recipe.code,
+                "reason": f"per-tick input {short} short",
+                "symbol": short,
+            })
+            continue
+        for item in recipe.per_tick_inputs:
+            adjust_holding(session, entity, item.symbol, -item.quantity)
+    if running:
         session.flush()
     return events
 

@@ -51,6 +51,16 @@ class Recipe(Base):
         "RecipeDepositInput", back_populates="recipe", cascade="all, delete-orphan",
         order_by="RecipeDepositInput.symbol",
     )
+    # Inputs consumed once per tick, every tick the process is RUNNING (not
+    # just at start). A duration-N recipe pays these N times. See
+    # production.consume_per_tick_inputs. Lets labour paid out of a flow
+    # income fund a multi-tick process (research, construction) that the
+    # one-shot `inputs` model could only demand as a lump sum -- which, with
+    # 0.5/tick decay on the labour goods, was unreachable.
+    per_tick_inputs: Mapped[list["RecipePerTickInput"]] = relationship(
+        "RecipePerTickInput", back_populates="recipe", cascade="all, delete-orphan",
+        order_by="RecipePerTickInput.symbol",
+    )
 
     def __repr__(self) -> str:
         return f"<Recipe {self.code} duration={self.duration_ticks}>"
@@ -65,6 +75,25 @@ class RecipeInput(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
 
     recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="inputs")
+
+
+class RecipePerTickInput(Base):
+    """Consumed once per tick, every tick the process is RUNNING, for a
+    duration-N recipe that pays N times (production.consume_per_tick_inputs).
+    The recurring-cost counterpart to RecipeInput's lump-sum: a multi-tick
+    process fed from a flow rather than a stock. Drawn from the unreserved
+    balance at face value; a tick the entity cannot meet it abandons the
+    process (FAILED, inputs forfeit) -- the engine never partially draws."""
+
+    __tablename__ = "recipe_per_tick_inputs"
+    __table_args__ = (UniqueConstraint("recipe_id", "symbol"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+
+    recipe: Mapped["Recipe"] = relationship("Recipe", back_populates="per_tick_inputs")
 
 
 class RecipeOutput(Base):

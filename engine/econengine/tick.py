@@ -30,6 +30,13 @@ run_tick():
      decay first. Only that rejection is retried, and the step-6 attempt is
      what fixes ordering against sell orders of the same good, so each intent
      still yields exactly one event
+ 7c. draws each RUNNING process's per_tick_inputs from its entity's holdings
+     (production.consume_per_tick_inputs) — AFTER the retry so a process can
+     be fed by labour its entity converted this tick, BEFORE decay so that
+     labour is not halved first. A process whose entity cannot meet a
+     per-tick input is abandoned (FAILED, forfeit). Lets a flow income fund
+     a multi-tick process (research, construction) that the one-shot `inputs`
+     model could only demand as a lump sum
   8. runs the consumption pass — AFTER the auction, so goods bought this
      tick are eaten this tick and sell orders settle before anything is
      eaten; draws down need-satisfying holdings and rewrites satisfaction
@@ -190,6 +197,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     events.extend(markets.run_auctions(session, tick_number=number))
     for intent in retry:
         events.append(resolve_intent(session, intent))
+    events.extend(production.consume_per_tick_inputs(session, tick_number=number))
     events.extend(needs.run_consumption(session, tick_number=number))
     events.extend(goods.apply_decay(session, tick_number=number))
     events.extend(conditions.run_incapacity(session, tick_number=number))

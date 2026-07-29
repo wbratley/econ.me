@@ -10,6 +10,11 @@ class ProcessStatus(enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    # a RUNNING process that could not meet a per-tick input demand (see
+    # production.consume_per_tick_inputs): abandoned mid-run, outputs and
+    # unlocks forfeited, like a cancellation but engine-initiated for want of
+    # an input rather than owner-initiated
+    FAILED = "failed"
 
 
 class Process(Base):
