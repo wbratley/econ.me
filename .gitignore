@@ -7,3 +7,4 @@ build/
 .env
 econ.db
 .venv/
+experiments/inequality/dashboard.html
