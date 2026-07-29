@@ -140,6 +140,18 @@ class ScenarioConfig:
     # Left where it belongs so it becomes live once households can accumulate.
     work_free_cover: float = 40.0
 
+    # --- Minimum wage ------------------------------------------------------
+    # A floor on the LABOR clearing price, implemented supply-side (workers
+    # refuse to sell below it; individual.lua). 0 = off. Tested because the
+    # labour market runs with persistent excess demand (firms order ~65 units
+    # against ~12 supplied), so the wage is pinned by worker reservation,
+    # below firm marginal product -- firms keep the gap as rent and the wage
+    # does not do its job as the household-income return channel. Because
+    # employment is supply-capped (the condition stack), a moderate floor
+    # transfers that rent to workers without shedding jobs; a floor above the
+    # farm marginal product starts to shed farm employment instead.
+    min_wage: Decimal = Decimal("0")
+
     seed: int = 0
 
     # --- Firm profit margin ------------------------------------------------
@@ -784,6 +796,7 @@ def _wire_scripts(
                 "energy_budget_share": str(config.energy_budget_share),
                 "clothes_budget_share": str(config.clothes_budget_share),
                 "work_free_cover": str(config.work_free_cover),
+                "min_wage": str(config.min_wage),
             },
         ))
 
