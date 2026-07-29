@@ -456,7 +456,19 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "FARM_FOOD_TOOLED",
-        inputs={"LABOR-FARM": Decimal("1"), "TOOLS": Decimal("0.02")}, outputs={},
+        # Tooled farming is a pure yield boost over hand farming (8.75 vs 4.95
+        # expected FOOD per LABOR-FARM), gated only on the AGRONOMY unlock.
+        # It previously also burned 0.02 TOOLS per farm-tick, which made
+        # AGRONOMY a trap rather than a gain in this labour-starved economy:
+        # tools are made by CRAFT_TOOLS (3 LABOR each), so unlocking the tech
+        # switched every farm to a recipe whose capital input the economy
+        # could not supply -- all tooled-farm attempts failed for want of
+        # TOOLS, food output collapsed, and the population starved. The tool
+        # requirement is removed so that researching AGRONOMY buys the real
+        # labour-productivity gain it represents. (TOOLS still gate the
+        # BUILD_DWELLING / BUILD_POWER_PLANT recipes below, so CRAFT_TOOLS and
+        # the tool stock retain a purpose.)
+        inputs={"LABOR-FARM": Decimal("1")}, outputs={},
         duration_ticks=1, requires_facility="FARM", requires=["AGRONOMY"],
         deposit_inputs={"SOIL-FERTILITY": Decimal("1")},
         branches=[
@@ -475,8 +487,17 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "RESEARCH_AGRONOMY",
-        inputs={"LABOR-FARM": Decimal("5")}, outputs={},
+        # Paid as a flow, not a lump: 1 LABOR-FARM per tick for 5 ticks
+        # (per_tick_inputs), instead of 5 LABOR-FARM up front. The lump form
+        # was unreachable -- it needed 5 LABOR-FARM held at once, but the
+        # labour goods decay 0.5/tick so no stock ever accumulated, and the
+        # firm's whole inflow went to ongoing farming anyway. The flow form
+        # lets the firm convert one LABOR to LABOR-FARM each tick (one fewer
+        # field farmed) and feed the running process before decay takes it,
+        # so research actually fires on its own.
+        inputs={}, outputs={},
         duration_ticks=5, unlocks=["AGRONOMY"],
+        per_tick_inputs={"LABOR-FARM": Decimal("1")},
     )
 
     # --- Housing and power: the two other things land can be ---------------

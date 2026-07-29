@@ -75,66 +75,95 @@ local markup = 1 / (1 - margin)
 -- them), then spend 5 of it on research and farm with the 1 left over.
 local research_timer = (ctx.state.research_timer or 0) + 1
 ctx.state.research_timer = research_timer
-local research_push = (not unlocked_agronomy) and research_timer >= 20 and labor >= 6
 
-if research_push then
-  for i = 1, 6 do
-    ctx.action.start_process("WORK_AS_FARMER", nil, 10)
-  end
+-- Is an AGRONOMY research process already running? RESEARCH_AGRONOMY is now
+-- paid as a FLOW -- 1 LABOR-FARM per tick for 5 ticks (per_tick_inputs) --
+-- rather than the 5 LABOR-FARM lump it used to demand at start. The lump
+-- was unreachable: it needed 5 LABOR-FARM held at once, but the labour goods
+-- decay 0.5/tick so no stock accumulated, and the firm's whole inflow went
+-- to ongoing farming anyway. The flow form lets the firm convert one
+-- labour-hour to LABOR-FARM each tick and feed the running process at tick
+-- step 7c, before decay takes it -- so research actually fires on its own.
+local researching = false
+for _, p in ipairs(ctx.processes) do
+  if p.recipe == "RESEARCH_AGRONOMY" then researching = true end
+end
+
+-- Start research once the timer fires. No lump-sum labour gate (the old
+-- `labor >= 6`, checked pre-auction/post-decay, was structurally never
+-- true -- max firm receipt 2.5 against decay 0.5/tick). `not researching`
+-- keeps one firm from starting a second while the first runs.
+if (not unlocked_agronomy) and (not researching) and research_timer >= 20 then
   ctx.action.start_process("RESEARCH_AGRONOMY", nil, 15)
-  if field_id and not running_on(field_id) then
-    ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", field_id, 20)
-  end
   ctx.state.research_timer = 0
-else
-  -- Work every field that is standing and idle, exactly as the dwelling and
-  -- plant loops below do. This used to farm `farm_parcel()` -- the FIRST field
-  -- only -- which capped the whole sector at one harvest per firm per tick
-  -- however much land it held: 19 standing farms produced 2.4 harvests a tick
-  -- between them, with spare labour on the market and ZERO rejections. The
-  -- fields were not failing to run, they were never being asked to.
-  --
-  -- Priority 23/24 puts farming BEHIND lets and generation, which is a change
-  -- of order and deliberate. While this was one field it did not matter; a
-  -- firm that can now spend every hour it owns on land would starve the
-  -- utilities from priority 10, which is the exact failure the note above the
-  -- dwelling loop records. It also agrees with the firm's own bid schedule: an
-  -- hour let is worth 6 SHELTER (0.2 -> 6), an hour generating 20 ENERGY
-  -- (0.3 -> 6), an hour farmed 4.95 FOOD. Land is the least valuable hour of
-  -- the three unless food is dear, so it goes last of the three.
-  --
-  -- WORK_AS_FARMER is duration-0 and completes inline, so each conversion is
-  -- in hand before the priority-24 farm intent that spends it.
-  local reserved = 0
-  for _, pid in ipairs(dwellings) do
-    if not running_on(pid) then reserved = reserved + LABOR_PER_LET end
-  end
-  for _, pid in ipairs(plants) do
-    if not running_on(pid) then reserved = reserved + LABOR_PER_GENERATE end
-  end
-  -- Queued for every idle field without checking the labour on hand, exactly
-  -- as the dwelling and plant loops do. `labor` is read when the script runs,
-  -- which is BEFORE this tick's auction, so it counts only what was bought
-  -- last tick -- gating on it made the firm ask for work it could already pay
-  -- for rather than work it was about to. That capped output at ~2.5 harvests
-  -- a tick across 17 fields even after the one-field bug was gone. The engine
-  -- retries a start_process rejected for want of inputs after clearing, so
-  -- asking for every field and letting the market decide is now both the
-  -- honest statement of intent and the one that gets fed.
-  for _, pid in ipairs(farms) do
-    if not running_on(pid) then
-      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
-      reserved = reserved + 1
+  -- The per-tick draw runs THIS tick (step 7c, right after the process is
+  -- created), so commit to feeding it now: the farm loop below reads this and
+  -- skips one harvest, leaving the LABOR-FARM research draws. Without this the
+  -- process would fail on its first tick every time -- it starts, the draw
+  -- finds nothing, FAILED.
+  researching = true
+end
+
+-- Work every field that is standing and idle, exactly as the dwelling and
+-- plant loops below do. This used to farm `farm_parcel()` -- the FIRST field
+-- only -- which capped the whole sector at one harvest per firm per tick
+-- however much land it held: 19 standing farms produced 2.4 harvests a tick
+-- between them, with spare labour on the market and ZERO rejections. The
+-- fields were not failing to run, they were never being asked to.
+--
+-- Priority 23/24 puts farming BEHIND lets and generation, which is a change
+-- of order and deliberate. While this was one field it did not matter; a
+-- firm that can now spend every hour it owns on land would starve the
+-- utilities from priority 10, which is the exact failure the note above the
+-- dwelling loop records. It also agrees with the firm's own bid schedule: an
+-- hour let is worth 6 SHELTER (0.2 -> 6), an hour generating 20 ENERGY
+-- (0.3 -> 6), an hour farmed 4.95 FOOD. Land is the least valuable hour of
+-- the three unless food is dear, so it goes last of the three.
+--
+-- WORK_AS_FARMER is duration-0 and completes inline, so each conversion is
+-- in hand before the priority-24 farm intent that spends it.
+local reserved = 0
+for _, pid in ipairs(dwellings) do
+  if not running_on(pid) then reserved = reserved + LABOR_PER_LET end
+end
+for _, pid in ipairs(plants) do
+  if not running_on(pid) then reserved = reserved + LABOR_PER_GENERATE end
+end
+-- Queued for every idle field without checking the labour on hand, exactly
+-- as the dwelling and plant loops do. `labor` is read when the script runs,
+-- which is BEFORE this tick's auction, so it counts only what was bought
+-- last tick -- gating on it made the firm ask for work it could already pay
+-- for rather than work it was about to. That capped output at ~2.5 harvests
+-- a tick across 17 fields even after the one-field bug was gone. The engine
+-- retries a start_process rejected for want of inputs after clearing, so
+-- asking for every field and letting the market decide is now both the
+-- honest statement of intent and the one that gets fed.
+--
+-- When funding a running RESEARCH_AGRONOMY process, leave ONE field's
+-- LABOR-FARM for it instead of harvesting that field: skip a single
+-- FARM_FOOD_HAND, but keep the WORK_AS_FARMER conversion. All conversions
+-- (priority 23) resolve before any harvest (priority 24), so the unharvested
+-- conversion's LABOR-FARM survives the farm loop and is drawn by the
+-- research process at tick step 7c. Same total labour as a full farm tick;
+-- one fewer harvest is the cost of funding R&D.
+local skipped_for_research = false
+for _, pid in ipairs(farms) do
+  if not running_on(pid) then
+    ctx.action.start_process("WORK_AS_FARMER", nil, 23)
+    reserved = reserved + 1
+    if researching and not skipped_for_research then
+      skipped_for_research = true
+    else
       ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", pid, 24)
     end
   end
-  if labor - reserved >= 3 and holding_qty("TOOLS") < 3 then
-    ctx.action.start_process("CRAFT_TOOLS", nil, 25)
-    reserved = reserved + 3
-  end
-  if labor - reserved >= 2 then
-    ctx.action.start_process("MAKE_CLOTHES", nil, 26)
-  end
+end
+if labor - reserved >= 3 and holding_qty("TOOLS") < 3 then
+  ctx.action.start_process("CRAFT_TOOLS", nil, 25)
+  reserved = reserved + 3
+end
+if labor - reserved >= 2 then
+  ctx.action.start_process("MAKE_CLOTHES", nil, 26)
 end
 
 -- Work every dwelling and every plant that is standing and idle. Facility
@@ -318,10 +347,10 @@ local tranches = {}
 
 if field_id then
   -- One field runs one process at a time, so exactly one unit of labor a
-  -- tick is worth the full farm yield to this firm. Tooled farming also
-  -- burns a little of the tool stock.
-  local wear = unlocked_agronomy and (0.02 * tools_price) or 0
-  tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price - wear }
+  -- tick is worth the full farm yield to this firm. (Tooled farming used to
+  -- burn 0.02 TOOLS per tick; that input was removed from FARM_FOOD_TOOLED
+  -- so there is no tool-wear cost to subtract here anymore.)
+  tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price }
 end
 
 -- One tranche per dwelling and per plant, not one for the sector: each
@@ -348,18 +377,11 @@ if holding_qty("TOOLS") < 3 then
   tranches[#tranches + 1] = { qty = LABOR_PER_TOOL, price = tools_price / LABOR_PER_TOOL }
 end
 
--- Labor banked toward the next research push. Unlocking AGRONOMY raises the
--- farm yield permanently, which is worth more than a single tick's output,
--- but valuing it that way would have the firm outbid every other use of
--- labor in the economy for as long as it took. Valuing a research hour at
--- exactly a farm hour is the conservative floor on its worth and keeps the
--- push competing on equal terms with ordinary production.
-if not unlocked_agronomy and research_timer >= 15 then
-  local shortfall = 6 - labor
-  if shortfall > 0 then
-    tranches[#tranches + 1] = { qty = shortfall, price = farm_yield * food_price }
-  end
-end
+-- No separate research-labour tranche. Research is now funded by redirecting
+-- one farm conversion's LABOR-FARM to the running process (the skipped
+-- harvest above), not by buying a 6-unit lump, so it needs no labour the
+-- farm tranches don't already bid for. The firm farms one fewer field while a
+-- RESEARCH_AGRONOMY process runs; that is the whole cost.
 
 -- Labour to put up whatever the firm decided to build. Without this tranche
 -- the firm decides to build every tick and never has the hours to do it: the
