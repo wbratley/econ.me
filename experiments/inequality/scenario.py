@@ -499,17 +499,20 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "RESEARCH_AGRONOMY",
-        # Paid as a flow, not a lump: 1 LABOR-FARM per tick for 5 ticks
-        # (per_tick_inputs), instead of 5 LABOR-FARM up front. The lump form
-        # was unreachable -- it needed 5 LABOR-FARM held at once, but the
-        # labour goods decay 0.5/tick so no stock ever accumulated, and the
-        # firm's whole inflow went to ongoing farming anyway. The flow form
-        # lets the firm convert one LABOR to LABOR-FARM each tick (one fewer
-        # field farmed) and feed the running process before decay takes it,
-        # so research actually fires on its own.
+        # Paid as a flow of raw LABOR, 1 per tick for 5 ticks, funded exactly
+        # like a build: the firm idles one field (skips its WORK_AS_FARMER
+        # conversion) while a research process runs, so the raw LABOR that
+        # field would have absorbed survives to the per-tick draw at step 7c.
+        # It used to draw LABOR-FARM and skip a HARVEST instead, but that was
+        # fragile: LABOR-FARM is fungible, so when utilities or a labour
+        # shortfall left fewer conversions succeeding than fields queued for
+        # harvest, those harvests consumed the research's LABOR-FARM before
+        # the draw -- 38/38 attempts failed "LABOR-FARM short" once firms
+        # held five fields. Raw LABOR funded by a skipped conversion has no
+        # such leak (it is the mechanism builds use, which complete reliably).
         inputs={}, outputs={},
         duration_ticks=5, unlocks=["AGRONOMY"],
-        per_tick_inputs={"LABOR-FARM": Decimal("1")},
+        per_tick_inputs={"LABOR": Decimal("1")},
     )
 
     # --- Housing and power: the two other things land can be ---------------
