@@ -8,3 +8,4 @@ build/
 econ.db
 .venv/
 experiments/inequality/dashboard.html
+experiments/inequality/comparison.html
