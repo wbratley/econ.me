@@ -20,7 +20,6 @@ local account = ctx.accounts[1]
 local balance = tonumber(account.balance)
 local field_id = farm_parcel()
 local unlocked_agronomy = has_unlock("AGRONOMY")
-local labor = holding_qty("LABOR")
 
 local food_price = market_price("FOOD", 3)
 local clothes_price = market_price("CLOTHES", 8)
@@ -181,62 +180,78 @@ local building = building_now() or (intended_build ~= nil)
 --
 -- WORK_AS_FARMER is duration-0 and completes inline, so each conversion is
 -- in hand before the priority-24 farm intent that spends it.
-local reserved = 0
-for _, pid in ipairs(dwellings) do
-  if not running_on(pid) then reserved = reserved + LABOR_PER_LET end
-end
-for _, pid in ipairs(plants) do
-  if not running_on(pid) then reserved = reserved + LABOR_PER_GENERATE end
-end
--- Queued for every idle field without checking the labour on hand, exactly
--- as the dwelling and plant loops do. `labor` is read when the script runs,
--- which is BEFORE this tick's auction, so it counts only what was bought
--- last tick -- gating on it made the firm ask for work it could already pay
--- for rather than work it was about to. That capped output at ~2.5 harvests
--- a tick across 17 fields even after the one-field bug was gone. The engine
--- retries a start_process rejected for want of inputs after clearing, so
--- asking for every field and letting the market decide is now both the
--- honest statement of intent and the one that gets fed.
+-- Chase the highest-profit use of each labour-hour. The engine consumes held
+-- labour in priority order (ascending), so priorities are set by value, not
+-- by habit. Every idle field is still queued -- the engine retries a
+-- start_process rejected for want of inputs after the auction, so over-asking
+-- is both honest and the way a field gets fed by labour bought this tick --
+-- but the contest that was stuck is farming against manufactures, and that
+-- is settled by priority, not by gating. See the loom note below the loop.
 --
--- When funding a running RESEARCH_AGRONOMY process, leave ONE field's
--- LABOR-FARM for it instead of harvesting that field: skip a single
--- FARM_FOOD_HAND, but keep the WORK_AS_FARMER conversion. All conversions
--- (priority 23) resolve before any harvest (priority 24), so the unharvested
--- conversion's LABOR-FARM survives the farm loop and is drawn by the
--- research process at tick step 7c. Same total labour as a full farm tick;
--- one fewer harvest is the cost of funding R&D.
+-- Funding a running RESEARCH_AGRONOMY process works exactly like funding a
+-- build: idle ONE field -- skip its conversion AND its harvest -- so the raw
+-- LABOR that field would have absorbed survives to the process's per-tick
+-- draw at step 7c. (Research used to draw LABOR-FARM and skip only the
+-- harvest, but LABOR-FARM is fungible: when a labour shortfall left fewer
+-- conversions succeeding than fields queued for harvest, those harvests ate
+-- the research's LABOR-FARM before the draw. Raw LABOR + a skipped conversion
+-- has no such leak.) The cost of R&D is one field's harvest a tick.
 local skipped_for_research = false
 local skipped_for_build = false
 for _, pid in ipairs(farms) do
   if not running_on(pid) then
-    -- While a BUILD_* process runs, leave ONE field unconverted: the raw
-    -- LABOR it would have absorbed stays held and feeds the build's per-tick
-    -- draw at step 7c. This is the analogue of the research skip one stage
-    -- earlier: research consumes LABOR-FARM (DOWNSTREAM of the conversion) so
-    -- it keeps the conversion and skips a harvest; builds consume raw LABOR
-    -- (UPSTREAM of the conversion) so they skip the conversion itself. The
-    -- freed labour is still counted in `reserved` so the tools/clothes gates
-    -- below do not expand into the gap and reclaim it before the draw runs.
+    -- While a BUILD_* or RESEARCH_AGRONOMY process runs, leave ONE field
+    -- unconverted: the raw LABOR it would have absorbed stays held and feeds
+    -- the process's per-tick draw at step 7c. Both investments consume raw
+    -- LABOR (upstream of the conversion), so both skip the conversion itself.
     if building and not skipped_for_build then
       skipped_for_build = true
-      reserved = reserved + 1
     elseif researching and not skipped_for_research then
-      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
-      reserved = reserved + 1
       skipped_for_research = true
     else
-      ctx.action.start_process("WORK_AS_FARMER", nil, 23)
-      reserved = reserved + 1
-      ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", pid, 24)
+      ctx.action.start_process("WORK_AS_FARMER", nil, 24)
+      ctx.action.start_process(unlocked_agronomy and "FARM_FOOD_TOOLED" or "FARM_FOOD_HAND", pid, 25)
     end
   end
 end
-if labor - reserved >= 3 and holding_qty("TOOLS") < 3 then
-  ctx.action.start_process("CRAFT_TOOLS", nil, 25)
-  reserved = reserved + 3
+-- Produce to stock, not to spot price. Chasing the spot price made every
+-- firm flip into the loom at once (cloth dear) and out at once (food short)
+-- -- a cobweb violent enough to drive food output to zero some ticks. The
+-- real-world damper is inventory: a firm asks not "which line pays more this
+-- instant" but "have I banked enough food to spare an hour for the loom?".
+-- FOOD here is perishable (30%/tick) and a single hand-harvest (~4.95) barely
+-- covers one firm's share of the 24-food/tick economy demand, so most firms
+-- are at subsistence and have NO surplus to divert -- which is the honest
+-- reason cloth stays scarce until agronomy (4.95 -> 8.75) and extra fields
+-- create real headroom. The loom runs at priority 23 only when food_stock
+-- clears the SURPLUS floor, so the hour genuinely comes from headroom rather
+-- than out of someone's mouth; otherwise every hour goes to food. Each firm
+-- watches its OWN stock (which drifts apart across firms as their fields,
+-- builds and sales differ), so the reallocation de-synchronises instead of
+-- stampeding, and no firm drives its own food to zero.
+local FOOD_BUFFER = 12      -- food banked above this (a real surplus, ~2+ harvests) = the firm can spare an hour for the loom
+local CLOTHES_CAP = 6       -- don't pile cloth beyond this
+local food_stock = holding_qty("FOOD")
+local clothes_stock = holding_qty("CLOTHES")
+-- The loom also yields while a RESEARCH process runs or a BUILD is underway:
+-- both are committed investment that claim labour first, and a higher-priority
+-- loom (23) would eat the labour before the research conversion (24, same as
+-- the fields) can fund its per-tick draw -- so research would starve. The
+-- firm parks cloth for the few ticks R&D or construction takes, the realistic
+-- diversion of current production by investment. (The conversion stays at 24,
+-- not earlier, on purpose: at a higher priority it would succeed at step 7 on
+-- leftover labour and its LABOR-FARM would leak to the fields' harvests before
+-- the 7c draw -- the skip-one-harvest logic only holds when conversions and
+-- harvests resolve together at 7b.)
+if food_stock >= FOOD_BUFFER and clothes_stock < CLOTHES_CAP
+   and not building and not researching then
+  ctx.action.start_process("MAKE_CLOTHES", nil, 23)
 end
-if labor - reserved >= 2 then
-  ctx.action.start_process("MAKE_CLOTHES", nil, 26)
+-- Tools are capital forged only from genuine food surplus (same SURPLUS
+-- floor as the loom): the hour must come from headroom, not out of the field
+-- that feeds someone. They run last, after farming.
+if holding_qty("TOOLS") < 3 and food_stock >= FOOD_BUFFER then
+  ctx.action.start_process("CRAFT_TOOLS", nil, 26)
 end
 
 -- Work every dwelling and every plant that is standing and idle. Facility
@@ -312,6 +327,12 @@ end
 -- so an ask that keeps failing to clear is worth conceding on: the bounded
 -- multiplier in concede() lets the firm cut below cost rather than watch the
 -- stock rot, but cannot compound its way to zero.
+-- Sell all of it: FOOD rots 30%/tick, so any stock held back as a "buffer"
+-- is food taken out of mouths and left to decay -- measured, that buffer
+-- starved the population (firms banked ~24 food while hunger sat at 0.44).
+-- Per-tick supply lumpiness from the farm/weave alternation is absorbed by
+-- the market -- firms reach the surplus floor at different times as their
+-- fields and builds differ -- not by hoarding a perishable.
 local food = holding_qty("FOOD")
 if food > 0.01 then
   local unit_cost = market_price("LABOR", 5) / farm_yield * markup
@@ -394,12 +415,6 @@ if holding_qty("TOOLS") < 3 then
   tranches[#tranches + 1] = { qty = LABOR_PER_TOOL, price = tools_price / LABOR_PER_TOOL }
 end
 
--- No separate research-labour tranche. Research is now funded by redirecting
--- one farm conversion's LABOR-FARM to the running process (the skipped
--- harvest above), not by buying a 6-unit lump, so it needs no labour the
--- farm tranches don't already bid for. The firm farms one fewer field while a
--- RESEARCH_AGRONOMY process runs; that is the whole cost.
-
 -- Feed the running build's per-tick draw. Fires every tick a build is
 -- active (running OR just queued), not only the tick it was queued: the
 -- per-tick draw runs at step 7c of EVERY tick the process is alive, and a
@@ -409,6 +424,12 @@ end
 -- (above) keeps a conversion from reclaiming it before the draw runs. Valued
 -- at a farm hour -- the same conservative floor the research push uses.
 if building then
+  tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price }
+end
+-- Same for a running RESEARCH process: buy one raw LABOR to cover its 1/tick
+-- draw. The farm-loop skip keeps a field's conversion from reclaiming it
+-- before the 7c draw; the tranche makes sure the labour is actually bought.
+if researching then
   tranches[#tranches + 1] = { qty = 1, price = farm_yield * food_price }
 end
 
