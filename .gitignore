@@ -9,3 +9,4 @@ econ.db
 .venv/
 experiments/inequality/dashboard.html
 experiments/inequality/comparison.html
+experiments/inequality/class_tax.html

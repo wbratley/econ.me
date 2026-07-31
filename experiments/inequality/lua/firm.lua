@@ -18,6 +18,15 @@ local fills = settle_last_orders()
 
 local account = ctx.accounts[1]
 local balance = tonumber(account.balance)
+
+-- Firm-withheld income taxes (see ScenarioConfig). The firm is the
+-- withholding agent: it remits from its own account, so the ownership
+-- invariant holds and these tax income FLOWS, not cash balances.
+local payroll_rate = tonumber(ctx.state.payroll_tax_rate) or 0
+local capital_rate = tonumber(ctx.state.capital_tax_rate) or 0
+if payroll_rate < 0 then payroll_rate = 0 end
+if capital_rate < 0 or capital_rate >= 1 then capital_rate = 0 end
+local treasury_acct = ctx.state.treasury_account_id
 local field_id = farm_parcel()
 local unlocked_agronomy = has_unlock("AGRONOMY")
 
@@ -305,15 +314,31 @@ if share_sym and share_sym ~= "" then
       for _, h in ipairs(register) do total_shares = total_shares + tonumber(h.quantity) end
       if total_shares > 0 then
         for _, h in ipairs(register) do
-          local amount = distributable * tonumber(h.quantity) / total_shares
-          if amount >= 0.0001 and h.account_id then
-            ctx.action.transfer(account.id, h.account_id,
-                                 string.format("%.4f", amount), "dividend", 3)
+          local gross = distributable * tonumber(h.quantity) / total_shares
+          if gross >= 0.0001 and h.account_id then
+            -- Withhold capital-income tax at source: the shareholder gets
+            -- the net, the Treasury gets the withholding -- exactly how real
+            -- dividend withholding tax works.
+            local net = gross
+            if capital_rate > 0 and treasury_acct then
+              local tax = gross * capital_rate
+              net = gross - tax
+              if tax >= 0.0001 then
+                ctx.action.transfer(account.id, treasury_acct,
+                                     string.format("%.4f", tax), "capital-tax", 3)
+              end
+            end
+            if net >= 0.0001 then
+              ctx.action.transfer(account.id, h.account_id,
+                                   string.format("%.4f", net), "dividend", 3)
+            end
           end
         end
-        -- Spend against what is left after the payout. `balance` was read at
-        -- the start of the tick, and the dividend transfers resolve (priority
-        -- 3) well before the auction settles this tick's labour orders.
+        -- Spend against what is left after the payout. The gross
+        -- distributable leaves the firm (net dividends + the capital-tax
+        -- leg sum to it), and `balance` was read at the start of the tick;
+        -- these transfers resolve (priority 3) well before the auction
+        -- settles this tick's labour orders.
         balance = balance - distributable
       end
     end
@@ -438,7 +463,8 @@ table.sort(tranches, function(a, b) return a.price > b.price end)
 -- The margin is withheld here rather than inside each tranche so it applies
 -- to every use of labor by construction, and so a tranche added later cannot
 -- quietly opt out of it.
-local spend_left = balance
+local spend_left = balance / (1 + payroll_rate)
+local labor_committed = 0
 for _, t in ipairs(tranches) do
   local price = t.price * bid_factor * (1 - margin)
   if price >= 0.01 then
@@ -447,6 +473,21 @@ for _, t in ipairs(tranches) do
       ctx.action.place_order("LABOR", "buy", amount_str(qty), amount_str(price),
                               account.id, 45)
       spend_left = spend_left - qty * price
+      labor_committed = labor_committed + qty * price
     end
+  end
+end
+-- Remit employer payroll tax on the wages just committed. Reserving
+-- balance/(1+rate) for the wage budget above guarantees wages + this tax
+-- fit within the balance, because the transfer (priority 4) resolves before
+-- the auction settles the labour orders against the same cash. The tax is
+-- assessed on the COMMITTED (bid) wage bill -- a slight over-statement when
+-- the auction clears below the bid, the same conservatism as a firm
+-- budgeting employer NIC against gross pay.
+if payroll_rate > 0 and labor_committed > 0.01 and treasury_acct then
+  local tax = labor_committed * payroll_rate
+  if tax >= 0.01 then
+    ctx.action.transfer(account.id, treasury_acct,
+                         string.format("%.4f", tax), "payroll-tax", 4)
   end
 end

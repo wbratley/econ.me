@@ -199,7 +199,7 @@ def _capital(session: Session, scenario: Scenario, tick_number: int) -> dict[str
         if firm and firm.accounts:
             balances.append(float(firm.accounts[0].balance))
 
-    dividends = 0.0
+    dividends = payroll_tax = capital_tax = ubi_paid = 0.0
     tick = session.execute(
         select(Tick).where(Tick.number == tick_number)
     ).scalar_one_or_none()
@@ -207,8 +207,16 @@ def _capital(session: Session, scenario: Scenario, tick_number: int) -> dict[str
         if event.get("type") != "transfer" or event.get("status") != "applied":
             continue
         params = event.get("params") or {}
-        if params.get("reference") == "dividend":
-            dividends += float(params.get("amount", 0))
+        ref = params.get("reference")
+        amt = float(params.get("amount", 0))
+        if ref == "dividend":
+            dividends += amt
+        elif ref == "payroll-tax":
+            payroll_tax += amt
+        elif ref == "capital-tax":
+            capital_tax += amt
+        elif ref == "ubi":
+            ubi_paid += amt
 
     return {
         "firm_cash_total": sum(balances),
@@ -216,6 +224,11 @@ def _capital(session: Session, scenario: Scenario, tick_number: int) -> dict[str
         "firm_cash_max": max(balances) if balances else 0.0,
         "firms_solvent": sum(1 for b in balances if b > 1.0),
         "dividends_paid": dividends,
+        # Firm-withheld income taxes and the UBI they fund (treasury.lua),
+        # read off the tick's applied transfer events, like dividends.
+        "payroll_tax_collected": payroll_tax,
+        "capital_tax_collected": capital_tax,
+        "ubi_paid": ubi_paid,
     }
 
 
