@@ -20,9 +20,9 @@ This is the platform's rule layer for actor authorisation
   so a capability denial is a clean rejection at the boundary — the same
   place ownership is enforced — rather than a buried exception.
 
-Capabilities not yet wired to an action (set_fiscal_policy, seize)
+Capabilities not yet wired to an action (seize)
 are declared here as constants and listed for documentation, but absent
-from `INTENT_CAPABILITIES` until the action exists (step 3+). Declaring
+from `INTENT_CAPABILITIES` until the action exists (step 4+). Declaring
 them now keeps the vocabulary stable across the build.
 """
 
@@ -39,7 +39,8 @@ MONETARY_AUTHORITY = "monetary_authority"
 LEVY = "levy"
 
 #: Change fiscal policy parameters (tax rates, UBI schedules) stored as
-#: `WorldSetting` rows. Wired in step 3 (government as policy actor).
+#: the `fiscal_policy` WorldSetting. Wired via `services.set_fiscal_policy`
+#: and the `set_fiscal_policy` intent (step 3 — government as policy actor).
 SET_FISCAL_POLICY = "set_fiscal_policy"
 
 #: Expropriate assets outright (seizure). Future; shares the levy
@@ -70,7 +71,8 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "issue_money": MONETARY_AUTHORITY,
     "retire_money": MONETARY_AUTHORITY,
     "levy": LEVY,                         # step 2 — compel a transfer under a declared rule
-    # "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3
+    "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3 — set the votable fiscal-policy dict
+    # "seize": SEIZE,                        # future — expropriate goods/parcels
 }
 
 

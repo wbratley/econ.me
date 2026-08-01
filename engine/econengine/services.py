@@ -3,10 +3,11 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, MONETARY_AUTHORITY
+from .capabilities import LEVY, MONETARY_AUTHORITY, SET_FISCAL_POLICY
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.transaction import Transaction, TransactionType
+from .models import WorldSetting
 
 
 class InsufficientFundsError(ValueError):
@@ -263,6 +264,53 @@ def levy(
     session.flush()
     scripting.fire_hooks(session, {**op, "transaction_ids": [debit.id, credit.id]})
     return debit, credit
+
+
+def set_fiscal_policy(
+    session: Session,
+    authority: Entity,
+    policy: dict,
+    reference: str = "",
+) -> WorldSetting:
+    """Replace the government's fiscal-policy dict (docs/actors.md step 3,
+    Fork 4B). The *data* half of the mechanism/data/policy split: this is
+    the votable surface citizens (or a legislature) change without touching
+    code; a government POLICY script reads the result via
+    ``ctx.query.fiscal_policy()`` and turns it into ``levy`` calls.
+
+    All the safety is in the gating, not the storage:
+
+    - ``authority`` must hold the ``set_fiscal_policy`` capability, checked
+      here as defense in depth (and earlier by ``resolve_intent`` at the
+      capability gate). This replaces admin god-mode for fiscal policy —
+      the power is held by the role, not by a superuser.
+    - a VALIDATOR may veto the change (fail-closed). Because the op carries
+      the proposed ``policy`` dict, a validator becomes a *constitutional
+      constraint*: it can cap a rate, forbid a schedule, or block any
+      change at all. A broken policy gate never silently changes policy.
+    - ``policy`` is replaced wholesale (not merged) so a change is atomic
+      and auditable — readers never see a half-updated schedule.
+
+    The engine stays deliberately dumb about *what* the dict contains —
+    rates, bands, UBI schedules are the POLICY script's concern. Storing
+    arbitrary votable data is the point.
+    """
+    from . import fiscal
+
+    if not authority.has_capability(SET_FISCAL_POLICY):
+        raise MissingCapabilityError(authority.id, SET_FISCAL_POLICY)
+    if not isinstance(policy, dict):
+        raise ValueError("fiscal policy must be a JSON object")
+    op = {
+        "type": "set_fiscal_policy",
+        "entity_id": authority.id,
+        "policy": policy,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+    setting = fiscal.set_fiscal_policy(session, policy)
+    scripting.fire_hooks(session, {**op, "setting_key": setting.key})
+    return setting
 
 
 def issue_money(

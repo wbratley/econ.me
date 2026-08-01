@@ -222,3 +222,44 @@ def test_levy_intent_rejected_without_capability(client):
     citizen_bal = client.get(f"/entities/{citizen['id']}",
                              headers=_auth("u-alice")).json()["accounts"][0]["balance"]
     assert citizen_bal == "1000.0000"
+
+
+def test_set_fiscal_policy_intent_sets_votable_rate(client):
+    """The HTTP path for enacting fiscal policy: a set_fiscal_policy-
+    capable government (owned by admin) replaces the votable policy dict.
+    Capability gates at the boundary; this is Fork 4B — the power to set
+    policy is held by the role, not by a superuser."""
+    r = client.post("/admin/entities",
+                    json={"name": "Treasury", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    gov = r.json()
+    r = client.patch(f"/admin/entities/{gov['id']}",
+                     json={"capabilities": ["set_fiscal_policy"]},
+                     headers=_auth("u-admin"))
+    assert r.status_code == 200
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "set_fiscal_policy",
+         "params": {"policy": '{"rate": "0.10", "rule": "income"}'}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "applied", result
+
+
+def test_set_fiscal_policy_intent_rejected_without_capability(client):
+    """A government with no set_fiscal_policy capability cannot enact
+    policy through the API."""
+    r = client.post("/admin/entities",
+                    json={"name": "WeakGov", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    gov = r.json()  # no capabilities
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "set_fiscal_policy",
+         "params": {"policy": '{"rate": "0.10"}'}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "rejected"
+    assert "set_fiscal_policy" in result["reason"]

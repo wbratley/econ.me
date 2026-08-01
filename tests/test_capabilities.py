@@ -83,12 +83,13 @@ def test_registry_gates_only_privileged_intents():
     assert capabilities.required_for("issue_money") == capabilities.MONETARY_AUTHORITY
     assert capabilities.required_for("retire_money") == capabilities.MONETARY_AUTHORITY
     assert capabilities.required_for("levy") == capabilities.LEVY
+    assert capabilities.required_for("set_fiscal_policy") == capabilities.SET_FISCAL_POLICY
     # ordinary self-directed action requires no capability — only ownership
     assert capabilities.required_for("transfer") is None
     assert capabilities.required_for("place_order") is None
     assert capabilities.required_for("start_process") is None
     # not-yet-built actions are declared but not wired
-    assert "set_fiscal_policy" not in capabilities.INTENT_CAPABILITIES
+    assert "seize" not in capabilities.INTENT_CAPABILITIES
 
 
 # --- resolve_intent capability gate ---
