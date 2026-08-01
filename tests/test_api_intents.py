@@ -158,3 +158,67 @@ def test_batch_isolates_a_failing_intent_from_the_rest(client):
     r = client.get(f"/entities/{bob['id']}/accounts/{b['id']}/transactions",
                     headers=_auth("u-alice"))
     assert [t["amount"] for t in r.json()] == ["10.0000"]
+
+
+def test_levy_intent_seizes_through_the_api(client):
+    """The full HTTP path for enforced collection: a levy-capable
+    government (owned by admin) compels money out of a citizen's account
+    it does not own, into its treasury. Capability gates at the boundary;
+    ownership of the source is bypassed by privilege + rule_ref."""
+    # a citizen with a funded account (owned by alice)
+    citizen = _make_entity(client, "u-alice", "Citizen")
+    ca = _make_account(client, "u-alice", citizen["id"], initial_balance="1000")
+
+    # a government entity owned by admin, granted the levy capability
+    r = client.post("/admin/entities",
+                    json={"name": "Treasury", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    assert r.status_code == 201, r.text
+    gov = r.json()
+    r = client.patch(f"/admin/entities/{gov['id']}",
+                     json={"capabilities": ["levy"]}, headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    ga = _make_account(client, "u-admin", gov["id"], initial_balance="0")
+
+    # admin drives the government to levy the citizen
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "levy",
+         "params": {"from_account_id": ca["id"], "to_account_id": ga["id"],
+                    "amount": "300", "rule_ref": "tax:income", "reference": "Q1"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    result = r.json()[0]
+    assert result["status"] == "applied", result
+
+    citizen_bal = client.get(f"/entities/{citizen['id']}",
+                             headers=_auth("u-alice")).json()["accounts"][0]["balance"]
+    gov_bal = client.get(f"/entities/{gov['id']}",
+                         headers=_auth("u-admin")).json()["accounts"][0]["balance"]
+    assert citizen_bal == "700.0000"   # seized
+    assert gov_bal == "300.0000"        # collected
+
+
+def test_levy_intent_rejected_without_capability(client):
+    """A government with no levy capability cannot seize through the API."""
+    citizen = _make_entity(client, "u-alice", "Citizen")
+    ca = _make_account(client, "u-alice", citizen["id"], initial_balance="1000")
+    r = client.post("/admin/entities",
+                    json={"name": "WeakGov", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    gov = r.json()  # no capabilities granted
+    ga = _make_account(client, "u-admin", gov["id"], initial_balance="0")
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "levy",
+         "params": {"from_account_id": ca["id"], "to_account_id": ga["id"],
+                    "amount": "300", "rule_ref": "tax:income"}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "rejected"
+    assert "levy" in result["reason"]
+    # citizen untouched
+    citizen_bal = client.get(f"/entities/{citizen['id']}",
+                             headers=_auth("u-alice")).json()["accounts"][0]["balance"]
+    assert citizen_bal == "1000.0000"

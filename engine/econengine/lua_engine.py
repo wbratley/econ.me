@@ -330,9 +330,25 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _levy(from_id, to_id, amount, rule_ref, priority=100):
+        # The privileged transfer: money leaves `from_id` (an account the
+        # entity does NOT own) and enters the entity's own `to_id`, under a
+        # declared `rule_ref`. resolve_intent gates this on the `levy`
+        # capability; a VALIDATOR may veto it (e.g. amount over schedule).
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="levy",
+            params={"from_account_id": str(from_id), "to_account_id": str(to_id),
+                    "amount": str(amount), "rule_ref": str(rule_ref),
+                    "reference": ""},
+            resource_ids=[str(from_id), str(to_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
+    action_tbl["levy"]        = _levy
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process

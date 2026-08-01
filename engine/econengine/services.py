@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import MONETARY_AUTHORITY
+from .capabilities import LEVY, MONETARY_AUTHORITY
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.transaction import Transaction, TransactionType
@@ -17,7 +17,28 @@ class CurrencyMismatchError(ValueError):
     pass
 
 
+class MissingCapabilityError(ValueError):
+    """A privileged action was attempted by an entity that lacks the
+    required capability.
+
+    Defense in depth: `scripting.resolve_intent` rejects the same cases
+    earlier, at the capability gate, so this only fires for direct
+    in-process callers of the service layer (tests, the tick engine,
+    future policy scripts). Subclasses ``ValueError`` so the intent
+    resolver's broad ``except ValueError`` reports it cleanly.
+    """
+
+    def __init__(self, entity_id: str, capability: str):
+        self.entity_id = entity_id
+        self.capability = capability
+        super().__init__(f"entity {entity_id!r} lacks capability {capability!r}")
+
+
 class NotMonetaryAuthorityError(ValueError):
+    # Predates the generic MissingCapabilityError; left as its own class so
+    # existing callers/tests keep catching it by name. New privileged
+    # actions (levy, and later seize/set_fiscal_policy) raise
+    # MissingCapabilityError directly.
     pass
 
 
@@ -122,6 +143,99 @@ def transfer(
         "amount": str(amount),
         "currency": from_account.currency,
         "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+    ts = date or datetime.now(timezone.utc)
+    debit = Transaction(
+        account=from_account,
+        date=ts,
+        amount=amount,
+        tx_type=TransactionType.DEBIT,
+        from_account_id=from_account.id,
+        to_account_id=to_account.id,
+        reference=reference,
+    )
+    credit = Transaction(
+        account=to_account,
+        date=ts,
+        amount=amount,
+        tx_type=TransactionType.CREDIT,
+        from_account_id=from_account.id,
+        to_account_id=to_account.id,
+        reference=reference,
+    )
+    from_account.balance -= amount
+    to_account.balance += amount
+    session.add_all([debit, credit])
+    session.flush()
+    scripting.fire_hooks(session, {**op, "transaction_ids": [debit.id, credit.id]})
+    return debit, credit
+
+
+def levy(
+    session: Session,
+    authority: Entity,
+    from_account: Account,
+    to_account: Account,
+    amount: Decimal,
+    rule_ref: str,
+    reference: str = "",
+    date: datetime | None = None,
+) -> tuple[Transaction, Transaction]:
+    """Compel a money transfer out of an account the authority does not own.
+
+    The privilege layer above ownership (docs/actors.md Fork 1C). Where
+    ``transfer`` requires the source account to be the actor's own, a levy
+    moves the taxpayer's money *by engine authority* — generalising the
+    estate rule (``conditions._apply_estate``), which moves a dead
+    entity's assets by the same authority, from death to enacted policy.
+
+    All the safety lives in the gating, not the movement:
+
+    - ``authority`` must hold the ``levy`` capability (checked here as
+      defense in depth, and earlier by ``resolve_intent`` at the
+      capability gate, the same boundary that enforces ownership).
+    - ``to_account`` must belong to the authority — the state collects
+      into its own treasury. An authority may levy *from* others but only
+      *into* its own accounts; redirecting between two third parties is
+      not levy, it is seizure under a different rule.
+    - ``rule_ref`` identifies the votable rule under which the levy is
+      taken (a ``WorldSetting`` key or policy name). It rides ``ctx.op``
+      so a VALIDATOR can veto an illegal levy — e.g. that the amount
+      exceeds what the schedule permits. Validators are fail-closed, so a
+      broken policy gate never silently seizes.
+
+    Movement is money-conserving (a DEBIT/CREDIT pair, like ``transfer``);
+    the levy-ness is carried by op-type and ``rule_ref``, not a new
+    transaction flavour. Unlike the estate sweep this records transactions
+    and fires validators, because a levy is a discrete act by a capable
+    actor under a declared rule, not a bulk deterministic sweep.
+    """
+    if not authority.has_capability(LEVY):
+        raise MissingCapabilityError(authority.id, LEVY)
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    if to_account.entity_id != authority.id:
+        # the authority may only levy INTO its own account
+        raise ValueError("authority does not own recipient account")
+    if from_account.currency != to_account.currency:
+        raise CurrencyMismatchError(
+            f"cannot levy between {from_account.currency} and {to_account.currency}"
+        )
+    if from_account.balance < amount:
+        raise InsufficientFundsError(
+            f"account {from_account.id} has {from_account.balance} "
+            f"{from_account.currency}, levy requires {amount}"
+        )
+    op = {
+        "type": "levy",
+        "entity_id": authority.id,
+        "from_account_id": from_account.id,
+        "to_account_id": to_account.id,
+        "amount": str(amount),
+        "currency": from_account.currency,
+        "reference": reference,
+        "rule_ref": rule_ref,
     }
     scripting.fire_validators(session, op)
     ts = date or datetime.now(timezone.utc)

@@ -79,15 +79,16 @@ def test_legacy_monetary_flag_implies_capability(world):
 # --- registry ---
 
 def test_registry_gates_only_privileged_intents():
-    # privileged: money creation
+    # privileged: money creation and compelled transfer (levy)
     assert capabilities.required_for("issue_money") == capabilities.MONETARY_AUTHORITY
     assert capabilities.required_for("retire_money") == capabilities.MONETARY_AUTHORITY
+    assert capabilities.required_for("levy") == capabilities.LEVY
     # ordinary self-directed action requires no capability — only ownership
     assert capabilities.required_for("transfer") is None
     assert capabilities.required_for("place_order") is None
     assert capabilities.required_for("start_process") is None
     # not-yet-built actions are declared but not wired
-    assert "levy" not in capabilities.INTENT_CAPABILITIES
+    assert "set_fiscal_policy" not in capabilities.INTENT_CAPABILITIES
 
 
 # --- resolve_intent capability gate ---
