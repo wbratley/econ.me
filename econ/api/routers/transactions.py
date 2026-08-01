@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from econengine import services
+from econengine.capabilities import MONETARY_AUTHORITY
 from econ.api.deps import get_current_user, get_session
 from econ.api.schemas import DepositRequest, IssueRequest, RetireRequest, TransactionRead, TransferRequest, WithdrawRequest
 from econengine.models import Account, User
@@ -23,7 +24,7 @@ def _ma_account(account_id: str, user: User, session: Session) -> Account:
     account = session.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    if not account.entity.is_monetary_authority:
+    if not account.entity.has_capability(MONETARY_AUTHORITY):
         raise HTTPException(status_code=403, detail="Account does not belong to a monetary authority")
     if not user.is_admin and account.entity.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")

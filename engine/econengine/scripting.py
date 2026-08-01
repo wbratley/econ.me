@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
+from . import capabilities as _capabilities
 from .models import Account, Entity, Holding, Script, ScriptType
 
 
@@ -101,6 +102,7 @@ def _op_ctx(session: Session, script: Script, op: dict) -> dict:
             "name": entity.name,
             "entity_type": entity.entity_type.value,
             "is_monetary_authority": entity.is_monetary_authority,
+            "capabilities": list(entity.capabilities or []),
         } if entity else {},
         "accounts": [
             {"id": a.id, "currency": a.currency, "balance": str(a.balance)}
@@ -226,6 +228,18 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
 
     reference = intent.params.get("reference", "")
     extra: dict = {}
+
+    # Capability gate — the same boundary that enforces ownership also
+    # enforces privilege. An intent type listed in INTENT_CAPABILITIES may
+    # only be queued by an entity holding that capability; without it the
+    # intent is rejected before any service is touched. Ordinary
+    # self-directed action (trade, produce, move your own money) is listed
+    # nowhere and requires only ownership, which each branch checks below.
+    required_cap = _capabilities.required_for(intent.intent_type)
+    if required_cap is not None:
+        entity = session.get(Entity, intent.entity_id)
+        if entity is None or not entity.has_capability(required_cap):
+            return rejected(f"missing capability {required_cap!r}")
 
     try:
         if intent.intent_type == "transfer":
