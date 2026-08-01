@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from . import scripting
+from .capabilities import MONETARY_AUTHORITY
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.transaction import Transaction, TransactionType
@@ -157,7 +158,7 @@ def issue_money(
     reference: str,
     date: datetime | None = None,
 ) -> Transaction:
-    if not account.entity.is_monetary_authority:
+    if not account.entity.has_capability(MONETARY_AUTHORITY):
         raise NotMonetaryAuthorityError(
             f"entity {account.entity_id} is not a monetary authority"
         )
@@ -187,7 +188,7 @@ def retire_money(
     reference: str,
     date: datetime | None = None,
 ) -> Transaction:
-    if not account.entity.is_monetary_authority:
+    if not account.entity.has_capability(MONETARY_AUTHORITY):
         raise NotMonetaryAuthorityError(
             f"entity {account.entity_id} is not a monetary authority"
         )

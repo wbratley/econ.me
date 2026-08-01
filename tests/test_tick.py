@@ -78,7 +78,8 @@ def test_non_authority_issue_rejected(world):
 
     assert a.balance == Decimal("1000")
     assert tick.events[0]["status"] == "rejected"
-    assert "monetary authority" in tick.events[0]["reason"]
+    # rejected by the capability gate before the service layer is touched
+    assert "monetary_authority" in tick.events[0]["reason"]
 
 
 def test_cannot_transfer_from_unowned_account(world):

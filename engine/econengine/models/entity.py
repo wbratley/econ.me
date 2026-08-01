@@ -1,8 +1,9 @@
 import uuid
 import enum
-from sqlalchemy import Boolean, Integer, String, Enum as SAEnum, ForeignKey
+from sqlalchemy import Boolean, Integer, String, Enum as SAEnum, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
+from .. import capabilities as _capabilities
 
 
 class EntityType(enum.Enum):
@@ -29,6 +30,12 @@ class Entity(Base):
     entity_type: Mapped[EntityType] = mapped_column(SAEnum(EntityType), nullable=False)
     owner_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     is_monetary_authority: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Privilege set for non-self-directed action (tax, seizure, policy).
+    # See `docs/actors.md` Fork 2 and `engine/econengine/capabilities.py`.
+    # The legacy `is_monetary_authority` flag implies the monetary
+    # capability, so nothing already created loses access; new privileged
+    # actions are granted via this column directly.
+    capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[EntityStatus] = mapped_column(
         SAEnum(EntityStatus), nullable=False, default=EntityStatus.ACTIVE
     )
@@ -39,6 +46,19 @@ class Entity(Base):
 
     accounts: Mapped[list["Account"]] = relationship("Account", back_populates="entity")
     owner: Mapped["User | None"] = relationship("User", back_populates="entities")
+
+    def has_capability(self, name: str) -> bool:
+        """True if this entity holds capability `name`.
+
+        The single check site for actor privileges. `is_monetary_authority`
+        is treated as a legacy alias for the monetary capability so existing
+        worlds keep working; everything else reads the `capabilities` set.
+        """
+        if name in (self.capabilities or []):
+            return True
+        if name == _capabilities.MONETARY_AUTHORITY and self.is_monetary_authority:
+            return True
+        return False
 
     def __repr__(self) -> str:
         return f"<Entity id={self.id} name={self.name!r} type={self.entity_type.value}>"
