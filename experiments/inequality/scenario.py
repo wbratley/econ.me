@@ -100,6 +100,19 @@ class ScenarioConfig:
     tax_rate: Decimal = Decimal("0")
     tax_threshold: Decimal = Decimal("0")
     estate_rule: str = "burn"  # burn | treasury | heir
+
+    # Firm-withheld income taxes -- the realistic fiscal channel. The firm is
+    # the withholding agent (it remits from its OWN account, so the ownership
+    # invariant holds), which taxes income FLOWS rather than cash balances:
+    #   payroll_tax_rate -- employer-side tax on the firm's labour spend. The
+    #     working class bears it via a lower equilibrium wage.
+    #   capital_tax_rate -- withheld from each dividend payout, the ownership
+    #     class's capital income.
+    # The DIFFERENCE between the two is the experiment's central knob: flat,
+    # progressive (capital taxed more), or regressive-on-capital (capital
+    # taxed less -- the real-world case where owners pull ahead).
+    payroll_tax_rate: Decimal = Decimal("0")
+    capital_tax_rate: Decimal = Decimal("0")
     redistribution_period: int = 5
     smallholder_fraction: float = 0.15
     # Bare parcels each firm holds on top of its working farm. This is the
@@ -182,7 +195,12 @@ class ScenarioConfig:
     # concentration is simply absent. "none" is the default so every existing
     # result reproduces unchanged -- allocation must make no uuid4 draws when
     # off, since the ID stream seeds the outcome rolls (see determinism.py).
-    share_allocation: str = "none"          # none | wealth | equal
+    share_allocation: str = "none"          # none | wealth | equal | class
+    # Fraction of the population that forms the OWNERSHIP class under
+    # share_allocation="class": the richest `owner_fraction` own all firms
+    # outright, the rest are workers. Ranked by wealth (endowments carry
+    # noise, so an exact-tier match would pick one person).
+    owner_fraction: float = 0.20
     shares_per_firm: Decimal = Decimal("100")
     # Firms may only ever distribute cash ABOVE their genesis endowment, i.e.
     # real accumulated profit and never working capital. This is not a
@@ -720,15 +738,33 @@ def _allocate_shares(
     """
     if config.share_allocation == "none":
         return {}
-    if config.share_allocation not in ("wealth", "equal"):
+    if config.share_allocation not in ("wealth", "equal", "class"):
         raise ValueError(f"unknown share_allocation {config.share_allocation!r}")
 
     if config.share_allocation == "wealth":
+        # Capital ownership to whoever already has money: dividends amplify
+        # the starting distribution.
         weights = {eid: float(starting_balance.get(eid, 0)) for eid in individual_ids}
         if sum(weights.values()) <= 0:
             raise ValueError("wealth allocation needs positive starting balances")
-    else:
+    elif config.share_allocation == "equal":
+        # Everyone owns the same slice.
         weights = {eid: 1.0 for eid in individual_ids}
+    else:  # "class" -- a sharp two-class split
+        # The ownership class = the richest `owner_fraction` of the
+        # population; everyone else is a worker who owns nothing and lives on
+        # wages. Ranked by starting wealth rather than tier-thresholded,
+        # because endowments carry multiplicative noise so an exact-tier match
+        # would select a single person. Shares split equally among owners, so
+        # the capitalist class holds the firms in common rather than in
+        # proportion to who arrived richest. This makes the classes literal
+        # and measurable: shareholders = owners, non-shareholders = workers.
+        ranked = sorted(individual_ids,
+                        key=lambda e: starting_balance.get(e, Decimal("0")),
+                        reverse=True)
+        n_owners = max(1, round(config.n_individuals * config.owner_fraction))
+        owners = set(ranked[:n_owners])
+        weights = {eid: (1.0 if eid in owners else 0.0) for eid in individual_ids}
 
     total_weight = sum(weights.values())
     held: dict[str, Decimal] = {eid: Decimal("0") for eid in individual_ids}
@@ -831,6 +867,13 @@ def _wire_scripts(
                 "dividend_period": config.dividend_period,
                 "dividend_payout": str(config.dividend_payout),
                 "dividend_timer": 0,
+                # Firm-withheld income taxes (see ScenarioConfig). The firm is
+                # the withholding agent: it remits payroll tax on its labour
+                # spend and withholds capital tax from each dividend, both
+                # from its own account (ownership invariant respected).
+                "payroll_tax_rate": str(config.payroll_tax_rate),
+                "capital_tax_rate": str(config.capital_tax_rate),
+                "treasury_account_id": treasury_account.id,
                 # Firms bid labor at its marginal revenue product (firm.lua),
                 # which every firm computes identically -- so without a little
                 # idiosyncrasy they all quote the same number and the auction
