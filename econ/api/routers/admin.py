@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from econengine import conditions, services, tick
+from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, EntityRead,
@@ -46,6 +47,11 @@ def update_entity(
         entity.entity_type = body.entity_type
     if body.is_monetary_authority is not None:
         entity.is_monetary_authority = body.is_monetary_authority
+    if body.capabilities is not None:
+        unknown = [c for c in body.capabilities if c not in ALL_CAPABILITIES]
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"unknown capability: {unknown}")
+        entity.capabilities = list(body.capabilities)
     if "heir_id" in body.model_fields_set:
         if body.heir_id is not None:
             if body.heir_id == entity.id:

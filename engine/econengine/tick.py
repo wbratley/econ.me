@@ -234,6 +234,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             "name": entity.name,
             "entity_type": entity.entity_type.value,
             "is_monetary_authority": entity.is_monetary_authority,
+            "capabilities": list(entity.capabilities or []),
         },
         "accounts": [
             {"id": a.id, "currency": a.currency, "balance": str(a.balance)}

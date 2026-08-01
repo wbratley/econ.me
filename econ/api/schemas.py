@@ -29,6 +29,7 @@ class EntityUpdate(BaseModel):
     name: Optional[str] = None
     entity_type: Optional[EntityType] = None
     is_monetary_authority: Optional[bool] = None
+    capabilities: Optional[list[str]] = None
     heir_id: Optional[str] = None  # explicit null clears it
 
 
@@ -51,6 +52,7 @@ class EntityRead(BaseModel):
     entity_type: EntityType
     owner_id: Optional[str] = None
     is_monetary_authority: bool = False
+    capabilities: list[str] = []
     status: EntityStatus = EntityStatus.ACTIVE
     incapacitated_tick: Optional[int] = None
     heir_id: Optional[str] = None
