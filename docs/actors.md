@@ -37,20 +37,26 @@ build plan for the platform-era controls on top of it.
 The last row is the key. The engine already moves assets against an owner's
 will — it just only does it for *death* today.
 
-## The one genuinely missing engine primitive
+## The engine primitive that was missing, now half-built
 
 **Enforced state action: tax and seizure.** In the inequality experiment
 tax is *voluntary* — `firm.lua` chooses to remit. That is fine while one
 experimenter controls every script; it collapses the moment a
-shareholder-controlled firm simply does not pay. There is no `levy`/
-`withhold` mechanism anywhere in the engine. `design.md` (§military)
-already anticipates this: *"assets move by the owner's intent, or by
+shareholder-controlled firm simply does not pay. `design.md` (§military)
+already anticipated this: *"assets move by the owner's intent, or by
 engine mechanism under explicitly-declared votable rules — estate transfer
 at incapacity, enacted policy (taxes, expropriation), and contest
-outcomes."* Designed, not built.
+outcomes."*
 
-So all three actor classes work *except* the government cannot yet compel
-anything.
+**Tax is now enforced** (step 2): `services.levy` generalises the estate
+rule from death to policy — an entity holding the `levy` capability compels
+a money transfer out of an account it does not own, into its own, under a
+declared `rule_ref`, and a VALIDATOR may veto it (fail-closed). **Seizure**
+(outright expropriation of goods/parcels, not just money) shares the same
+mechanism under a future `seize` capability and is still unbuilt.
+
+So the government can now compel *money*. Compelling goods, and *deciding*
+the rate schedule votably, are steps 3–4.
 
 ## The forks (decisions, with the chosen option marked)
 
@@ -123,7 +129,7 @@ Each step is independently useful and unblocks the next.
    `monetary_authority` capability (backward compatible).*
 2. **Levy mechanism** (Fork 1C) — generalise `_apply_estate` into
    `services.levy`, callable only by an entity holding `levy`. Tax becomes
-   enforceable and stops being a polite request.
+   enforceable and stops being a polite request. *— done (see Status).*
 3. **Government as policy actor** (Fork 4B) — privileged intents to set
    fiscal `WorldSetting`s and fire levies. Replaces admin-god-mode for
    fiscal policy. A POLICY script on the government entity that fires
@@ -154,4 +160,19 @@ mechanism.
   Admin grants capabilities via `PATCH /admin/entities/{id}` (granting
   power is itself privileged). `levy`, `set_fiscal_policy`, `seize` are
   declared but not yet wired to actions.
-- Steps 2–4 — planned, not started.
+- Step 2 — **done**. The levy mechanism landed: `services.levy(authority,
+  from_account, to_account, amount, rule_ref, ...)` generalises
+  `conditions._apply_estate` from death to policy — money moves out of an
+  account the authority does NOT own, into its own treasury, by engine
+  authority. Safety is all in the gating: the `levy` capability is checked
+  at the intent boundary (`INTENT_CAPABILITIES["levy"]`) AND in the
+  service (`MissingCapabilityError`); the recipient account must be the
+  authority's own; a VALIDATOR may veto the op (fail-closed — a broken
+  policy gate never silently seizes); `rule_ref` rides `ctx.op` as the
+  audit key. Reachable from every actor surface: `POST /intents`, the tick
+  loop, and `ctx.action.levy(...)` from scripts (the stub step 3's policy
+  actor drives). Movement is money-conserving (a DEBIT/CREDIT pair, like
+  `transfer`); the levy-ness lives in op-type + `rule_ref`, not a new
+  transaction flavour. `seize` (goods/parcels, not money) remains unbuilt
+  and will share this mechanism under its own capability.
+- Steps 3–4 — planned, not started.

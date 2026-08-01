@@ -252,6 +252,29 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             with session.begin_nested():
                 services.transfer(session, from_account, to_account, amount_of("amount"), reference)
 
+        elif intent.intent_type == "levy":
+            # Privileged transfer: the authority compels money out of an
+            # account it does NOT own, into its own. The capability gate
+            # above already proved `entity` holds LEVY; here we only check
+            # the recipient side — the authority must own `to_account` —
+            # and let services.levy bypass ownership on `from_account`.
+            from_account = session.get(Account, intent.params.get("from_account_id"))
+            to_account = session.get(Account, intent.params.get("to_account_id"))
+            if from_account is None or to_account is None:
+                return rejected("unknown account")
+            if to_account.entity_id != intent.entity_id:
+                return rejected("entity does not own recipient account")
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            with session.begin_nested():
+                services.levy(
+                    session, authority, from_account, to_account,
+                    amount_of("amount"),
+                    intent.params.get("rule_ref", ""),
+                    reference,
+                )
+
         elif intent.intent_type in ("issue_money", "retire_money"):
             account = session.get(Account, intent.params.get("account_id"))
             if account is None:

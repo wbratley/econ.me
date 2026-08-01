@@ -20,9 +20,9 @@ This is the platform's rule layer for actor authorisation
   so a capability denial is a clean rejection at the boundary — the same
   place ownership is enforced — rather than a buried exception.
 
-Capabilities not yet wired to an action (levy, set_fiscal_policy, seize)
+Capabilities not yet wired to an action (set_fiscal_policy, seize)
 are declared here as constants and listed for documentation, but absent
-from `INTENT_CAPABILITIES` until the action exists (steps 2–3). Declaring
+from `INTENT_CAPABILITIES` until the action exists (step 3+). Declaring
 them now keeps the vocabulary stable across the build.
 """
 
@@ -34,8 +34,8 @@ them now keeps the vocabulary stable across the build.
 MONETARY_AUTHORITY = "monetary_authority"
 
 #: Compel a transfer out of an account the entity does not own, under a
-#: declared votable rule (tax collection). Wired in step 2 (the levy
-#: mechanism); generalises `_apply_estate` from death to policy.
+#: declared votable rule (tax collection). Wired via `services.levy` and
+#: the `levy` intent; generalises `_apply_estate` from death to policy.
 LEVY = "levy"
 
 #: Change fiscal policy parameters (tax rates, UBI schedules) stored as
@@ -69,7 +69,7 @@ ALL = frozenset({
 INTENT_CAPABILITIES: dict[str, str] = {
     "issue_money": MONETARY_AUTHORITY,
     "retire_money": MONETARY_AUTHORITY,
-    # "levy": LEVY,                       # step 2
+    "levy": LEVY,                         # step 2 — compel a transfer under a declared rule
     # "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3
 }
 
