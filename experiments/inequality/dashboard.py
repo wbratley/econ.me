@@ -258,19 +258,18 @@ def chart_builds(snaps, ticks, ev):
 
 def chart_wealth_components(snaps, ticks):
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    comps = ["cash", "goods", "land", "shares"]
-    colors = [PALETTE[0], PALETTE[2], PALETTE[1], PALETTE[5]]
-    arrays, labels = [], []
-    for i, c in enumerate(comps):
+    comps = [("cash", PALETTE[0]), ("goods", PALETTE[2]), ("land", PALETTE[1]),
+             ("shares", PALETTE[5]), ("public_capital", "#cf222e")]
+    arrays, labels, colors = [], [], []
+    for c, col in comps:
         vals = _series(snaps, "wealth_components", c)
         if all(v == 0 for v in vals):
             continue
-        arrays.append(vals)
-        labels.append(c)
+        arrays.append(vals); labels.append(c); colors.append(col)
     if arrays:
-        ax.stackplot(ticks, *arrays, labels=labels, colors=colors[: len(arrays)], alpha=0.85)
+        ax.stackplot(ticks, *arrays, labels=labels, colors=colors, alpha=0.85)
     ax.set_xlabel("tick", fontsize=9, color=_MUTED)
-    _style_axes(ax, "Household wealth components (aggregate)")
+    _style_axes(ax, "Household wealth components + public capital (aggregate)")
     _legend(ax, loc="upper left")
     return _to_b64(fig)
 

@@ -287,30 +287,41 @@ def _share_register(session: Session) -> tuple[dict[str, float], dict[tuple[str,
 def _share_unit_values(
     session: Session, scenario: Scenario, prices: dict[str, float | None],
     fields_by_owner: dict[str, int], per_field: float, outstanding: dict[str, float],
-) -> dict[str, float]:
-    """Book value of one share of each SHARE-FIRM-n: the firm's net assets
-    (cash + priced goods + its own fields) over shares outstanding.
+) -> tuple[dict[str, float], float]:
+    """Book value of one share of each SHARE-FIRM-n, plus the equity of firms
+    that have no shareholders.
 
-    Note what this does NOT do: in arms with `share_allocation="none"` no
-    shares exist, so firm net assets belong to nobody and appear in no one's
-    wealth. That is the model being honest -- those firms genuinely have no
-    owners -- but it means total measured household wealth is not comparable
-    between share arms and non-share arms. Compare within, not across.
+    The share value is the firm's net assets (cash + priced goods + its own
+    fields) over shares outstanding. Firms whose shares are unallocated
+    (`share_allocation="none"`) have no owners in the register, so their net
+    assets would otherwise belong to nobody and appear in no household's
+    wealth -- real accumulated value that is silently invisible. To keep total
+    economy wealth comparable across share arms, that unowned equity is
+    returned separately as `public_capital`: the book value the public sector
+    (the Treasury) would hold if these were state firms.
+
+    It is deliberately NOT folded into any individual's `total_wealth`, because
+    nobody owns it; it is surfaced as its own wealth component so the trapped
+    equity is visible rather than dropped. In share arms it is zero -- the same
+    equity is already counted in `shares`. Compare total economy wealth
+    (household + public) across arms; compare household measures within.
     """
     values: dict[str, float] = {}
+    unowned_equity = 0.0
     for index, firm_id in enumerate(scenario.firm_ids):
         symbol = share_symbol(index)
         shares = outstanding.get(symbol, 0.0)
-        if shares <= 0:
-            continue
         firm = session.get(Entity, firm_id)
         if firm is None:
             continue
         cash = float(firm.accounts[0].balance) if firm.accounts else 0.0
-        net_assets = (cash + _holdings_value(session, firm_id, prices)
-                      + fields_by_owner.get(firm_id, 0) * per_field)
-        values[symbol] = max(0.0, net_assets) / shares
-    return values
+        net_assets = max(0.0, cash + _holdings_value(session, firm_id, prices)
+                         + fields_by_owner.get(firm_id, 0) * per_field)
+        if shares <= 0:
+            unowned_equity += net_assets
+            continue
+        values[symbol] = net_assets / shares
+    return values, unowned_equity
 
 
 def _land_use(session: Session) -> dict[str, int]:
@@ -349,7 +360,7 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
     farmland, fields_by_owner = _farmland(session, scenario)
     shares_by_owner, shares_by_owner_symbol, shares_outstanding = _share_register(session)
     per_field = field_value(prices)
-    share_unit_values = _share_unit_values(
+    share_unit_values, public_capital = _share_unit_values(
         session, scenario, prices, fields_by_owner, per_field, shares_outstanding)
     # Priced once per holder here rather than per entity inside the loop below,
     # which would rescan the whole register for each person -- O(entities x
@@ -433,6 +444,11 @@ def snapshot(session: Session, scenario: Scenario, tick_number: int) -> dict:
             "goods": sum(e["net_worth"] - e["cash"] for e in entities),
             "land": sum(e["land_value"] for e in entities),
             "shares": sum(e["shares_value"] for e in entities),
+            # Equity of firms with no shareholders (share_allocation="none"):
+            # real accumulated value trapped inside unowned firms, attributed
+            # to the public sector so it is visible. Zero in share arms, where
+            # the same equity is already counted in `shares` above.
+            "public_capital": public_capital,
         },
         "incapacitated_count": incapacitated,
         "mean_hunger_satisfaction": (
