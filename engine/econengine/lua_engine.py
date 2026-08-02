@@ -345,10 +345,27 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _set_fiscal_policy(policy, priority=100):
+        # Replace the votable fiscal-policy dict. `policy` is a Lua table
+        # (the natural form for a script author); it is converted to a
+        # Python dict and serialised to a JSON string because intent params
+        # are stringly typed. resolve_intent re-checks the
+        # `set_fiscal_policy` capability and fires a VALIDATOR, which can
+        # veto the change as a constitutional constraint on the rate.
+        import json
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="set_fiscal_policy",
+            params={"policy": json.dumps(_lua_to_python(policy))},
+            resource_ids=[],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
     action_tbl["levy"]        = _levy
+    action_tbl["set_fiscal_policy"] = _set_fiscal_policy
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process

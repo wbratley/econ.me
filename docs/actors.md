@@ -55,8 +55,8 @@ declared `rule_ref`, and a VALIDATOR may veto it (fail-closed). **Seizure**
 (outright expropriation of goods/parcels, not just money) shares the same
 mechanism under a future `seize` capability and is still unbuilt.
 
-So the government can now compel *money*. Compelling goods, and *deciding*
-the rate schedule votably, are steps 3–4.
+So the government can now compel *money* and set its own rates votably.
+Compelling goods (seizure) is the remaining unbuilt half of this primitive.
 
 ## The forks (decisions, with the chosen option marked)
 
@@ -135,6 +135,7 @@ Each step is independently useful and unblocks the next.
    fiscal policy. A POLICY script on the government entity that fires
    `levy` each tick per the votable rate schedule makes collection
    automatic *and* enforced *and* votable (mechanism/data/policy split).
+   *— done (see Status).*
 4. **Shareholder voting** (Fork 5C) and the full **vote→enact cycle**
    (Fork 4D), layered on the same machinery.
 
@@ -175,4 +176,25 @@ mechanism.
   `transfer`); the levy-ness lives in op-type + `rule_ref`, not a new
   transaction flavour. `seize` (goods/parcels, not money) remains unbuilt
   and will share this mechanism under its own capability.
-- Steps 3–4 — planned, not started.
+- Step 3 — **done**. The government is a policy actor. The
+  mechanism/data/policy split (`docs/design.md` §2) is now complete for
+  tax: **mechanism** = `services.levy` (step 2); **data** = the
+  `fiscal_policy` `WorldSetting`, a votable JSON dict (`fiscal.get_/set_`);
+  **policy** = a government POLICY script that reads it via
+  `ctx.query.fiscal_policy()` and fires `ctx.action.levy(...)` each tick.
+  The `set_fiscal_policy` intent (capability `set_fiscal_policy`, wired
+  into `INTENT_CAPABILITIES`) replaces admin god-mode for fiscal policy:
+  whoever owns the government enacts the *numbers* (rates, schedules)
+  without touching code — a set_fiscal_policy intent one tick changes
+  collection the next, the script untouched. All the safety is in the
+  gating: the capability, plus a VALIDATOR veto that makes a validator a
+  *constitutional constraint* on the rate (fail-closed — an over-cap
+  rate is refused and the incumbent policy survives). The policy rides as
+  a JSON string in intent params (params are stringly typed) and is
+  replaced wholesale (atomic, auditable). Reachable from every actor
+  surface: `POST /intents`, the tick loop, and
+  `ctx.action.set_fiscal_policy({…})` from scripts.
+- Step 4 — planned, not started: shareholder voting (Fork 5C) and the
+  full proposal→vote→enact cycle (Fork 4D), layered on the same machinery.
+  `seize` (goods/parcels) also remains unbuilt and will share the levy
+  mechanism under its own capability.

@@ -18,6 +18,7 @@ Scoping: a script with entity_id NULL applies to every operation; with
 entity_id set it only fires for operations acted by that entity.
 """
 
+import json
 import threading
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
@@ -197,6 +198,19 @@ def build_queries(session: Session) -> dict:
             for entity_id, quantity in rows
         ]
 
+    def fiscal_policy():
+        """The government's votable fiscal-policy dict (or {} if unset).
+
+        This is the read side a government POLICY script uses to turn
+        enacted rates into levy calls: citizens vote on the *numbers*
+        (set_fiscal_policy), the script reads them here, and the engine
+        mechanism (services.levy) does the moving. Global read — any
+        script may see the published policy, the way real tax schedules
+        are public.
+        """
+        from . import fiscal
+        return fiscal.get_fiscal_policy(session)
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -204,6 +218,7 @@ def build_queries(session: Session) -> dict:
         "holding": holding,
         "has_unlock": has_unlock,
         "holders": holders,
+        "fiscal_policy": fiscal_policy,
     }
 
 
@@ -274,6 +289,26 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                     intent.params.get("rule_ref", ""),
                     reference,
                 )
+
+        elif intent.intent_type == "set_fiscal_policy":
+            # Replace the votable fiscal-policy dict. The capability gate
+            # above already proved `entity` holds SET_FISCAL_POLICY; the
+            # policy rides as a JSON string (intent params are stringly
+            # typed) and is parsed here so the service stays
+            # transport-agnostic (it takes a dict, like levy takes a
+            # Decimal). services.set_fiscal_policy re-checks the capability
+            # and fires a VALIDATOR — a constitutional veto on the rate.
+            try:
+                policy = json.loads(intent.params.get("policy", "") or "{}")
+            except ValueError:
+                return rejected("invalid fiscal policy JSON")
+            if not isinstance(policy, dict):
+                return rejected("fiscal policy must be a JSON object")
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            with session.begin_nested():
+                services.set_fiscal_policy(session, authority, policy, reference)
 
         elif intent.intent_type in ("issue_money", "retire_money"):
             account = session.get(Account, intent.params.get("account_id"))
