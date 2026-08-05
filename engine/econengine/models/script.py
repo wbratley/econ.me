@@ -18,6 +18,12 @@ class Script(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Stable identity of a *law* across enacted versions — what voters,
+    # ctx.query.active_script, and the proposal->enact cycle refer to. The
+    # governed lifecycle (services.set_script) does retire-old + activate-new
+    # within a lineage; `name` is the auto-versioned per-row label
+    # (`{lineage_id}#{n}`). Legacy/admin scripts are singleton lineages.
+    lineage_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     description: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     script_type: Mapped[ScriptType] = mapped_column(SAEnum(ScriptType), nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)

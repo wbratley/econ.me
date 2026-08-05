@@ -263,3 +263,63 @@ def test_set_fiscal_policy_intent_rejected_without_capability(client):
     result = r.json()[0]
     assert result["status"] == "rejected"
     assert "set_fiscal_policy" in result["reason"]
+
+
+def test_set_script_intent_enacts_a_law_through_the_api(client):
+    """The full HTTP path for governed lawmaking (step 4a-1): a
+    legislate-capable government (owned by admin) enacts a new POLICY law
+    via POST /intents. Capability gates at the boundary; the result carries
+    the new script's id and lineage, and the law is live (active) in the
+    scripts table."""
+    # a government entity owned by admin, granted the legislate capability
+    r = client.post("/admin/entities",
+                    json={"name": "Legislature", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    assert r.status_code == 201, r.text
+    gov = r.json()
+    r = client.patch(f"/admin/entities/{gov['id']}",
+                     json={"capabilities": ["legislate"]}, headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+
+    # admin drives the government to enact a wealth-tax law
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "set_script",
+         "params": {"script_type": "policy", "lineage_id": "wealth_tax",
+                    "source": "-- wealth tax law", "reference": "enactment #1"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    result = r.json()[0]
+    assert result["status"] == "applied", result
+    assert result["lineage_id"] == "wealth_tax"
+    script_id = result["script_id"]
+
+    # the law is live: the active script of the lineage is in the table
+    scripts = client.get("/admin/scripts?is_active=true",
+                         headers=_auth("u-admin")).json()
+    matching = [s for s in scripts if s["lineage_id"] == "wealth_tax"]
+    assert len(matching) == 1
+    assert matching[0]["id"] == script_id
+    assert matching[0]["name"] == "wealth_tax#1"   # auto-versioned per row
+
+
+def test_set_script_intent_rejected_without_capability(client):
+    """A government with no legislate capability cannot enact law through the
+    API — the capability, not the API call, authorises lawmaking."""
+    r = client.post("/admin/entities",
+                    json={"name": "WeakGov", "entity_type": "government",
+                          "owner_id": "u-admin"},
+                    headers=_auth("u-admin"))
+    gov = r.json()  # no capabilities granted
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "set_script",
+         "params": {"script_type": "policy", "lineage_id": "law",
+                    "source": "ctx.state.x = 1"}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "rejected"
+    assert "legislate" in result["reason"]
+    # no law was created
+    scripts = client.get("/admin/scripts", headers=_auth("u-admin")).json()
+    assert not any(s["lineage_id"] == "law" for s in scripts)

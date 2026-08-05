@@ -140,6 +140,7 @@ class ScriptCreate(BaseModel):
     source: str
     timeout_ms: int = 100
     entity_id: Optional[str] = None
+    lineage_id: Optional[str] = None
 
 
 class ScriptRead(BaseModel):
@@ -151,6 +152,7 @@ class ScriptRead(BaseModel):
     is_active: bool
     timeout_ms: int
     entity_id: Optional[str] = None
+    lineage_id: Optional[str] = None
     state: dict = {}
     created_at: datetime
     updated_at: datetime
@@ -484,6 +486,8 @@ class IntentResult(BaseModel):
     reason: Optional[str] = None
     order_id: Optional[str] = None    # present for place_order
     process_id: Optional[str] = None  # present for start_process
+    script_id: Optional[str] = None   # present for set_script
+    lineage_id: Optional[str] = None  # present for set_script
 
 
 class NeedStateRead(BaseModel):

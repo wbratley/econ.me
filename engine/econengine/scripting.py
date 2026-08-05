@@ -211,6 +211,53 @@ def build_queries(session: Session) -> dict:
         from . import fiscal
         return fiscal.get_fiscal_policy(session)
 
+    def active_script(lineage_id):
+        """The currently-active version of a law (lineage), or None.
+
+        Returns the source so a POLICY script can read another law's text,
+        and so the platform can render the live law. Resolves by
+        lineage_id + is_active — the retire-old/activate-new identity.
+        """
+        s = session.execute(
+            select(Script).where(
+                Script.lineage_id == str(lineage_id),
+                Script.is_active.is_(True),
+            )
+        ).scalars().first()
+        if s is None:
+            return None
+        return {
+            "id": s.id,
+            "name": s.name,
+            "script_type": s.script_type.value,
+            "source": s.source,
+            "entity_id": s.entity_id,
+            "lineage_id": s.lineage_id,
+        }
+
+    def script_history(lineage_id):
+        """Every version of a law (lineage), oldest first — the legislative
+        record that retire-old/activate-new preserves. Metadata only (no
+        source) to keep the audit view cheap; read a version's source by id
+        where needed.
+        """
+        rows = session.execute(
+            select(Script)
+            .where(Script.lineage_id == str(lineage_id))
+            .order_by(Script.created_at, Script.id)
+        ).scalars().all()
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "script_type": s.script_type.value,
+                "is_active": s.is_active,
+                "entity_id": s.entity_id,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in rows
+        ]
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -219,6 +266,8 @@ def build_queries(session: Session) -> dict:
         "has_unlock": has_unlock,
         "holders": holders,
         "fiscal_policy": fiscal_policy,
+        "active_script": active_script,
+        "script_history": script_history,
     }
 
 
@@ -309,6 +358,37 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 return rejected("unknown entity")
             with session.begin_nested():
                 services.set_fiscal_policy(session, authority, policy, reference)
+
+        elif intent.intent_type == "set_script":
+            # Governed lawmaking (step 4a-1): enact a new version of a law.
+            # The capability gate above already proved `entity` holds
+            # LEGISLATE; services.set_script enforces it again and keeps
+            # validators out of reach (they are the constitution). A law is
+            # identified by lineage_id; the service retires the active
+            # version and activates this source as a new one.
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            raw_type = intent.params.get("script_type", "")
+            try:
+                script_type = ScriptType(raw_type)
+            except ValueError:
+                return rejected(f"unknown script_type {raw_type!r}")
+            lineage_id = intent.params.get("lineage_id", "")
+            if not lineage_id:
+                return rejected("lineage_id required")
+            bound_entity_id = intent.params.get("entity_id") or None
+            with session.begin_nested():
+                script = services.set_script(
+                    session, authority, script_type, lineage_id,
+                    intent.params.get("source", ""),
+                    entity_id=bound_entity_id,
+                    description=intent.params.get("description", ""),
+                    timeout_ms=int(intent.params.get("timeout_ms", "100")),
+                    reference=reference,
+                )
+            extra["script_id"] = script.id
+            extra["lineage_id"] = lineage_id
 
         elif intent.intent_type in ("issue_money", "retire_money"):
             account = session.get(Account, intent.params.get("account_id"))
