@@ -136,8 +136,13 @@ Each step is independently useful and unblocks the next.
    `levy` each tick per the votable rate schedule makes collection
    automatic *and* enforced *and* votable (mechanism/data/policy split).
    *— done (see Status).*
-4. **Shareholder voting** (Fork 5C) and the full **vote→enact cycle**
-   (Fork 4D), layered on the same machinery.
+4. **Governance: voting on code** (Fork 4D + 5C) — `set_script`/`legislate`
+   so citizens enact new POLICY scripts (new tax types, not just rate
+   tweaks), a proposal→vote→enact cycle with citizen *and* share-weight
+   models, and a constitutional tier protecting validators. Parameter
+   voting (step 3) stays the common case; code voting is the rare path
+   that makes the world self-governing. *— 4a-1 done (`set_script`); design
+   written (see "Step 4 design" below).*
 
 ### A correctness note for step 2
 
@@ -147,6 +152,186 @@ A levy the *government* originates must bypass the ownership invariant
 (capability + a votable rate schedule) is where all the safety lives.
 Review that boundary carefully and seizure/tax share one bulletproof
 mechanism.
+
+## Step 4 design: governance — voting on code, safely
+
+### The gap step 3 left
+
+Step 3 made tax *enforced* (`levy`) and *votable* (the `fiscal_policy`
+dict): citizens change the **numbers** a fixed POLICY script reads. What
+they still cannot do is change the **law itself** — introduce a new tax
+base the script does not handle, replace the collection logic, or enact
+any policy the active script's vocabulary does not already cover.
+Parameter voting is the cheap, frequent 80% of legislation; but a polity
+that can only tune dials and never write new statutes is not
+self-governing. Step 4 closes that gap: **voting on code**, under the
+same enforced floor.
+
+This realises Fork 4D (full proposal→vote→enact) and Fork 5C
+(shareholder cap-table governance), consistent with `design.md` §4.1.
+
+### Engine vs platform — where the line is
+
+`design.md` §4.1 places the governance *cycle* in the platform layer (a
+consumer of the engine). The split this design holds to:
+
+| Engine owns (step 4 builds) | Platform drives (out of scope here) |
+|---|---|
+| Governed script lifecycle (`set_script`) | Proposal authoring UI, campaigning |
+| Proposal + vote + enact as governed ops | Enactment-day cadence / scheduler |
+| Vote-weight from existing engine data | Trials (copy-on-write fork audit, §4.2) |
+| Constitutional tier (validator amendment) | Fork petitions (§4.2) |
+
+The engine exposes primitives the platform consumes via the intent
+protocol; it does not own *when* enactment happens or *how* players
+campaign. Enactment is a governed engine op the platform triggers; the
+tally and the atomic application live in the engine so they are auditable
+and cannot be bypassed.
+
+### The safety thesis (why voting on code breaks nothing)
+
+Four nested layers, each constraining the ones below, none depending on
+authorship:
+
+> **engine invariants (un-votable)** ⊃ **voting-system integrity
+> (constitutional-only)** ⊃ **validators = the constitution
+> (supermajority)** ⊃ **ordinary law: POLICY scripts + parameters
+> (simple majority)**
+
+1. **Code-author-independence.** An enacted POLICY script runs with the
+government entity's capabilities and is vetoed by VALIDATORs —
+   regardless of who wrote it or how it got there. A script enacted by a
+   51% vote has exactly the powers and limits of one an operator pasted
+   in. Democratic authorship adds no new engine powers; it only changes
+   the authorship path.
+2. **Validators are the constitution.** A citizen-enacted script that
+   tries to levy 100% into one citizen's account is still vetoed by a
+   validator capping rates (step 3 demonstrates this). Without this
+   backstop, code-voting is a tyranny-of-the-majority / flash-loan trap.
+3. **Constitutional tiering.** If citizens can amend validators, they can
+   repeal the constitution. So validator (and voting-system) changes sit
+   at a higher threshold (supermajority), and the voting system's own
+   integrity is un-votable except through that process.
+
+### Forms of government are data, not mechanism
+
+The mechanism (`proposal → vote → enact`) is **form-agnostic**. A "form
+of government" is three pieces of data, never new code:
+
+1. **the electorate** — who may vote,
+2. **the weight function** — how much each vote counts,
+3. **the threshold** — how much weight "yes" needs to enact.
+
+So direct democracy, a corporation, a monarchy, a council, and a
+representative chamber are all the same machinery with different rows:
+
+| Form | electorate | weight | threshold |
+|---|---|---|---|
+| Direct democracy (4a) | all active individuals | 1 each | simple majority |
+| Corporation (4c) | holders of the firm's share | shares held (cap table) | majority of shares |
+| Autocrat / king | {the sovereign} (or none — direct `set_script`) | 1 | 1 (sole voter) |
+| Council / oligarchy | a council register | 1 each | majority of council |
+| Weighted council | council register | per-member weight (register) | majority of weight |
+| Representative (MPs) | the MPs | each MP = constituency size | majority |
+| Liquid democracy | all individuals | own vote + all delegated to you | majority |
+
+This is the mechanism/data/policy split applied to governance itself.
+Every row is "add a weight-model resolver + some data," not new mechanism.
+
+### The engine primitives
+
+**4a-1. Governed script lifecycle — `set_script`.** *Done.* The privileged
+write surface for POLICY/BEHAVIOUR/HOOK scripts. Retire-old +
+activate-new (never in-place edit) so every enacted law leaves a lineage
+of retired predecessors — auditable, revertible, sandbox-triable.
+`lineage_id` is the stable identity; `name` is auto-versioned
+(`{lineage_id}#{n}`). Gated by the `legislate` capability at the intent
+boundary and in the service. VALIDATOR scripts are excluded (they are
+the constitution, 4b's job) — and no validator gates `set_script` itself,
+so the legislature cannot be locked out by what it governs. A HOOK fires
+for audit. Read side: `ctx.query.active_script(lineage_id)` +
+`script_history(lineage_id)`; script entry: `ctx.action.set_script(...)`.
+
+**4a-2. Vote weight — a pluggable resolver, not a hardcoded model.** The
+weight function is a small registry of `model-name → (electorate-finder,
+weight-finder)`, resolved per-proposal. The electorate and weights come
+from existing engine data, so there is no new voting token:
+
+- *citizen* — electorate = all active INDIVIDUALs, weight = 1 each;
+- *share* — electorate = holders of a symbol, weight = quantity held
+  (reuses `ctx.query.holders`, the cap table);
+- *council* / *weighted* / *representative* / *liquid* — later resolver
+  entries backed by a register/WorldSetting, never new mechanism.
+
+Shipping only the *citizen* resolver in 4a-ii keeps the slice minimal
+while making every other form "register an entry + add data," not
+"reopen the mechanism."
+
+**4a-3. Proposal → vote → enact.** Three engine models and ops:
+
+- `Proposal`: a batch of proposed mutations (`set_fiscal_policy` and/or
+  `set_script`), a weight model, a threshold, a quorum, a status.
+- `vote` intent: an entity casts for/against; the engine records the
+  entity's weight (computed by the resolver, not self-declared).
+  Idempotent per entity per proposal.
+- `enact`: triggered by the platform's cadence (or admin in MVP) — if
+  tally ≥ threshold *and* quorum met, apply the proposal's mutations
+  **atomically** (all-or-nothing, one savepoint); else mark failed.
+
+Enactment reuses `resolve_intent`: each mutation is resolved through the
+same dispatcher, so capability gates and validators fire exactly as for a
+live intent. An enacted `set_script` therefore still needs `legislate`,
+and a levy inside an enacted POLICY script still hits the constitutional
+cap.
+
+**4a-4. Constitutional tier — `amend_constitution`.** A distinct proposal
+type, gated by an `amend_constitution` capability and requiring a
+**supermajority**, that may add/amend/retire a VALIDATOR script or amend
+the voting-system parameters (thresholds, quorum, weight-model rules).
+The only path that touches validators or the voting system. Below it,
+ordinary `set_script`/`set_fiscal_policy` proposals cannot touch
+validators at all. (Judicial review / a constitutional court that strikes
+down an enacted law is *already* the validator layer — it costs nothing
+extra.)
+
+### Build sequence
+
+- **Step 4a-i — `set_script`.** *Done* (this PR). The minimum that
+  answers "can citizens enact new laws?": yes, via the governed lifecycle.
+- **Step 4a-ii — proposal/vote/enact + citizen resolver.** `Proposal`/
+  `Vote` models, `create_proposal`/`vote`/`enact`, citizen weight model,
+  simple-majority + quorum. A citizen vote (not an operator) drives
+  `set_script`.
+- **Step 4b — the constitutional tier.** `amend_constitution` at
+  supermajority; validators and voting-system params become governable
+  only through it.
+- **Step 4c — shareholder governance (Fork 5C).** The *share* resolver;
+  enacted directives bind a firm's BEHAVIOUR script.
+
+Parameter voting (step 3) stays the common case throughout: most
+proposals are still `set_fiscal_policy` edits, because most legislation
+*is* rate changes.
+
+### Decisions (locked) & deferrals
+
+- **`set_script` semantics: retire-old + activate-new** (not in-place) —
+  chosen to preserve a full legislative lineage.
+- **Direct democracy MVP** (every citizen votes on every proposal);
+  representative is a later weight model.
+- **Cadence-agnostic enactment** — admin/platform calls `enact` in MVP.
+- **Defaults** — simple majority + modest quorum, both constitutional
+  params.
+- **Deferrals** — delegation/liquid democracy (a weight-redirect rule +
+  delegation register; a weight-function refinement, not new mechanism);
+  bicameral/multi-body enactment (a richer enactment condition); federated
+  polities. Trials (§4.2) are platform (CoW fork audit), out of engine
+  scope.
+
+### What stays explicitly unbuilt (engine)
+
+`seize` (expropriation of goods/parcels, not money) remains its own
+capability sharing the levy mechanism — orthogonal to governance,
+landable anytime.
 
 ## Status
 
@@ -194,7 +379,15 @@ mechanism.
   replaced wholesale (atomic, auditable). Reachable from every actor
   surface: `POST /intents`, the tick loop, and
   `ctx.action.set_fiscal_policy({…})` from scripts.
-- Step 4 — planned, not started: shareholder voting (Fork 5C) and the
-  full proposal→vote→enact cycle (Fork 4D), layered on the same machinery.
-  `seize` (goods/parcels) also remains unbuilt and will share the levy
-  mechanism under its own capability.
+- Step 4 — **in progress (4a-1 done)**. See "Step 4 design: governance —
+  voting on code, safely" above for the engine/platform boundary, the
+  safety thesis, the forms-of-government-as-data framing (weight-model
+  resolver), and the build sequence. **4a-1 (`set_script`/`legislate`)
+  landed**: governed script lifecycle — retire-old + activate-new with
+  full lineage history (`lineage_id` identity, `name` auto-versioned),
+  capability-gated, validators excluded (they're the constitution). No
+  validator gates `set_script` itself. Read side `ctx.query.active_script`
+  / `script_history`; script entry `ctx.action.set_script`. Next: **4a-ii**
+  (proposal/vote/enact + the citizen weight-model resolver). `seize`
+  (goods/parcels) also remains unbuilt and will share the levy mechanism
+  under its own capability.

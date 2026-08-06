@@ -64,6 +64,11 @@ def create_script(
         entity_id=body.entity_id,
     )
     session.add(script)
+    session.flush()                       # generate id so lineage can default to it
+    # Admin path: a script with no explicit lineage is its own singleton
+    # lineage, matching the migration backfill. The governed lifecycle
+    # (services.set_script) is what enacts versions within a shared lineage.
+    script.lineage_id = body.lineage_id or script.id
     session.commit()
     session.refresh(script)
     return script

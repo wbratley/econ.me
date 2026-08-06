@@ -361,11 +361,33 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _set_script(script_type, lineage_id, source, bound_entity_id=None, priority=100):
+        # Governed lawmaking (step 4a-1): retire the active version of
+        # `lineage_id` and activate `source` as a new version. The entity
+        # is the legislating authority; resolve_intent gates this on the
+        # `legislate` capability. `bound_entity_id` binds a BEHAVIOUR
+        # script to run as a specific entity each tick.
+        params = {
+            "script_type": str(script_type),
+            "lineage_id": str(lineage_id),
+            "source": str(source),
+        }
+        if bound_entity_id is not None:
+            params["entity_id"] = str(bound_entity_id)
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="set_script",
+            params=params,
+            resource_ids=[str(lineage_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
     action_tbl["levy"]        = _levy
     action_tbl["set_fiscal_policy"] = _set_fiscal_policy
+    action_tbl["set_script"]  = _set_script
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process

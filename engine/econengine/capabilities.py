@@ -20,7 +20,7 @@ This is the platform's rule layer for actor authorisation
   so a capability denial is a clean rejection at the boundary — the same
   place ownership is enforced — rather than a buried exception.
 
-Capabilities not yet wired to an action (seize)
+Capabilities not yet wired to an action (seize, grant_capability)
 are declared here as constants and listed for documentation, but absent
 from `INTENT_CAPABILITIES` until the action exists (step 4+). Declaring
 them now keeps the vocabulary stable across the build.
@@ -43,6 +43,13 @@ LEVY = "levy"
 #: and the `set_fiscal_policy` intent (step 3 — government as policy actor).
 SET_FISCAL_POLICY = "set_fiscal_policy"
 
+#: Enact a new version of a law — retire the active POLICY / BEHAVIOUR /
+#: HOOK script of a lineage and activate a new one via the governed
+#: lifecycle (`services.set_script`). The writable surface a vote drives
+#: (step 4a). Validators are excluded: they are the constitution,
+#: amendable only via the constitutional process (4b).
+LEGISLATE = "legislate"
+
 #: Expropriate assets outright (seizure). Future; shares the levy
 #: mechanism under a different rule class.
 SEIZE = "seize"
@@ -57,6 +64,7 @@ ALL = frozenset({
     MONETARY_AUTHORITY,
     LEVY,
     SET_FISCAL_POLICY,
+    LEGISLATE,
     SEIZE,
     GRANT_CAPABILITY,
 })
@@ -72,6 +80,7 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "retire_money": MONETARY_AUTHORITY,
     "levy": LEVY,                         # step 2 — compel a transfer under a declared rule
     "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3 — set the votable fiscal-policy dict
+    "set_script": LEGISLATE,               # step 4a — enact a new version of a law
     # "seize": SEIZE,                        # future — expropriate goods/parcels
 }
 

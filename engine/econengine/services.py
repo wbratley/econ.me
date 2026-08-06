@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, MONETARY_AUTHORITY, SET_FISCAL_POLICY
+from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY
 from .models.entity import Entity, EntityType
 from .models.account import Account
+from .models.script import Script, ScriptType
 from .models.transaction import Transaction, TransactionType
 from .models import WorldSetting
 
@@ -375,6 +377,93 @@ def retire_money(
     session.flush()
     scripting.fire_hooks(session, {**op, "transaction_ids": [tx.id]})
     return tx
+
+
+def set_script(
+    session: Session,
+    authority: Entity,
+    script_type: ScriptType,
+    lineage_id: str,
+    source: str,
+    entity_id: str | None = None,
+    description: str = "",
+    timeout_ms: int = 100,
+    reference: str = "",
+) -> Script:
+    """Governed script lifecycle: enact a new version of a law.
+
+    The privileged write surface for POLICY / BEHAVIOUR / HOOK scripts
+    (docs/actors.md step 4a-1). Where the admin API creates scripts by
+    operator fiat, ``set_script`` is the *enactable* path — the one a
+    proposal->vote->enact cycle (4a-ii) and an electorate will drive. It
+    is to scripts what ``set_fiscal_policy`` is to parameters: the
+    governed write surface, capability-gated rather than admin-gated.
+
+    Semantics are retire-old + activate-new, never in-place edit, so every
+    enacted law leaves a lineage of retired predecessors — auditable,
+    revertible, sandbox-triable. ``lineage_id`` is the stable identity of
+    the law across versions; ``name`` is auto-versioned per row
+    (``{lineage_id}#{n}``) to keep the existing per-row uniqueness while
+    ``lineage_id`` carries the human meaning. "The current law" is the one
+    row with ``lineage_id=X AND is_active=True``.
+
+    Safety: ``authority`` must hold the ``legislate`` capability (checked
+    here as defense in depth, and at the capability gate in
+    ``resolve_intent``). VALIDATOR scripts are *excluded* — they are the
+    constitution, amendable only through the constitutional process (4b),
+    never by ordinary legislation. No validator gates ``set_script``
+    itself, because validators are precisely the thing this op is kept
+    away from; the capability, not a validator, is the gate. A HOOK fires
+    after enactment for audit.
+    """
+    if not authority.has_capability(LEGISLATE):
+        raise MissingCapabilityError(authority.id, LEGISLATE)
+    if script_type == ScriptType.VALIDATOR:
+        raise ValueError(
+            "cannot set_script on a validator; amend the constitution instead (step 4b)"
+        )
+    if not lineage_id:
+        raise ValueError("lineage_id is required")
+
+    # retire the currently-active version of this lineage (if any)
+    current = session.execute(
+        select(Script).where(
+            Script.lineage_id == lineage_id,
+            Script.is_active.is_(True),
+        )
+    ).scalars().first()
+    if current is not None:
+        current.is_active = False
+
+    # auto-version the per-row name; lineage_id carries the stable identity
+    version_count = session.execute(
+        select(func.count()).select_from(Script).where(Script.lineage_id == lineage_id)
+    ).scalar_one()
+
+    new_script = Script(
+        name=f"{lineage_id}#{version_count + 1}",
+        description=description,
+        script_type=script_type,
+        source=source,
+        is_active=True,
+        timeout_ms=timeout_ms,
+        entity_id=entity_id,
+        lineage_id=lineage_id,
+    )
+    session.add(new_script)
+    session.flush()
+
+    op = {
+        "type": "set_script",
+        "entity_id": authority.id,
+        "script_type": script_type.value,
+        "lineage_id": lineage_id,
+        "script_id": new_script.id,
+        "retired_script_id": current.id if current is not None else None,
+        "reference": reference,
+    }
+    scripting.fire_hooks(session, op)
+    return new_script
 
 
 def _op(op_type: str, account: Account, amount: Decimal, reference: str) -> dict:
