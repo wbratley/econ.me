@@ -411,3 +411,96 @@ def test_democracy_rejects_non_citizen_proposer(client):
     assert "electorate" in result["reason"]
     # nothing was recorded
     assert client.get("/admin/proposals", headers=_auth("u-admin")).json() == []
+
+
+# ---------------------------------------------------------------------------
+# constitutional tier (actors step 4b) — the HTTP path
+# ---------------------------------------------------------------------------
+
+def test_constitutional_amendment_installs_a_validator_via_api(client):
+    """Citizens amend the constitution over POST /intents: a constitutional
+    proposal carries a set_validator mutation, clears the supermajority, and
+    the installed validator then binds a direct over-cap op — the same
+    safety the engine layer proves, reachable from the machine client."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Polity", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    # the government may legislate, set fiscal policy, AND amend the charter
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["legislate", "set_fiscal_policy",
+                                        "amend_constitution"]},
+                 headers=_auth("u-admin"))
+    citizens = [
+        client.post("/admin/entities",
+                    json={"name": n, "entity_type": "individual", "owner_id": "u-admin"},
+                    headers=_auth("u-admin")).json()
+        for n in ("A", "B", "C")
+    ]
+
+    cap = (
+        "if ctx.op.type == 'set_fiscal_policy' then "
+        "local r = tonumber(ctx.op.policy.rate) "
+        "if r and r > 0.5 then "
+        "return {allow=false, reason='over the cap'} end end"
+    )
+    mutations = json.dumps([
+        {"type": "set_validator", "params": {"lineage_id": "cap", "source": cap}}
+    ])
+    # citizen A proposes a constitutional amendment (default floor is 2/3)
+    r = client.post("/intents", json=[
+        {"entity_id": citizens[0]["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "mutations": mutations,
+                    "weight_model": "citizen", "title": "cap fiscal rate",
+                    "proposal_type": "constitutional"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    pid = r.json()[0]["proposal_id"]
+    got = client.get(f"/admin/proposals/{pid}", headers=_auth("u-admin")).json()
+    assert got["proposal_type"] == "constitutional"
+
+    # all three citizens vote for -> unanimous, clears the 0.67 floor
+    for ci in (0, 1, 2):
+        client.post("/intents", json=[
+            {"entity_id": citizens[ci]["id"], "type": "vote",
+             "params": {"proposal_id": pid, "choice": "for"}},
+        ], headers=_auth("u-admin"))
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "enact",
+         "params": {"proposal_id": pid}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["proposal_status"] == "enacted"
+
+    # the installed constitution now vetoes an over-cap fiscal policy
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "set_fiscal_policy",
+         "params": {"policy": '{"rate":"0.9"}'}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+    assert "cap" in r.json()[0]["reason"]
+
+
+def test_ordinary_proposal_cannot_smuggle_a_validator_via_api(client):
+    """The one-directional gate, over HTTP: an ordinary (simple-majority)
+    proposal that tries to carry a set_validator mutation is rejected at
+    propose — the constitution is unreachable from ordinary legislation."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Polity", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    citizen = client.post("/admin/entities",
+                          json={"name": "A", "entity_type": "individual",
+                                "owner_id": "u-admin"},
+                          headers=_auth("u-admin")).json()
+    mutations = json.dumps([
+        {"type": "set_validator", "params": {"lineage_id": "cap", "source": "return false"}}
+    ])
+    r = client.post("/intents", json=[
+        {"entity_id": citizen["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "mutations": mutations,
+                    "weight_model": "citizen"}},  # ordinary (default)
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "rejected"
+    assert "not allowed for ordinary" in result["reason"]

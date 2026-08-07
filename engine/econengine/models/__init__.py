@@ -19,7 +19,7 @@ from .good import Good
 from .need import Need, NeedSatisfier, NeedState
 from .setting import WorldSetting
 from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
-from .proposal import Proposal, Vote, ProposalStatus, VoteChoice
+from .proposal import Proposal, Vote, ProposalStatus, VoteChoice, ProposalType
 
 __all__ = [
     "Base",
@@ -67,4 +67,5 @@ __all__ = [
     "Vote",
     "ProposalStatus",
     "VoteChoice",
+    "ProposalType",
 ]

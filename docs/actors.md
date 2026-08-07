@@ -285,15 +285,24 @@ live intent. An enacted `set_script` therefore still needs `legislate`,
 and a levy inside an enacted POLICY script still hits the constitutional
 cap.
 
-**4a-4. Constitutional tier — `amend_constitution`.** A distinct proposal
-type, gated by an `amend_constitution` capability and requiring a
-**supermajority**, that may add/amend/retire a VALIDATOR script or amend
-the voting-system parameters (thresholds, quorum, weight-model rules).
-The only path that touches validators or the voting system. Below it,
-ordinary `set_script`/`set_fiscal_policy` proposals cannot touch
-validators at all. (Judicial review / a constitutional court that strikes
-down an enacted law is *already* the validator layer — it costs nothing
-extra.)
+**4a-4. Constitutional tier — `amend_constitution`.** *Done.* A distinct
+proposal type (`ProposalType.CONSTITUTIONAL`), requiring a
+**supermajority** (the floor held in the `constitution` world setting,
+`engine/econengine/constitution.py`; default two-thirds), that may
+add/amend/retire a VALIDATOR script (`set_validator`) or amend the
+voting-system floor (`set_constitution`). Both are gated by the
+`amend_constitution` capability; both are reachable only through a passed
+constitutional proposal — `set_script` still cannot touch validators, so
+this is the *only* path that writes one. Below it, ordinary
+`set_script`/`set_fiscal_policy` proposals cannot touch validators at all
+(the tier check at propose time rejects an ordinary proposal carrying a
+constitutional mutation; a constitutional amendment may also carry
+ordinary law, since a harder bar may say more). The one intent whose
+required capability is not a pure function of its name: `enact` left
+`INTENT_CAPABILITIES`, and the enact branch checks `legislate` (ordinary)
+or `amend_constitution` (constitutional) from the proposal's tier.
+(Judicial review / a constitutional court that strikes down an enacted law
+is *already* the validator layer — it costs nothing extra.)
 
 ### Build sequence
 
@@ -303,9 +312,11 @@ extra.)
   `Vote` models, `create_proposal`/`vote`/`enact`, citizen weight model,
   simple-majority + quorum. A citizen vote (not an operator) drives
   `set_script`.
-- **Step 4b — the constitutional tier.** `amend_constitution` at
-  supermajority; validators and voting-system params become governable
-  only through it.
+- **Step 4b — the constitutional tier.** *Done.* `amend_constitution` at
+  supermajority (default two-thirds, held in the `constitution` world
+  setting); `set_validator` / `set_constitution` are the only paths to the
+  VALIDATOR scripts and the voting-system floor, and ordinary proposals
+  cannot reach them.
 - **Step 4c — shareholder governance (Fork 5C).** The *share* resolver;
   enacted directives bind a firm's BEHAVIOUR script.
 
@@ -397,7 +408,20 @@ landable anytime.
   government through `resolve_intent`, so a citizen-passed over-cap rate
   is still vetoed by a VALIDATOR (the constitutional backstop, tested).
   Read side `ctx.query.proposal` / `proposals` / `tally`; admin `GET
-  /admin/proposals`. Next: **4b** (the constitutional tier —
-  `amend_constitution` at supermajority). `seize` (goods/parcels) also
-  remains unbuilt and will share the levy mechanism under its own
-  capability.
+  /admin/proposals`. **4b landed** (the constitutional tier):
+  `ProposalType.CONSTITUTIONAL` + `set_validator` / `set_constitution`,
+  both gated by `amend_constitution` and bound by the supermajority floor
+  in the `constitution` world setting
+  (`engine/econengine/constitution.py`; default two-thirds). `set_script`
+  still cannot touch validators — `set_validator` is the only path, and an
+  ordinary proposal cannot carry one (the tier check at propose time).
+  `enact` is now data-driven: ordinary → `legislate`, constitutional →
+  `amend_constitution`, checked in the enact branch (the one intent whose
+  required capability is not a pure function of its name). An installed
+  validator binds the very next op, including a later mutation in the same
+  enactment (atomic); a validator may veto a `set_constitution` so the
+  charter can guard its own amendment. Read side `ctx.query.constitution`;
+  `ProposalRead.proposal_type`. Next: **4c** (shareholder governance — the
+  `share` weight-model resolver + directives binding a firm's BEHAVIOUR
+  script). `seize` (goods/parcels) also remains unbuilt and will share the
+  levy mechanism under its own capability.

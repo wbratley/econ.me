@@ -50,6 +50,15 @@ SET_FISCAL_POLICY = "set_fiscal_policy"
 #: amendable only via the constitutional process (4b).
 LEGISLATE = "legislate"
 
+#: Amend the constitution — add/amend/retire a VALIDATOR script, or change
+#: the voting-system floor (the supermajority threshold/quorum), both
+#: through the governed lifecycle (`services.set_validator` /
+#: `services.set_constitution`). The exercise of constitutional power;
+#: a constitutional proposal's enactment requires it, plus a supermajority
+#: (step 4b). Where `legislate` writes ordinary law, this writes the rules
+#: ordinary law must obey.
+AMEND_CONSTITUTION = "amend_constitution"
+
 #: Expropriate assets outright (seizure). Future; shares the levy
 #: mechanism under a different rule class.
 SEIZE = "seize"
@@ -65,6 +74,7 @@ ALL = frozenset({
     LEVY,
     SET_FISCAL_POLICY,
     LEGISLATE,
+    AMEND_CONSTITUTION,
     SEIZE,
     GRANT_CAPABILITY,
 })
@@ -80,8 +90,14 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "retire_money": MONETARY_AUTHORITY,
     "levy": LEVY,                         # step 2 — compel a transfer under a declared rule
     "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3 — set the votable fiscal-policy dict
-    "set_script": LEGISLATE,               # step 4a — enact a new version of a law
-    "enact": LEGISLATE,                    # step 4a-ii — enact a passed proposal (the target government exercises legislative power via the vote)
+    "set_script": LEGISLATE,               # step 4a — enact a new version of a (non-validator) law
+    "set_validator": AMEND_CONSTITUTION,   # step 4b — amend a VALIDATOR (the constitution)
+    "set_constitution": AMEND_CONSTITUTION,  # step 4b — amend the voting-system floor
+    # NOTE: `enact` is deliberately NOT here. The capability an enactment
+    # needs is data on the proposal: ordinary -> legislate, constitutional ->
+    # amend_constitution. It is checked in resolve_intent's enact branch
+    # after the proposal (and its type) is loaded — the one intent whose
+    # required capability is not a pure function of its name.
     # "seize": SEIZE,                        # future — expropriate goods/parcels
 }
 

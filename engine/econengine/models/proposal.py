@@ -37,6 +37,19 @@ class ProposalStatus(enum.Enum):
     CANCELLED = "cancelled"  # withdrawn by the proposer before enactment
 
 
+class ProposalType(enum.Enum):
+    # The tier a proposal sits in. ORDINARY mutations (set_fiscal_policy /
+    # set_script) are ordinary law — enacting needs `legislate` and the
+    # proposal's own threshold/quorum. CONSTITUTIONAL mutations
+    # (set_validator / set_constitution) amend the constitution — enacting
+    # needs `amend_constitution` and must clear the supermajority floor
+    # held in the `constitution` world setting. The tier is checked at
+    # propose time (an ordinary proposal cannot carry a constitutional
+    # mutation, and vice versa) so the two surfaces never cross.
+    ORDINARY = "ordinary"
+    CONSTITUTIONAL = "constitutional"
+
+
 class VoteChoice(enum.Enum):
     FOR = "for"
     AGAINST = "against"
@@ -47,6 +60,12 @@ class Proposal(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # ordinary law vs. a constitutional amendment — gates which mutations
+    # are allowed (checked at propose) and which capability + floor the
+    # enactment needs (checked at enact). See ProposalType above.
+    proposal_type: Mapped[ProposalType] = mapped_column(
+        SAEnum(ProposalType), nullable=False, default=ProposalType.ORDINARY
+    )
     # the citizen who proposed (must be in the electorate at propose time)
     proposer_id: Mapped[str] = mapped_column(String(36), ForeignKey("entities.id"), nullable=False)
     # the government that enacts — holds the capabilities the mutations need,
