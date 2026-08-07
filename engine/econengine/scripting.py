@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
 from . import capabilities as _capabilities
-from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice
+from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType
 
 
 class OperationVetoedError(ValueError):
@@ -211,6 +211,20 @@ def build_queries(session: Session) -> dict:
         from . import fiscal
         return fiscal.get_fiscal_policy(session)
 
+    def constitution():
+        """The voting-system floor — the params a constitutional amendment
+        must clear (supermajority threshold + quorum), with defaults.
+
+        The read side a constitutional POLICY script (or the platform's
+        amendment-day UI) uses to know the bar: citizens vote to amend the
+        *constitution* (set_constitution), and this is the result. Like
+        fiscal_policy, a global read — the rules of amendment are public.
+        Always returns a full dict (threshold + quorum); there is always a
+        constitution in force.
+        """
+        from . import constitution as _constitution
+        return _constitution.get_constitution(session)
+
     def active_script(lineage_id):
         """The currently-active version of a law (lineage), or None.
 
@@ -262,6 +276,7 @@ def build_queries(session: Session) -> dict:
         return {
             "id": p.id,
             "title": p.title,
+            "proposal_type": p.proposal_type.value,
             "proposer_id": p.proposer_id,
             "target_id": p.target_id,
             "weight_model": p.weight_model,
@@ -325,6 +340,7 @@ def build_queries(session: Session) -> dict:
         "has_unlock": has_unlock,
         "holders": holders,
         "fiscal_policy": fiscal_policy,
+        "constitution": constitution,
         "active_script": active_script,
         "script_history": script_history,
         "proposal": proposal,
@@ -452,6 +468,51 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             extra["script_id"] = script.id
             extra["lineage_id"] = lineage_id
 
+        elif intent.intent_type == "set_validator":
+            # Constitutional amendment (step 4b): enact a new version of a
+            # VALIDATOR — the only path that writes one (set_script is kept
+            # away from validators). The capability gate above already
+            # proved `entity` holds AMEND_CONSTITUTION; services.set_validator
+            # enforces it again. The validator binds the very next op,
+            # including the rest of this enactment's mutations.
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            lineage_id = intent.params.get("lineage_id", "")
+            if not lineage_id:
+                return rejected("lineage_id required")
+            bound_entity_id = intent.params.get("entity_id") or None
+            with session.begin_nested():
+                script = services.set_validator(
+                    session, authority, lineage_id,
+                    intent.params.get("source", ""),
+                    description=intent.params.get("description", ""),
+                    timeout_ms=int(intent.params.get("timeout_ms", "100")),
+                    entity_id=bound_entity_id,
+                    reference=reference,
+                )
+            extra["script_id"] = script.id
+            extra["lineage_id"] = lineage_id
+
+        elif intent.intent_type == "set_constitution":
+            # Constitutional amendment (step 4b): replace the voting-system
+            # floor (the supermajority threshold/quorum). The capability
+            # gate above already proved `entity` holds AMEND_CONSTITUTION;
+            # services.set_constitution re-checks and fires a VALIDATOR — so
+            # the constitution can constrain its own amendment. Params ride
+            # as a JSON string (intent params are stringly typed).
+            try:
+                params = json.loads(intent.params.get("constitution", "") or "{}")
+            except ValueError:
+                return rejected("invalid constitution JSON")
+            if not isinstance(params, dict):
+                return rejected("constitution must be a JSON object")
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            with session.begin_nested():
+                services.set_constitution(session, authority, params, reference)
+
         elif intent.intent_type == "create_proposal":
             # Open a proposal for vote (step 4a-ii). No capability gates
             # this — participation *is* the electorate, defined by the
@@ -474,6 +535,11 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 mutations = json.loads(intent.params.get("mutations", "[]"))
             except ValueError:
                 return rejected("invalid mutations JSON")
+            raw_pt = intent.params.get("proposal_type", "ordinary")
+            try:
+                proposal_type = ProposalType(raw_pt)
+            except ValueError:
+                return rejected(f"unknown proposal_type {raw_pt!r}")
             try:
                 with session.begin_nested():
                     proposal = services.create_proposal(
@@ -483,7 +549,8 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                         Decimal(intent.params.get("threshold", "0.5")),
                         Decimal(intent.params.get("quorum", "0")),
                         mutations,
-                        reference,
+                        proposal_type=proposal_type,
+                        reference=reference,
                     )
             except ValueError as exc:
                 return rejected(str(exc))
@@ -522,13 +589,18 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             extra["weight"] = str(voter_weight)
 
         elif intent.intent_type == "enact":
-            # Tally and apply. The capability gate above already proved the
-            # enactor (the target government) holds LEGISLATE; here we also
-            # confirm the enactor IS this proposal's target. enact_proposal
-            # tallies and, on pass, applies the mutations atomically as the
-            # target — re-running each through resolve_intent, so caps and
-            # validators fire. A failed tally is still an "applied" intent
-            # (it did its job); the outcome rides in extra.
+            # Tally and apply. The required capability is data on the
+            # proposal — ordinary -> legislate, constitutional ->
+            # amend_constitution — so it is checked here (after the proposal
+            # and its tier are loaded), not at the top-level capability
+            # gate. We also confirm the enactor IS this proposal's target.
+            # enact_proposal tallies and, on pass, applies the mutations
+            # atomically as the target — re-running each through
+            # resolve_intent, so caps and validators fire. A constitutional
+            # proposal's threshold/quorum are also raised to the
+            # supermajority floor inside enact_proposal. A failed tally is
+            # still an "applied" intent (it did its job); the outcome rides
+            # in extra.
             proposal = session.get(Proposal, intent.params.get("proposal_id", ""))
             if proposal is None:
                 return rejected("unknown proposal")
@@ -536,6 +608,12 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 return rejected(f"proposal is {proposal.status.value}, not open")
             if proposal.target_id != intent.entity_id:
                 return rejected("only the target government may enact this proposal")
+            required = (_capabilities.AMEND_CONSTITUTION
+                        if proposal.proposal_type == ProposalType.CONSTITUTIONAL
+                        else _capabilities.LEGISLATE)
+            entity = session.get(Entity, intent.entity_id)
+            if entity is None or not entity.has_capability(required):
+                return rejected(f"missing capability {required!r}")
             with session.begin_nested():
                 outcome = services.enact_proposal(session, proposal, reference)
             extra["proposal_id"] = proposal.id

@@ -4,12 +4,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY
+from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.script import Script, ScriptType
 from .models.transaction import Transaction, TransactionType
-from .models.proposal import Proposal, Vote, ProposalStatus, VoteChoice
+from .models.proposal import Proposal, Vote, ProposalStatus, VoteChoice, ProposalType
 from .models import WorldSetting
 
 
@@ -467,6 +467,128 @@ def set_script(
     return new_script
 
 
+#: Mutation types allowed in each proposal tier. The split is ASYMMETRIC
+#: by design: ordinary law may never reach the constitution (a
+#: simple-majority vote must not touch validators or the voting floor),
+#: but a constitutional amendment — which clears a harder bar — may also
+#: carry ordinary law. That is the standard hierarchy: the constitution
+#: may say anything ordinary law can, and more. So an ORDINARY proposal is
+#: limited to ordinary mutations, while a CONSTITUTIONAL proposal may mix
+#: constitutional and ordinary changes in one enactment.
+ORDINARY_MUTATIONS = frozenset({"set_fiscal_policy", "set_script"})
+CONSTITUTIONAL_MUTATIONS = frozenset({"set_validator", "set_constitution"})
+ALL_MUTATIONS = ORDINARY_MUTATIONS | CONSTITUTIONAL_MUTATIONS
+
+
+def set_validator(
+    session: Session,
+    authority: Entity,
+    lineage_id: str,
+    source: str,
+    description: str = "",
+    timeout_ms: int = 100,
+    entity_id: str | None = None,
+    reference: str = "",
+) -> Script:
+    """Amend the constitution — enact a new version of a VALIDATOR.
+
+    The constitutional twin of ``set_script`` (docs/actors.md step 4b):
+    the same retire-old + activate-new governed lifecycle, but for the
+    scripts that *are* the constitution. Where ``set_script`` is kept away
+    from validators (ordinary legislation may not touch them), this is the
+    one path that writes them — gated by the ``amend_constitution``
+    capability, reachable only by a passed constitutional proposal.
+
+    A VALIDATOR added here binds the very next operation, including the
+    rest of this enactment's mutations if they are money/script ops — so a
+    constitutional amendment that installs a cap takes effect immediately.
+    No validator gates ``set_validator`` itself, by the same logic as
+    ``set_script``: a validator cannot be allowed to lock itself in or out
+    of the constitution; the capability + the supermajority are the gate.
+    A HOOK fires after enactment for audit.
+    """
+    if not authority.has_capability(AMEND_CONSTITUTION):
+        raise MissingCapabilityError(authority.id, AMEND_CONSTITUTION)
+    if not lineage_id:
+        raise ValueError("lineage_id is required")
+
+    current = session.execute(
+        select(Script).where(
+            Script.lineage_id == lineage_id,
+            Script.is_active.is_(True),
+        )
+    ).scalars().first()
+    if current is not None:
+        current.is_active = False
+
+    version_count = session.execute(
+        select(func.count()).select_from(Script).where(Script.lineage_id == lineage_id)
+    ).scalar_one()
+
+    new_script = Script(
+        name=f"{lineage_id}#{version_count + 1}",
+        description=description,
+        script_type=ScriptType.VALIDATOR,
+        source=source,
+        is_active=True,
+        timeout_ms=timeout_ms,
+        entity_id=entity_id,
+        lineage_id=lineage_id,
+    )
+    session.add(new_script)
+    session.flush()
+
+    op = {
+        "type": "set_validator",
+        "entity_id": authority.id,
+        "lineage_id": lineage_id,
+        "script_id": new_script.id,
+        "retired_script_id": current.id if current is not None else None,
+        "reference": reference,
+    }
+    scripting.fire_hooks(session, op)
+    return new_script
+
+
+def set_constitution(
+    session: Session,
+    authority: Entity,
+    params: dict,
+    reference: str = "",
+) -> WorldSetting:
+    """Amend the constitution — replace the voting-system floor.
+
+    The data twin of ``set_validator`` (docs/actors.md step 4b): where
+    ``set_validator`` writes the VALIDATOR scripts (the *constraints* on
+    ordinary law), this writes the voting-system params (the *threshold
+    and quorum a constitutional amendment itself must clear*). Both are
+    the constitution; both need the ``amend_constitution`` capability and
+    a passed constitutional proposal.
+
+    A VALIDATOR may veto the change (fail-closed), so the constitution can
+    constitutionally constrain its own amendment — e.g. forbid lowering
+    the supermajority below two-thirds. The params replace wholesale
+    (merged over defaults in ``constitution.set_constitution``); a HOOK
+    fires after for audit.
+    """
+    from . import constitution
+
+    if not authority.has_capability(AMEND_CONSTITUTION):
+        raise MissingCapabilityError(authority.id, AMEND_CONSTITUTION)
+    if not isinstance(params, dict):
+        raise ValueError("constitution must be a JSON object")
+    op = {
+        "type": "set_constitution",
+        "entity_id": authority.id,
+        "constitution": params,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+    setting = constitution.set_constitution(session, params)
+    scripting.fire_hooks(session, {**op, "setting_key": setting.key})
+    return setting
+
+
 # ---------------------------------------------------------------------------
 # Governance — proposal / vote / enact (actors step 4a-ii)
 # ---------------------------------------------------------------------------
@@ -480,34 +602,51 @@ def create_proposal(
     threshold: Decimal,
     quorum: Decimal,
     mutations: list,
+    proposal_type: ProposalType = ProposalType.ORDINARY,
     reference: str = "",
 ) -> Proposal:
     """Open a proposal for vote.
 
-    A proposal bundles a batch of mutations (``set_fiscal_policy`` and/or
-    ``set_script``) with a weight model, a threshold, and a quorum. It is
-    inert until enacted: creating it changes nothing but the row. The
-    ``target`` is the government that will enact — the entity the mutations
-    run as, whose capabilities they exercise. ``weight_model`` names a
-    resolver in ``weights.WEIGHT_MODELS`` (the electorate definition —
-    the form of government as data).
+    A proposal bundles a batch of mutations with a weight model, a
+    threshold, and a quorum. It is inert until enacted: creating it changes
+    nothing but the row. The ``target`` is the government that will enact —
+    the entity the mutations run as, whose capabilities they exercise.
+    ``weight_model`` names a resolver in ``weights.WEIGHT_MODELS`` (the
+    electorate definition — the form of government as data).
 
-    Validation here is structural (known model, well-formed mutations).
-    The proposer's electorate membership is checked in ``resolve_intent``;
-    capability sufficiency for the mutations is checked at *enactment* — a
-    mutation runs only if the target holds its capability, and a VALIDATOR
-    may still veto it (the constitutional backstop).
+    ``proposal_type`` is the tier: ``ORDINARY`` (set_fiscal_policy /
+    set_script — ordinary law) or ``CONSTITUTIONAL`` (set_validator /
+    set_constitution — the constitution). The tier gates which mutations
+    are allowed, asymmetrically: an ordinary proposal is confined to
+    ordinary law (it must never reach a validator), while a constitutional
+    amendment may also carry ordinary law (a harder bar may say more). The
+    tier also decides the enactment's capability (``legislate`` vs
+    ``amend_constitution``) and floor (the proposal's own threshold vs the
+    supermajority) — checked at enactment, not here.
+
+    Validation here is structural (known model, well-formed mutations,
+    tier-consistent mutation types). The proposer's electorate membership
+    is checked in ``resolve_intent``; capability sufficiency for the
+    mutations is checked at *enactment*.
     """
     from . import weights
     if weights.get_model(weight_model) is None:
         raise ValueError(f"unknown weight model {weight_model!r}")
     if not mutations or not isinstance(mutations, list):
         raise ValueError("mutations must be a non-empty list")
+    allowed = (ALL_MUTATIONS
+               if proposal_type == ProposalType.CONSTITUTIONAL
+               else ORDINARY_MUTATIONS)
     for i, m in enumerate(mutations):
         if not isinstance(m, dict) or "type" not in m or "params" not in m:
             raise ValueError(f"mutation {i} must have 'type' and 'params'")
         if not isinstance(m["params"], dict):
             raise ValueError(f"mutation {i} params must be an object")
+        if m["type"] not in allowed:
+            raise ValueError(
+                f"mutation {i} type {m['type']!r} not allowed for "
+                f"{proposal_type.value} proposals"
+            )
     proposal = Proposal(
         title=title,
         proposer_id=proposer_id,
@@ -516,6 +655,7 @@ def create_proposal(
         threshold=str(threshold),
         quorum=str(quorum),
         mutations=mutations,
+        proposal_type=proposal_type,
         status=ProposalStatus.OPEN,
     )
     session.add(proposal)
@@ -587,6 +727,13 @@ def enact_proposal(
       passed  iff  yes >= threshold * (yes + no)   (fraction of cast weight)
               and  (yes + no) / electorate >= quorum   (turnout)
 
+    For a CONSTITUTIONAL proposal the threshold/quorum are raised to the
+    supermajority floor in the ``constitution`` world setting (a proposer
+    cannot lower the bar by writing a smaller number). The capability an
+    enactment needs is also tier-dependent (``legislate`` vs
+    ``amend_constitution``); that is checked in ``resolve_intent``'s enact
+    branch, which calls this only after the gate passes.
+
     On pass, every mutation is resolved through ``scripting.resolve_intent``
     *as the target government*, so capability gates and VALIDATORs fire
     exactly as for a live intent — a citizen-enacted 100% levy is still
@@ -615,6 +762,17 @@ def enact_proposal(
     turnout = (cast / electorate_total) if electorate_total > 0 else Decimal(0)
     threshold = Decimal(proposal.threshold)
     quorum = Decimal(proposal.quorum)
+    # A constitutional amendment must clear the supermajority floor held in
+    # the `constitution` world setting, on top of the proposal's own bar —
+    # a proposer cannot lower the amendment threshold below two-thirds by
+    # writing a smaller number on the proposal. The floor is read from the
+    # constitution IN FORCE at enactment; a set_constitution mutation in
+    # this proposal amends it only after the (old) floor is cleared.
+    if proposal.proposal_type == ProposalType.CONSTITUTIONAL:
+        from . import constitution
+        floor_threshold, floor_quorum = constitution.supermajority_floor(session)
+        threshold = max(threshold, floor_threshold)
+        quorum = max(quorum, floor_quorum)
     passed = (
         electorate_total > 0
         and cast > 0

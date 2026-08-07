@@ -382,12 +382,53 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
-    def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", priority=100):
+    def _set_validator(lineage_id, source, bound_entity_id=None, priority=100):
+        # Constitutional amendment (step 4b): the governed lifecycle for a
+        # VALIDATOR — retire-old + activate-new, gated by
+        # `amend_constitution`. The ONLY script path that writes a
+        # validator; set_script is kept away from them. A script driving a
+        # constitutional cycle would queue this as a mutation on a
+        # constitutional proposal, then enact as a government holding
+        # amend_constitution.
+        params = {
+            "lineage_id": str(lineage_id),
+            "source": str(source),
+        }
+        if bound_entity_id is not None:
+            params["entity_id"] = str(bound_entity_id)
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="set_validator",
+            params=params,
+            resource_ids=[str(lineage_id)],
+            priority=int(priority),
+        ))
+
+    def _set_constitution(params, priority=100):
+        # Constitutional amendment (step 4b): replace the voting-system
+        # floor (supermajority threshold/quorum). `params` is a Lua table
+        # (the natural form for a script author); converted to a dict and
+        # serialised to JSON because intent params are stringly typed.
+        # resolve_intent re-checks `amend_constitution` and fires a
+        # VALIDATOR, so the constitution can constrain its own amendment.
+        import json
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="set_constitution",
+            params={"constitution": json.dumps(_lua_to_python(params))},
+            resource_ids=[],
+            priority=int(priority),
+        ))
+
+    def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", proposal_type="ordinary", priority=100):
         # Open a proposal for vote (step 4a-ii). `mutations` is a Lua table
         # (a list of {type=..., params={...}}); converted to Python and
         # serialised to JSON because intent params are stringly typed. No
         # capability gates this — the proposer's electorate membership is
         # the gate, checked in resolve_intent via the weight model.
+        # `proposal_type` is "ordinary" (default) or "constitutional";
+        # the latter's mutations are set_validator / set_constitution and
+        # its enactment needs amend_constitution + a supermajority.
         import json
         intents.append(Intent(
             entity_id=entity_id,
@@ -399,6 +440,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
                 "threshold": str(threshold),
                 "quorum": str(quorum),
                 "title": str(title),
+                "proposal_type": str(proposal_type),
             },
             resource_ids=[str(target_id)],
             priority=int(priority),
@@ -434,6 +476,8 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["levy"]        = _levy
     action_tbl["set_fiscal_policy"] = _set_fiscal_policy
     action_tbl["set_script"]  = _set_script
+    action_tbl["set_validator"] = _set_validator
+    action_tbl["set_constitution"] = _set_constitution
     action_tbl["create_proposal"] = _create_proposal
     action_tbl["vote"]            = _vote
     action_tbl["enact"]           = _enact

@@ -177,6 +177,7 @@ class ProposalRead(BaseModel):
     title: str
     proposer_id: str
     target_id: str
+    proposal_type: str = "ordinary"
     weight_model: str
     threshold: str
     quorum: str
