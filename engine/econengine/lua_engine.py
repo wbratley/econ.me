@@ -382,12 +382,61 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", priority=100):
+        # Open a proposal for vote (step 4a-ii). `mutations` is a Lua table
+        # (a list of {type=..., params={...}}); converted to Python and
+        # serialised to JSON because intent params are stringly typed. No
+        # capability gates this — the proposer's electorate membership is
+        # the gate, checked in resolve_intent via the weight model.
+        import json
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="create_proposal",
+            params={
+                "target_id": str(target_id),
+                "mutations": json.dumps(_lua_to_python(mutations)),
+                "weight_model": str(weight_model),
+                "threshold": str(threshold),
+                "quorum": str(quorum),
+                "title": str(title),
+            },
+            resource_ids=[str(target_id)],
+            priority=int(priority),
+        ))
+
+    def _vote(proposal_id, choice, priority=100):
+        # Cast a for/against on a proposal. Gated by electorate membership
+        # in resolve_intent; the weight is snapshotted by the resolver.
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="vote",
+            params={"proposal_id": str(proposal_id), "choice": str(choice)},
+            resource_ids=[str(proposal_id)],
+            priority=int(priority),
+        ))
+
+    def _enact(proposal_id, priority=100):
+        # Tally and apply a proposal as the target government. resolve_intent
+        # gates this on the legislate capability (the enactor must be the
+        # proposal's target). On pass, the mutations apply atomically; a
+        # VALIDATOR veto on any mutation fails the whole enactment.
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="enact",
+            params={"proposal_id": str(proposal_id)},
+            resource_ids=[str(proposal_id)],
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
     action_tbl["levy"]        = _levy
     action_tbl["set_fiscal_policy"] = _set_fiscal_policy
     action_tbl["set_script"]  = _set_script
+    action_tbl["create_proposal"] = _create_proposal
+    action_tbl["vote"]            = _vote
+    action_tbl["enact"]           = _enact
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process

@@ -169,6 +169,42 @@ class ScriptUpdate(BaseModel):
     entity_id: Optional[str] = None
 
 
+class ProposalRead(BaseModel):
+    """A proposal in the democracy layer (actors step 4a-ii) — a batch of
+    proposed mutations plus the weight model, threshold, and quorum that
+    define the form of government deciding it."""
+    id: str
+    title: str
+    proposer_id: str
+    target_id: str
+    weight_model: str
+    threshold: str
+    quorum: str
+    mutations: list
+    status: str
+    created_at: datetime
+    enacted_at: Optional[datetime] = None
+    tally_yes: Optional[str] = None
+    tally_no: Optional[str] = None
+    tally_electorate: Optional[str] = None
+    tally_turnout: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class VoteRead(BaseModel):
+    """One entity's for/against on one proposal, weight snapshotted at cast."""
+    id: str
+    proposal_id: str
+    voter_id: str
+    choice: str
+    weight: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ScriptValidateResult(BaseModel):
     ok: bool
     error: Optional[str] = None
@@ -488,6 +524,9 @@ class IntentResult(BaseModel):
     process_id: Optional[str] = None  # present for start_process
     script_id: Optional[str] = None   # present for set_script
     lineage_id: Optional[str] = None  # present for set_script
+    proposal_id: Optional[str] = None     # present for create_proposal / vote / enact
+    vote_id: Optional[str] = None         # present for vote
+    proposal_status: Optional[str] = None  # present for enact ("enacted" | "failed")
 
 
 class NeedStateRead(BaseModel):

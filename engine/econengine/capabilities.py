@@ -81,6 +81,7 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "levy": LEVY,                         # step 2 — compel a transfer under a declared rule
     "set_fiscal_policy": SET_FISCAL_POLICY,  # step 3 — set the votable fiscal-policy dict
     "set_script": LEGISLATE,               # step 4a — enact a new version of a law
+    "enact": LEGISLATE,                    # step 4a-ii — enact a passed proposal (the target government exercises legislative power via the vote)
     # "seize": SEIZE,                        # future — expropriate goods/parcels
 }
 
