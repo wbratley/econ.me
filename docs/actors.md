@@ -141,8 +141,8 @@ Each step is independently useful and unblocks the next.
    tweaks), a proposal→vote→enact cycle with citizen *and* share-weight
    models, and a constitutional tier protecting validators. Parameter
    voting (step 3) stays the common case; code voting is the rare path
-   that makes the world self-governing. *— 4a-1 done (`set_script`); design
-   written (see "Step 4 design" below).*
+   that makes the world self-governing. *— done (4a-i, 4a-ii, 4b, 4c all
+   landed; see "Step 4 design" below and Status).*
 
 ### A correctness note for step 2
 
@@ -260,11 +260,12 @@ new voting token:
 
 - *citizen* — electorate = all active INDIVIDUALs, weight = 1 each;
 - *share* — electorate = holders of a symbol, weight = quantity held
-  (reuses `ctx.query.holders`, the cap table);
+  (reuses the holding register `ctx.query.holders` exposes, the cap
+  table); *shipped in 4c*;
 - *council* / *weighted* / *representative* / *liquid* — later resolver
   entries backed by a register/WorldSetting, never new mechanism.
 
-Shipping only the *citizen* resolver in 4a-ii keeps the slice minimal
+Shipping only the *citizen* resolver in 4a-ii kept the slice minimal
 while making every other form "register an entry + add data," not
 "reopen the mechanism."
 
@@ -317,8 +318,13 @@ is *already* the validator layer — it costs nothing extra.)
   setting); `set_validator` / `set_constitution` are the only paths to the
   VALIDATOR scripts and the voting-system floor, and ordinary proposals
   cannot reach them.
-- **Step 4c — shareholder governance (Fork 5C).** The *share* resolver;
-  enacted directives bind a firm's BEHAVIOUR script.
+- **Step 4c — shareholder governance (Fork 5C).** *Done.* The *share*
+  resolver (electorate = holders of a symbol, weighted by quantity; the
+  spec `share:SYMBOL` carries the per-proposal scope). An enacted
+  share-weighted proposal carries an ordinary `set_script` (a BEHAVIOUR
+  script bound to the firm) — the directive the shareholders pass runs as
+  the firm on the next tick. The firm needs `legislate` (a capability
+  grant, data not code); no new mutation type.
 
 Parameter voting (step 3) stays the common case throughout: most
 proposals are still `set_fiscal_policy` edits, because most legislation
@@ -391,7 +397,8 @@ landable anytime.
   replaced wholesale (atomic, auditable). Reachable from every actor
   surface: `POST /intents`, the tick loop, and
   `ctx.action.set_fiscal_policy({…})` from scripts.
-- Step 4 — **in progress (4a-1 done)**. See "Step 4 design: governance —
+- Step 4 — **done (4a-i, 4a-ii, 4b, 4c all landed)**. See "Step 4 design:
+  governance —
   voting on code, safely" above for the engine/platform boundary, the
   safety thesis, the forms-of-government-as-data framing (weight-model
   resolver), and the build sequence. **4a-1 (`set_script`/`legislate`)
@@ -421,7 +428,14 @@ landable anytime.
   validator binds the very next op, including a later mutation in the same
   enactment (atomic); a validator may veto a `set_constitution` so the
   charter can guard its own amendment. Read side `ctx.query.constitution`;
-  `ProposalRead.proposal_type`. Next: **4c** (shareholder governance — the
-  `share` weight-model resolver + directives binding a firm's BEHAVIOUR
-  script). `seize` (goods/parcels) also remains unbuilt and will share the
-  levy mechanism under its own capability.
+  `ProposalRead.proposal_type`. **4c landed** (shareholder governance): the
+  `share` weight-model resolver — electorate = holders of a symbol
+  (`share:SYMBOL` spec), weighted by quantity, read live from the cap
+  table; an enacted share-weighted proposal carries an ordinary
+  `set_script` (a BEHAVIOUR script bound to the firm), so the directive
+  runs as the firm next tick. A corporation is now a row in
+  `weights.WEIGHT_MODELS`, not new mechanism. The governance stack
+  (4a-i/ii + 4b + 4c) is complete. **Remaining unbuilt (engine):** `seize`
+  (goods/parcels expropriation), which will share the levy mechanism under
+  its own capability; and the later weight models (council / weighted /
+  representative / liquid) and platform-layer cadence/trials/UI.

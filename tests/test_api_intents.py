@@ -504,3 +504,80 @@ def test_ordinary_proposal_cannot_smuggle_a_validator_via_api(client):
     result = r.json()[0]
     assert result["status"] == "rejected"
     assert "not allowed for ordinary" in result["reason"]
+
+
+# ---------------------------------------------------------------------------
+# shareholder governance (actors step 4c) — the HTTP path
+# ---------------------------------------------------------------------------
+
+def test_shareholders_enact_a_directive_via_api(client):
+    """A corporation is a different row in the weight-model registry: the
+    electorate is the holders of a symbol (the cap table), weighted by
+    shares. Over POST /intents a shareholder proposes a behaviour-script
+    directive for the firm, the majority shareholder carries it, and a
+    non-holder cannot even vote — the same machinery as citizen democracy,
+    reachable from the machine client."""
+    firm = client.post("/admin/entities",
+                       json={"name": "AcmeCorp", "entity_type": "business",
+                             "owner_id": "u-admin"},
+                       headers=_auth("u-admin")).json()
+    # the firm may legislate its own behaviour script (the capability grant
+    # that lets an enacted directive bind it — data, not new mechanism)
+    client.patch(f"/admin/entities/{firm['id']}",
+                 json={"capabilities": ["legislate"]},
+                 headers=_auth("u-admin"))
+    alice = client.post("/admin/entities",
+                        json={"name": "Alice", "entity_type": "individual",
+                              "owner_id": "u-admin"},
+                        headers=_auth("u-admin")).json()
+    bob = client.post("/admin/entities",
+                      json={"name": "Bob", "entity_type": "individual",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    # the cap table: a 30/70 split
+    for eid, qty in ((alice["id"], "30"), (bob["id"], "70")):
+        client.post("/admin/holdings",
+                    json={"entity_id": eid, "symbol": "ACME", "delta": qty},
+                    headers=_auth("u-admin"))
+
+    directive = json.dumps([{
+        "type": "set_script",
+        "params": {"script_type": "behaviour", "lineage_id": "strategy",
+                   "source": "ctx.state.directed = 'by-shareholders'",
+                   "entity_id": firm["id"]},
+    }])
+    # the 30% shareholder proposes; the weight model is share:ACME
+    r = client.post("/intents", json=[
+        {"entity_id": alice["id"], "type": "create_proposal",
+         "params": {"target_id": firm["id"], "mutations": directive,
+                    "weight_model": "share:ACME", "title": "pivot"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    pid = r.json()[0]["proposal_id"]
+    assert client.get(f"/admin/proposals/{pid}", headers=_auth("u-admin")).json()[
+        "weight_model"] == "share:ACME"
+
+    # a non-holder cannot vote
+    outsider = client.post("/admin/entities",
+                           json={"name": "Outsider", "entity_type": "individual",
+                                 "owner_id": "u-admin"},
+                           headers=_auth("u-admin")).json()
+    r = client.post("/intents", json=[
+        {"entity_id": outsider["id"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "for"}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+    assert "electorate" in r.json()[0]["reason"]
+
+    # the 70% shareholder carries it alone (a majority of cast share weight)
+    client.post("/intents", json=[
+        {"entity_id": bob["id"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "for"}},
+    ], headers=_auth("u-admin"))
+    r = client.post("/intents", json=[
+        {"entity_id": firm["id"], "type": "enact",
+         "params": {"proposal_id": pid}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["proposal_status"] == "enacted"
+    got = client.get(f"/admin/proposals/{pid}", headers=_auth("u-admin")).json()
+    assert got["status"] == "enacted" and got["tally_yes"][:2] == "70"
