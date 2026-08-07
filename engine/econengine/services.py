@@ -9,6 +9,7 @@ from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.script import Script, ScriptType
 from .models.transaction import Transaction, TransactionType
+from .models.proposal import Proposal, Vote, ProposalStatus, VoteChoice
 from .models import WorldSetting
 
 
@@ -464,6 +465,212 @@ def set_script(
     }
     scripting.fire_hooks(session, op)
     return new_script
+
+
+# ---------------------------------------------------------------------------
+# Governance — proposal / vote / enact (actors step 4a-ii)
+# ---------------------------------------------------------------------------
+
+def create_proposal(
+    session: Session,
+    proposer_id: str,
+    target_id: str,
+    title: str,
+    weight_model: str,
+    threshold: Decimal,
+    quorum: Decimal,
+    mutations: list,
+    reference: str = "",
+) -> Proposal:
+    """Open a proposal for vote.
+
+    A proposal bundles a batch of mutations (``set_fiscal_policy`` and/or
+    ``set_script``) with a weight model, a threshold, and a quorum. It is
+    inert until enacted: creating it changes nothing but the row. The
+    ``target`` is the government that will enact — the entity the mutations
+    run as, whose capabilities they exercise. ``weight_model`` names a
+    resolver in ``weights.WEIGHT_MODELS`` (the electorate definition —
+    the form of government as data).
+
+    Validation here is structural (known model, well-formed mutations).
+    The proposer's electorate membership is checked in ``resolve_intent``;
+    capability sufficiency for the mutations is checked at *enactment* — a
+    mutation runs only if the target holds its capability, and a VALIDATOR
+    may still veto it (the constitutional backstop).
+    """
+    from . import weights
+    if weights.get_model(weight_model) is None:
+        raise ValueError(f"unknown weight model {weight_model!r}")
+    if not mutations or not isinstance(mutations, list):
+        raise ValueError("mutations must be a non-empty list")
+    for i, m in enumerate(mutations):
+        if not isinstance(m, dict) or "type" not in m or "params" not in m:
+            raise ValueError(f"mutation {i} must have 'type' and 'params'")
+        if not isinstance(m["params"], dict):
+            raise ValueError(f"mutation {i} params must be an object")
+    proposal = Proposal(
+        title=title,
+        proposer_id=proposer_id,
+        target_id=target_id,
+        weight_model=weight_model,
+        threshold=str(threshold),
+        quorum=str(quorum),
+        mutations=mutations,
+        status=ProposalStatus.OPEN,
+    )
+    session.add(proposal)
+    session.flush()
+    scripting.fire_hooks(session, {
+        "type": "create_proposal",
+        "entity_id": proposer_id,
+        "proposal_id": proposal.id,
+        "reference": reference,
+    })
+    return proposal
+
+
+def cast_vote(
+    session: Session,
+    proposal: Proposal,
+    voter_id: str,
+    choice: VoteChoice,
+    weight: Decimal,
+    reference: str = "",
+) -> Vote:
+    """Record a vote — idempotent per voter per proposal.
+
+    One vote per voter per proposal (a unique constraint backs this).
+    Re-submitting the *same* choice is idempotent (returns the existing
+    vote); re-submitting a *different* choice is rejected. The weight is
+    computed by the resolver at cast time and snapshotted, so the record
+    shows exactly what was counted (for the citizen model, always "1").
+    """
+    existing = session.execute(
+        select(Vote).where(
+            Vote.proposal_id == proposal.id,
+            Vote.voter_id == voter_id,
+        )
+    ).scalars().first()
+    if existing is not None:
+        if existing.choice == choice:
+            return existing  # idempotent re-submit
+        raise ValueError("already voted; cannot change choice")
+    vote = Vote(
+        proposal_id=proposal.id,
+        voter_id=voter_id,
+        choice=choice,
+        weight=str(weight),
+    )
+    session.add(vote)
+    session.flush()
+    scripting.fire_hooks(session, {
+        "type": "vote",
+        "entity_id": voter_id,
+        "proposal_id": proposal.id,
+        "choice": choice.value,
+        "weight": str(weight),
+        "reference": reference,
+    })
+    return vote
+
+
+def enact_proposal(
+    session: Session,
+    proposal: Proposal,
+    reference: str = "",
+) -> dict:
+    """Tally a proposal and, if it passes, apply its mutations atomically.
+
+    Enactment is the only op that changes the world as a result of a
+    proposal; everything before it is bookkeeping. The tally is:
+
+      passed  iff  yes >= threshold * (yes + no)   (fraction of cast weight)
+              and  (yes + no) / electorate >= quorum   (turnout)
+
+    On pass, every mutation is resolved through ``scripting.resolve_intent``
+    *as the target government*, so capability gates and VALIDATORs fire
+    exactly as for a live intent — a citizen-enacted 100% levy is still
+    vetoed by the constitutional cap. Mutations apply atomically
+    (all-or-nothing, one savepoint): if any is rejected or vetoed the whole
+    enactment rolls back and the proposal is marked FAILED with the reason.
+
+    Returns the tally (yes/no/electorate/turnout/passed) and the resulting
+    status. ``resolve_intent`` rejects enacting a non-OPEN proposal or one
+    whose target is not the enactor, so this need not.
+    """
+    from . import weights, scripting
+    from .lua_engine import Intent
+
+    electorate_weights = weights.electorate(session, proposal.weight_model)
+    electorate_total = sum(electorate_weights.values(), Decimal(0))
+    yes = sum(
+        (Decimal(v.weight) for v in proposal.votes if v.choice == VoteChoice.FOR),
+        Decimal(0),
+    )
+    no = sum(
+        (Decimal(v.weight) for v in proposal.votes if v.choice == VoteChoice.AGAINST),
+        Decimal(0),
+    )
+    cast = yes + no
+    turnout = (cast / electorate_total) if electorate_total > 0 else Decimal(0)
+    threshold = Decimal(proposal.threshold)
+    quorum = Decimal(proposal.quorum)
+    passed = (
+        electorate_total > 0
+        and cast > 0
+        and yes >= (threshold * cast)
+        and turnout >= quorum
+    )
+    now = datetime.now(timezone.utc)
+    tally = {
+        "yes": yes, "no": no, "electorate": electorate_total,
+        "turnout": turnout, "passed": passed,
+    }
+    # stamp the tally on the row regardless of outcome (audit)
+    proposal.tally_yes = str(yes)
+    proposal.tally_no = str(no)
+    proposal.tally_electorate = str(electorate_total)
+    proposal.tally_turnout = str(turnout)
+    proposal.enacted_at = now
+
+    if not passed:
+        proposal.status = ProposalStatus.FAILED
+        proposal.failure_reason = "did not meet threshold or quorum"
+        return {**tally, "status": "failed", "reason": proposal.failure_reason}
+
+    # passed — apply every mutation atomically as the target government.
+    # resolve_intent re-checks capabilities and fires VALIDATORs/HOOKs, so
+    # a veto here fails the whole enactment (the savepoint rolls back).
+    try:
+        with session.begin_nested():
+            for m in proposal.mutations:
+                result = scripting.resolve_intent(session, Intent(
+                    entity_id=proposal.target_id,
+                    intent_type=m["type"],
+                    params=dict(m["params"]),
+                    resource_ids=[],
+                ))
+                if result.get("status") != "applied":
+                    raise ValueError(
+                        f"mutation {m['type']!r} rejected: {result.get('reason')}"
+                    )
+    except ValueError as exc:
+        # a mutation was rejected/vetoed -> savepoint rolled back; fail
+        proposal.status = ProposalStatus.FAILED
+        proposal.failure_reason = str(exc)
+        return {**tally, "status": "failed", "reason": str(exc)}
+
+    proposal.status = ProposalStatus.ENACTED
+    scripting.fire_hooks(session, {
+        "type": "enact",
+        "entity_id": proposal.target_id,
+        "proposal_id": proposal.id,
+        "status": "enacted",
+        "tally_yes": str(yes),
+        "tally_no": str(no),
+        "reference": reference,
+    })
+    return {**tally, "status": "enacted", "reason": None}
 
 
 def _op(op_type: str, account: Account, amount: Decimal, reference: str) -> dict:

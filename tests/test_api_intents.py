@@ -3,6 +3,8 @@ batch of intents through the same scripting.resolve_intent dispatcher
 Lua scripts and the tick engine already share, instead of the human
 per-action REST endpoints."""
 
+import json
+
 import pytest
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -323,3 +325,89 @@ def test_set_script_intent_rejected_without_capability(client):
     # no law was created
     scripts = client.get("/admin/scripts", headers=_auth("u-admin")).json()
     assert not any(s["lineage_id"] == "law" for s in scripts)
+
+
+# ---------------------------------------------------------------------------
+# democracy layer (actors step 4a-ii) — the full HTTP path
+# ---------------------------------------------------------------------------
+
+def test_democracy_full_cycle_enacts_fiscal_policy_via_api(client):
+    """Citizens propose, vote, and the government enacts — all through
+    POST /intents. Participation is the electorate (citizenship), not a
+    capability; enactment is gated on the government's legislate capability."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Polity", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["legislate", "set_fiscal_policy"]},
+                 headers=_auth("u-admin"))
+    citizens = [
+        client.post("/admin/entities",
+                    json={"name": n, "entity_type": "individual", "owner_id": "u-admin"},
+                    headers=_auth("u-admin")).json()
+        for n in ("A", "B", "C")
+    ]
+
+    mutations = json.dumps([
+        {"type": "set_fiscal_policy", "params": {"policy": '{"rate":"0.2"}'}}
+    ])
+    # citizen A proposes a 20% tax
+    r = client.post("/intents", json=[
+        {"entity_id": citizens[0]["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "mutations": mutations,
+                    "weight_model": "citizen", "threshold": "0.5", "quorum": "0",
+                    "title": "20% tax"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["status"] == "applied"
+    pid = r.json()[0]["proposal_id"]
+
+    # A and B for, C against -> simple majority of cast weight
+    for idx, choice in ((0, "for"), (1, "for"), (2, "against")):
+        r = client.post("/intents", json=[
+            {"entity_id": citizens[idx]["id"], "type": "vote",
+             "params": {"proposal_id": pid, "choice": choice}},
+        ], headers=_auth("u-admin"))
+        assert r.json()[0]["status"] == "applied", r.text
+
+    # the government enacts the passed proposal
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "enact",
+         "params": {"proposal_id": pid}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "applied", result
+    assert result["proposal_status"] == "enacted"
+
+    # admin read side: the proposal and its votes
+    got = client.get(f"/admin/proposals/{pid}", headers=_auth("u-admin")).json()
+    assert got["status"] == "enacted" and got["tally_yes"] == "2"
+    assert len(client.get(f"/admin/proposals/{pid}/votes",
+                          headers=_auth("u-admin")).json()) == 3
+
+
+def test_democracy_rejects_non_citizen_proposer(client):
+    """A business is not in the citizen electorate, so it cannot propose —
+    participation is membership, defined by the weight model."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Polity", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    biz = client.post("/admin/entities",
+                      json={"name": "Acme", "entity_type": "business",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    mutations = json.dumps([
+        {"type": "set_fiscal_policy", "params": {"policy": '{"rate":"0.1"}'}}
+    ])
+    r = client.post("/intents", json=[
+        {"entity_id": biz["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "mutations": mutations,
+                    "weight_model": "citizen"}},
+    ], headers=_auth("u-admin"))
+    result = r.json()[0]
+    assert result["status"] == "rejected"
+    assert "electorate" in result["reason"]
+    # nothing was recorded
+    assert client.get("/admin/proposals", headers=_auth("u-admin")).json() == []

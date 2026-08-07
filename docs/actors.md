@@ -252,10 +252,11 @@ so the legislature cannot be locked out by what it governs. A HOOK fires
 for audit. Read side: `ctx.query.active_script(lineage_id)` +
 `script_history(lineage_id)`; script entry: `ctx.action.set_script(...)`.
 
-**4a-2. Vote weight — a pluggable resolver, not a hardcoded model.** The
-weight function is a small registry of `model-name → (electorate-finder,
-weight-finder)`, resolved per-proposal. The electorate and weights come
-from existing engine data, so there is no new voting token:
+**4a-2. Vote weight — a pluggable resolver, not a hardcoded model.** *Done*
+(`engine/econengine/weights.py`). The weight function is a small registry
+of `model-name → (electorate-finder, weight-finder)`, resolved per-proposal.
+The electorate and weights come from existing engine data, so there is no
+new voting token:
 
 - *citizen* — electorate = all active INDIVIDUALs, weight = 1 each;
 - *share* — electorate = holders of a symbol, weight = quantity held
@@ -267,7 +268,7 @@ Shipping only the *citizen* resolver in 4a-ii keeps the slice minimal
 while making every other form "register an entry + add data," not
 "reopen the mechanism."
 
-**4a-3. Proposal → vote → enact.** Three engine models and ops:
+**4a-3. Proposal → vote → enact.** *Done.* Three engine models and ops:
 
 - `Proposal`: a batch of proposed mutations (`set_fiscal_policy` and/or
   `set_script`), a weight model, a threshold, a quorum, a status.
@@ -387,7 +388,16 @@ landable anytime.
   full lineage history (`lineage_id` identity, `name` auto-versioned),
   capability-gated, validators excluded (they're the constitution). No
   validator gates `set_script` itself. Read side `ctx.query.active_script`
-  / `script_history`; script entry `ctx.action.set_script`. Next: **4a-ii**
-  (proposal/vote/enact + the citizen weight-model resolver). `seize`
-  (goods/parcels) also remains unbuilt and will share the levy mechanism
-  under its own capability.
+  / `script_history`; script entry `ctx.action.set_script`. **4a-ii
+  landed** (`Proposal`/`Vote` + `create_proposal`/`vote`/`enact`):
+  participation is the electorate (the pluggable weight-model resolver,
+  `engine/econengine/weights.py`; `citizen` = 1 per active INDIVIDUAL);
+  the tally is threshold-of-cast-weight AND quorum-of-electorate;
+  enactment applies the proposal's mutations atomically as the target
+  government through `resolve_intent`, so a citizen-passed over-cap rate
+  is still vetoed by a VALIDATOR (the constitutional backstop, tested).
+  Read side `ctx.query.proposal` / `proposals` / `tally`; admin `GET
+  /admin/proposals`. Next: **4b** (the constitutional tier —
+  `amend_constitution` at supermajority). `seize` (goods/parcels) also
+  remains unbuilt and will share the levy mechanism under its own
+  capability.

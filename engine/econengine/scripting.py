@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
 from . import capabilities as _capabilities
-from .models import Account, Entity, Holding, Script, ScriptType
+from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice
 
 
 class OperationVetoedError(ValueError):
@@ -258,6 +258,65 @@ def build_queries(session: Session) -> dict:
             for s in rows
         ]
 
+    def _proposal_view(p):
+        return {
+            "id": p.id,
+            "title": p.title,
+            "proposer_id": p.proposer_id,
+            "target_id": p.target_id,
+            "weight_model": p.weight_model,
+            "threshold": p.threshold,
+            "quorum": p.quorum,
+            "mutations": list(p.mutations or []),
+            "status": p.status.value,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "enacted_at": p.enacted_at.isoformat() if p.enacted_at else None,
+            "tally_yes": p.tally_yes,
+            "tally_no": p.tally_no,
+            "tally_turnout": p.tally_turnout,
+            "failure_reason": p.failure_reason,
+        }
+
+    def proposal(proposal_id):
+        """One proposal by id — the record a voter or the platform reads to
+        see status, threshold/quorum, and the snapshotted tally."""
+        p = session.get(Proposal, str(proposal_id))
+        return _proposal_view(p) if p is not None else None
+
+    def proposals(status=None):
+        """Every proposal (optionally filtered by status), newest last."""
+        stmt = select(Proposal)
+        if status is not None:
+            try:
+                wanted = ProposalStatus(str(status))
+            except ValueError:
+                return []
+            stmt = stmt.where(Proposal.status == wanted)
+        stmt = stmt.order_by(Proposal.created_at, Proposal.id)
+        return [_proposal_view(p) for p in session.execute(stmt).scalars()]
+
+    def tally(proposal_id):
+        """Live tally — yes/no/turnout computed now from recorded votes and
+        the current electorate. For a closed proposal this recomputes; the
+        authoritative record is the proposal's snapshotted tally_* columns."""
+        from . import weights
+        p = session.get(Proposal, str(proposal_id))
+        if p is None:
+            return None
+        yes = sum((Decimal(v.weight) for v in p.votes if v.choice == VoteChoice.FOR), Decimal(0))
+        no = sum((Decimal(v.weight) for v in p.votes if v.choice == VoteChoice.AGAINST), Decimal(0))
+        electorate_total = sum(weights.electorate(session, p.weight_model).values(), Decimal(0))
+        cast = yes + no
+        turnout = str(cast / electorate_total) if electorate_total > 0 else "0"
+        return {
+            "proposal_id": p.id,
+            "yes": str(yes),
+            "no": str(no),
+            "cast": str(cast),
+            "electorate": str(electorate_total),
+            "turnout": turnout,
+        }
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -268,6 +327,9 @@ def build_queries(session: Session) -> dict:
         "fiscal_policy": fiscal_policy,
         "active_script": active_script,
         "script_history": script_history,
+        "proposal": proposal,
+        "proposals": proposals,
+        "tally": tally,
     }
 
 
@@ -389,6 +451,100 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                 )
             extra["script_id"] = script.id
             extra["lineage_id"] = lineage_id
+
+        elif intent.intent_type == "create_proposal":
+            # Open a proposal for vote (step 4a-ii). No capability gates
+            # this — participation *is* the electorate, defined by the
+            # weight model (form of government as data), so the proposer
+            # must be a member. The proposal is inert until enacted; the
+            # target is the government whose capabilities the mutations
+            # will exercise.
+            from . import weights
+            target = session.get(Entity, intent.params.get("target_id", ""))
+            if target is None:
+                return rejected("unknown target entity")
+            weight_model = intent.params.get("weight_model", "")
+            try:
+                proposer_weight = weights.weight_of(session, weight_model, intent.entity_id)
+            except ValueError as exc:
+                return rejected(str(exc))
+            if proposer_weight <= 0:
+                return rejected("proposer is not in the electorate")
+            try:
+                mutations = json.loads(intent.params.get("mutations", "[]"))
+            except ValueError:
+                return rejected("invalid mutations JSON")
+            try:
+                with session.begin_nested():
+                    proposal = services.create_proposal(
+                        session, intent.entity_id, target.id,
+                        intent.params.get("title", ""),
+                        weight_model,
+                        Decimal(intent.params.get("threshold", "0.5")),
+                        Decimal(intent.params.get("quorum", "0")),
+                        mutations,
+                        reference,
+                    )
+            except ValueError as exc:
+                return rejected(str(exc))
+            extra["proposal_id"] = proposal.id
+
+        elif intent.intent_type == "vote":
+            # Cast a for/against. Gated by electorate membership (the
+            # resolver): a non-member gets weight 0 and is rejected. The
+            # weight is snapshotted at cast time. Idempotent per voter.
+            from . import weights
+            proposal = session.get(Proposal, intent.params.get("proposal_id", ""))
+            if proposal is None:
+                return rejected("unknown proposal")
+            if proposal.status != ProposalStatus.OPEN:
+                return rejected(f"proposal is {proposal.status.value}, not open")
+            choice_raw = intent.params.get("choice", "")
+            try:
+                choice = VoteChoice(choice_raw)
+            except ValueError:
+                return rejected("choice must be 'for' or 'against'")
+            try:
+                voter_weight = weights.weight_of(session, proposal.weight_model, intent.entity_id)
+            except ValueError as exc:
+                return rejected(str(exc))
+            if voter_weight <= 0:
+                return rejected("voter is not in the electorate")
+            try:
+                with session.begin_nested():
+                    vote = services.cast_vote(
+                        session, proposal, intent.entity_id, choice, voter_weight, reference,
+                    )
+            except ValueError as exc:
+                return rejected(str(exc))
+            extra["vote_id"] = vote.id
+            extra["choice"] = choice.value
+            extra["weight"] = str(voter_weight)
+
+        elif intent.intent_type == "enact":
+            # Tally and apply. The capability gate above already proved the
+            # enactor (the target government) holds LEGISLATE; here we also
+            # confirm the enactor IS this proposal's target. enact_proposal
+            # tallies and, on pass, applies the mutations atomically as the
+            # target — re-running each through resolve_intent, so caps and
+            # validators fire. A failed tally is still an "applied" intent
+            # (it did its job); the outcome rides in extra.
+            proposal = session.get(Proposal, intent.params.get("proposal_id", ""))
+            if proposal is None:
+                return rejected("unknown proposal")
+            if proposal.status != ProposalStatus.OPEN:
+                return rejected(f"proposal is {proposal.status.value}, not open")
+            if proposal.target_id != intent.entity_id:
+                return rejected("only the target government may enact this proposal")
+            with session.begin_nested():
+                outcome = services.enact_proposal(session, proposal, reference)
+            extra["proposal_id"] = proposal.id
+            extra["proposal_status"] = outcome["status"]
+            extra["tally_yes"] = str(outcome["yes"])
+            extra["tally_no"] = str(outcome["no"])
+            extra["tally_turnout"] = str(outcome["turnout"])
+            if outcome.get("reason"):
+                extra["reason"] = outcome["reason"]
 
         elif intent.intent_type in ("issue_money", "retire_money"):
             account = session.get(Account, intent.params.get("account_id"))
