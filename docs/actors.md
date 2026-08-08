@@ -266,8 +266,14 @@ new voting token:
 - *share* — electorate = holders of a symbol, weight = quantity held
   (reuses the holding register `ctx.query.holders` exposes, the cap
   table); *shipped in 4c*;
-- *council* / *weighted* / *representative* / *liquid* — later resolver
-  entries backed by a register/WorldSetting, never new mechanism.
+- *council* / *weighted* — electorate = the members of a named register
+  (a WorldSetting, `engine/econengine/councils.py`), weight 1 each under
+  `council` or the declared per-member weight under `weighted`; *shipped
+  after 4c*. `weighted` subsumes a *representative* chamber — set each
+  MP's weight to their constituency size and the majority is of
+  represented population, not of heads;
+- *liquid* — later resolver entry (a delegation graph), never new
+  mechanism.
 
 Shipping only the *citizen* resolver in 4a-ii kept the slice minimal
 while making every other form "register an entry + add data," not
@@ -339,7 +345,8 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 - **`set_script` semantics: retire-old + activate-new** (not in-place) —
   chosen to preserve a full legislative lineage.
 - **Direct democracy MVP** (every citizen votes on every proposal);
-  representative is a later weight model.
+  representative is now the `weighted` model (set each MP's weight to
+  constituency size); council/weighted landed after 4c.
 - **Cadence-agnostic enactment** — admin/platform calls `enact` in MVP.
 - **Defaults** — simple majority + modest quorum, both constitutional
   params.
@@ -352,11 +359,11 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 ### What stays explicitly unbuilt (engine)
 
 The enforced-state-action primitive (tax *and* seizure) is now complete.
-What remains is the governance machinery's later weight models
-(council / weighted / representative / liquid) and the platform-layer
-cadence/trials/UI — and `grant_capability`, which must itself be governed
-(a vote / constitutional process) before it is an action rather than an
-admin-only operation.
+What remains is the governance machinery's last weight model (liquid
+democracy — a delegation graph) and the platform-layer cadence/trials/UI
+— and `grant_capability`, which must itself be governed (a vote /
+constitutional process) before it is an action rather than an admin-only
+operation.
 
 ## Status
 
@@ -457,6 +464,9 @@ admin-only operation.
   runs as the firm next tick. A corporation is now a row in
   `weights.WEIGHT_MODELS`, not new mechanism. The governance stack
   (4a-i/ii + 4b + 4c) is complete. `seize` (step 2's goods/parcels
-  companion) has since landed — see Step 2. **Remaining unbuilt (engine):**
-  the later weight models (council / weighted /
-  representative / liquid) and platform-layer cadence/trials/UI.
+  companion) has since landed — see Step 2. The `council` / `weighted`
+  weight models have since landed too (a named membership register,
+  `engine/econengine/councils.py`, a WorldSetting; `weighted` subsumes a
+  representative chamber). **Remaining unbuilt (engine):**
+  liquid democracy (a delegation graph) and platform-layer
+cadence/trials/UI.

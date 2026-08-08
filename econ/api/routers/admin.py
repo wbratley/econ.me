@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
+import re
 from sqlalchemy.orm import Session
 
-from econengine import conditions, services, tick
+from econengine import conditions, councils, services, tick
 from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import (
-    AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, EntityRead,
-    EntityUpdate, EstateRuleRead, EstateRuleUpdate, UserRead, UserUpdate,
+    AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
+    CouncilWrite, EntityRead, EntityUpdate, EstateRuleRead, EstateRuleUpdate,
+    UserRead, UserUpdate,
 )
 from econengine.models import Entity, User
 
@@ -119,6 +121,60 @@ def set_compute_budget(
     tick.set_compute_budget_ms(session, body.budget_ms)
     session.commit()
     return ComputeBudgetRead(budget_ms=body.budget_ms)
+
+
+# --- council registers (seeding membership for the council/weighted models) ---
+
+_COUNCIL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,55}$")
+
+
+def _validate_council_name(name: str) -> str:
+    """A council name is a short, path-safe label (it becomes the
+    weight-model scope, e.g. ``council:senate``). Reject colons and other
+    characters that would collide with the spec grammar."""
+    if not _COUNCIL_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=422,
+            detail="council name must be 1-56 chars of [A-Za-z0-9_-]",
+        )
+    return name
+
+
+@router.get("/councils/{name}", response_model=CouncilRead)
+def get_council(
+    name: str,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_council_name(name)
+    return CouncilRead(name=name, members=councils.get_register(session, name))
+
+
+@router.put("/councils/{name}", response_model=CouncilRead)
+def set_council(
+    name: str,
+    body: CouncilWrite,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_council_name(name)
+    try:
+        councils.set_register(session, name, body.members)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    session.commit()
+    return CouncilRead(name=name, members=councils.get_register(session, name))
+
+
+@router.delete("/councils/{name}", status_code=204)
+def delete_council(
+    name: str,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_council_name(name)
+    councils.delete_register(session, name)
+    session.commit()
 
 
 @router.get("/users", response_model=list[UserRead])
