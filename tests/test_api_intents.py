@@ -718,3 +718,81 @@ def test_council_governance_cycle_via_api(client):
     # DELETE removes the register
     r = client.delete(f"/admin/councils/senate", headers=_auth("u-admin"))
     assert r.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# liquid democracy — the delegation graph via the API
+# ---------------------------------------------------------------------------
+
+def test_liquid_governance_cycle_via_api(client):
+    """Seed a delegation graph (PUT /admin/delegations), then run the full
+    cycle: a delegator cannot vote, a delegated bloc carries the vote, and
+    the enacted directive binds the government."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Republic", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["legislate", "set_fiscal_policy"]},
+                 headers=_auth("u-admin"))
+    voters = {}
+    for nm in ("Alice", "Bob", "Carol", "Dave"):
+        voters[nm] = client.post("/admin/entities",
+            json={"name": nm, "entity_type": "individual",
+                  "owner_id": "u-admin"},
+            headers=_auth("u-admin")).json()["id"]
+    # Alice and Bob both delegate to Carol → Carol has weight 3
+    r = client.put("/admin/delegations/senate",
+                   json={"delegations": {voters["Alice"]: voters["Carol"],
+                                         voters["Bob"]: voters["Carol"]}},
+                   headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    assert r.json()["delegations"] == {
+        voters["Alice"]: voters["Carol"], voters["Bob"]: voters["Carol"]}
+
+    mutations = [{"type": "set_fiscal_policy",
+                  "params": {"policy": "{\"flat_rate\": \"0.1\"}"}}]
+    # a delegator (Alice) cannot propose — not in the electorate
+    r = client.post("/intents", json=[
+        {"entity_id": voters["Alice"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "weight_model": "liquid:senate",
+                    "threshold": "0.5", "quorum": "0",
+                    "mutations": json.dumps(mutations)}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+
+    # Carol (the delegated sink) proposes
+    r = client.post("/intents", json=[
+        {"entity_id": voters["Carol"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "weight_model": "liquid:senate",
+                    "threshold": "0.5", "quorum": "0",
+                    "mutations": json.dumps(mutations)}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "applied"
+    pid = r.json()[0]["proposal_id"]
+
+    # Carol (weight 3) FOR beats Dave (weight 1) AGAINST → 3/4 = 0.75
+    client.post("/intents", json=[
+        {"entity_id": voters["Carol"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "for"}},
+    ], headers=_auth("u-admin"))
+    client.post("/intents", json=[
+        {"entity_id": voters["Dave"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "against"}},
+    ], headers=_auth("u-admin"))
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "enact",
+         "params": {"proposal_id": pid}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["proposal_status"] == "enacted"
+
+    # a self-delegation is rejected at write time
+    r = client.put("/admin/delegations/bad",
+                   json={"delegations": {voters["Dave"]: voters["Dave"]}},
+                   headers=_auth("u-admin"))
+    assert r.status_code == 422
+
+    # DELETE clears the graph (back to direct democracy)
+    r = client.delete("/admin/delegations/senate", headers=_auth("u-admin"))
+    assert r.status_code == 204
