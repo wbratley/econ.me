@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 import re
 from sqlalchemy.orm import Session
 
-from econengine import conditions, councils, services, tick
+from econengine import conditions, councils, delegations, services, tick
 from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
 from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
-    CouncilWrite, EntityRead, EntityUpdate, EstateRuleRead, EstateRuleUpdate,
-    UserRead, UserUpdate,
+    CouncilWrite, DelegationRead, DelegationWrite, EntityRead, EntityUpdate,
+    EstateRuleRead, EstateRuleUpdate, UserRead, UserUpdate,
 )
 from econengine.models import Entity, User
 
@@ -174,6 +174,52 @@ def delete_council(
 ):
     _validate_council_name(name)
     councils.delete_register(session, name)
+    session.commit()
+
+
+# --- delegation registers (seeding the liquid-democracy graph) ---
+
+#: A polity name obeys the same label rule as a council name (it becomes
+#: the weight-model scope, e.g. ``liquid:senate``).
+_validate_delegation_name = _validate_council_name
+
+
+@router.get("/delegations/{name}", response_model=DelegationRead)
+def get_delegations(
+    name: str,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_delegation_name(name)
+    return DelegationRead(
+        name=name, delegations=delegations.get_delegations(session, name))
+
+
+@router.put("/delegations/{name}", response_model=DelegationRead)
+def set_delegations(
+    name: str,
+    body: DelegationWrite,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_delegation_name(name)
+    try:
+        delegations.set_delegations(session, name, body.delegations)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    session.commit()
+    return DelegationRead(
+        name=name, delegations=delegations.get_delegations(session, name))
+
+
+@router.delete("/delegations/{name}", status_code=204)
+def delete_delegations(
+    name: str,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    _validate_delegation_name(name)
+    delegations.delete_delegations(session, name)
     session.commit()
 
 

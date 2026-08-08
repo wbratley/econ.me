@@ -33,10 +33,11 @@ Shipped here:
   (``councils.py``, a WorldSetting), weight 1 each under ``council`` or the
   declared per-member weight under ``weighted``. ``weighted`` subsumes a
   representative chamber (set each MP's weight to their constituency size).
-
-Later forms (liquid democracy — a delegation graph) need more than a
-register entry and are deferred; every other common form is already one
-of the above with different data.
+- *liquid* — liquid democracy: every active INDIVIDUAL, weight 1 each
+  plus the weight delegated *to* them (resolved transitively against a
+  delegation graph in ``delegations.py``). A delegator leaves the
+  electorate (they voted by redirecting); an empty graph is plain direct
+  democracy.
 """
 
 from decimal import Decimal
@@ -44,7 +45,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Entity, EntityType, EntityStatus, Holding
-from . import councils
+from . import councils, delegations
 
 
 def parse_spec(spec: str) -> tuple[str, str]:
@@ -211,15 +212,105 @@ def _member_active(session: Session, entity_id: str, name: str) -> bool:
     return e is not None and e.status == EntityStatus.ACTIVE
 
 
+# --- liquid: direct democracy plus transitive delegation -------------------
+
+_LIQUID_USAGE = "liquid weight model needs a polity name: use 'liquid:NAME'"
+
+
+def _active_individual_ids(session: Session) -> set[str]:
+    """The base electorate pool for liquid (and citizen): every active
+    INDIVIDUAL. Liquid layers a delegation graph *over* this same pool, so
+    an empty graph is identical to direct democracy."""
+    return set(
+        session.execute(
+            select(Entity.id).where(
+                Entity.entity_type == EntityType.INDIVIDUAL,
+                Entity.status == EntityStatus.ACTIVE,
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _liquid_resolve_weights(
+    active_ids: set[str], delegations: dict[str, str]
+) -> dict[str, Decimal]:
+    """Resolve each active individual's unit of weight to the *terminal*
+    voter at the end of their delegation chain.
+
+    The terminal of a chain is the first member who does not delegate
+    (``delegations.get(cur) is None``). A delegator therefore leaves the
+    electorate (their weight is redirected, not cast by them). Three
+    things strand a unit of weight — it is dropped rather than counted, a
+    fail-safe that flags a broken graph instead of inflating anyone:
+
+      - a *cycle* (A→B→A): the chain never reaches a non-delegator;
+      - a delegation *outside the pool* (to an inactive or non-individual
+        entity): the chain leaves the active electorate;
+      - (defensively) a self-loop, which is a 1-cycle — also rejected at
+        set time.
+
+    Returns ``{terminal_id: accumulated_weight}`` — the electorate under
+    ``liquid:{name}``.
+    """
+    weight: dict[str, Decimal] = {}
+    for person in active_ids:
+        seen = {person}
+        cur = person
+        terminal = None
+        while True:
+            nxt = delegations.get(cur)
+            if nxt is None:
+                terminal = cur          # cur does not delegate → terminal
+                break
+            if nxt not in active_ids:
+                terminal = None         # chain leaves the active electorate
+                break
+            if nxt in seen:
+                terminal = None         # cycle
+                break
+            seen.add(nxt)
+            cur = nxt
+        if terminal is not None:
+            weight[terminal] = weight.get(terminal, Decimal(0)) + Decimal(1)
+    return weight
+
+
+def _liquid_electorate(session: Session, name: str) -> dict[str, Decimal]:
+    """Liquid democracy over the active individuals of polity ``name``.
+
+    The base pool is every active INDIVIDUAL (as in direct democracy); the
+    delegation graph (``delegations.get_delegations``, a WorldSetting) is
+    layered over it. Each member's weight is 1 plus the weight delegated to
+    them transitively. A delegator is not in the electorate — they voted by
+    redirecting. With an empty graph this is identical to ``citizen``.
+    """
+    if not name:
+        raise ValueError(_LIQUID_USAGE)
+    return _liquid_resolve_weights(
+        _active_individual_ids(session),
+        delegations.get_delegations(session, name),
+    )
+
+
+def _liquid_weight(session: Session, entity_id: str, name: str) -> Decimal:
+    if not name:
+        raise ValueError(_LIQUID_USAGE)
+    return _liquid_electorate(session, name).get(entity_id, Decimal(0))
+
+
 #: model name -> (electorate-finder, weight-finder). Each finder takes the
 #: per-proposal scope (the symbol for `share`, the council name for
-#: `council`/`weighted`, ignored for `citizen`). Add a row to add a form of
-#: government; the proposal/vote/enact ops never change.
+#: `council`/`weighted`, the polity name for `liquid`, ignored for
+#: `citizen`). Add a row to add a form of government; the proposal/vote/
+#: enact ops never change.
 WEIGHT_MODELS = {
     "citizen": (_citizen_electorate, _citizen_weight),
     "share": (_share_electorate, _share_weight),
     "council": (_council_electorate, _council_weight),
     "weighted": (_weighted_electorate, _weighted_weight),
+    "liquid": (_liquid_electorate, _liquid_weight),
 }
 
 

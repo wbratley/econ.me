@@ -519,6 +519,18 @@ class CouncilRead(BaseModel):
     members: dict[str, str]  # {member_entity_id: weight_str}
 
 
+class DelegationWrite(BaseModel):
+    """Seed a liquid-democracy delegation graph: a ``{delegator_id:
+    delegate_id}`` mapping. A delegator's vote weight is redirected to their
+    delegate (transitively); a self-loop is rejected at write time."""
+    delegations: dict[str, str]
+
+
+class DelegationRead(BaseModel):
+    name: str
+    delegations: dict[str, str]  # {delegator_id: delegate_id}
+
+
 class IntentRequest(BaseModel):
     """A machine client's request for the shared intent resolver (§4.5
     'an intent API for machine clients' — same resolver as scripts use)."""

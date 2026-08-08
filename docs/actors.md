@@ -272,8 +272,11 @@ new voting token:
   after 4c*. `weighted` subsumes a *representative* chamber — set each
   MP's weight to their constituency size and the majority is of
   represented population, not of heads;
-- *liquid* — later resolver entry (a delegation graph), never new
-  mechanism.
+- *liquid* — liquid democracy: every active INDIVIDUAL, weight 1 each
+  plus the weight delegated *to* them (resolved transitively against a
+  delegation graph in ``delegations.py``, a WorldSetting). A delegator
+  leaves the electorate (they voted by redirecting); an empty graph is
+  plain direct democracy. *Shipped after 4c.*
 
 Shipping only the *citizen* resolver in 4a-ii kept the slice minimal
 while making every other form "register an entry + add data," not
@@ -350,18 +353,16 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 - **Cadence-agnostic enactment** — admin/platform calls `enact` in MVP.
 - **Defaults** — simple majority + modest quorum, both constitutional
   params.
-- **Deferrals** — delegation/liquid democracy (a weight-redirect rule +
-  delegation register; a weight-function refinement, not new mechanism);
-  bicameral/multi-body enactment (a richer enactment condition); federated
-  polities. Trials (§4.2) are platform (CoW fork audit), out of engine
-  scope.
+- **Deferrals** — bicameral/multi-body enactment (a richer enactment
+  condition); federated polities. Trials (§4.2) are platform (CoW fork
+  audit), out of engine scope. (Delegation/liquid democracy was deferred
+  here once; it has since shipped — see 4a-2.)
 
 ### What stays explicitly unbuilt (engine)
 
 The enforced-state-action primitive (tax *and* seizure) is now complete.
-What remains is the governance machinery's last weight model (liquid
-democracy — a delegation graph) and the platform-layer cadence/trials/UI
-— and `grant_capability`, which must itself be governed (a vote /
+What remains is the platform-layer cadence/trials/UI — and
+`grant_capability`, which must itself be governed (a vote /
 constitutional process) before it is an action rather than an admin-only
 operation.
 
@@ -467,6 +468,8 @@ operation.
   companion) has since landed — see Step 2. The `council` / `weighted`
   weight models have since landed too (a named membership register,
   `engine/econengine/councils.py`, a WorldSetting; `weighted` subsumes a
-  representative chamber). **Remaining unbuilt (engine):**
-  liquid democracy (a delegation graph) and platform-layer
-cadence/trials/UI.
+  representative chamber). The `liquid` weight model has since landed too
+  (liquid democracy — direct democracy plus transitive delegation,
+  `engine/econengine/delegations.py`, a WorldSetting delegation graph).
+  **Remaining unbuilt (engine):**
+  platform-layer cadence/trials/UI.
