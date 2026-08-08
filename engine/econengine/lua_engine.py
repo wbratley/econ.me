@@ -345,6 +345,40 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _seize(from_entity_id, spec, rule_ref, priority=100):
+        # Privileged expropriation — the goods/parcels analogue of levy.
+        # Move goods and/or parcels out of `from_entity_id` (an entity the
+        # actor does NOT own) into a declared recipient (the authority
+        # itself by default). resolve_intent gates this on the `seize`
+        # capability; a VALIDATOR may veto it under `rule_ref`.
+        # `spec` is a Lua table:
+        #   {symbol="GRAIN", quantity=50}        goods
+        #   {parcel_ids={id1, id2}}              parcels
+        #   {to_entity_id=coop_id, ...}          redirect (redistribution)
+        import json
+        spec = _lua_to_python(spec) or {}
+        params = {"from_entity_id": str(from_entity_id), "rule_ref": str(rule_ref)}
+        if "symbol" in spec:
+            params["symbol"] = str(spec["symbol"])
+        if "quantity" in spec:
+            params["quantity"] = str(spec["quantity"])
+        if "to_entity_id" in spec:
+            params["to_entity_id"] = str(spec["to_entity_id"])
+        if spec.get("parcel_ids"):
+            params["parcel_ids"] = json.dumps([str(p) for p in spec["parcel_ids"]])
+        resource_ids = [str(from_entity_id)]
+        if "to_entity_id" in spec:
+            resource_ids.append(str(spec["to_entity_id"]))
+        for p in (spec.get("parcel_ids") or []):
+            resource_ids.append(str(p))
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="seize",
+            params=params,
+            resource_ids=resource_ids,
+            priority=int(priority),
+        ))
+
     def _set_fiscal_policy(policy, priority=100):
         # Replace the votable fiscal-policy dict. `policy` is a Lua table
         # (the natural form for a script author); it is converted to a
@@ -474,6 +508,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
     action_tbl["levy"]        = _levy
+    action_tbl["seize"]       = _seize
     action_tbl["set_fiscal_policy"] = _set_fiscal_policy
     action_tbl["set_script"]  = _set_script
     action_tbl["set_validator"] = _set_validator

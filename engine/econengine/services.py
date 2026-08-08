@@ -4,12 +4,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION
+from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION, SEIZE
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.script import Script, ScriptType
 from .models.transaction import Transaction, TransactionType
 from .models.proposal import Proposal, Vote, ProposalStatus, VoteChoice, ProposalType
+from .models.parcel import Parcel
 from .models import WorldSetting
 
 
@@ -267,6 +268,114 @@ def levy(
     session.flush()
     scripting.fire_hooks(session, {**op, "transaction_ids": [debit.id, credit.id]})
     return debit, credit
+
+
+def seize(
+    session: Session,
+    authority: Entity,
+    from_entity: Entity,
+    *,
+    symbol: str | None = None,
+    quantity: Decimal | None = None,
+    parcel_ids: list[str] | None = None,
+    to_entity: Entity | None = None,
+    rule_ref: str,
+    reference: str = "",
+    date: datetime | None = None,
+) -> dict:
+    """Compel movement of goods and/or parcels out of an entity the
+    authority does not own, into a declared recipient.
+
+    The goods/parcels analogue of :func:`levy` (which is the money half):
+    where a levy compels a money transfer, a seizure expropriates the
+    things themselves — tax-in-kind, confiscation, eminent domain. It is
+    the second half of the enforced-state-action primitive
+    (``docs/actors.md`` Fork 1C); the estate sweep
+    (``conditions._apply_estate``) already moves goods and parcels by
+    engine authority, and seize generalises that from death to policy.
+
+    All the safety lives in the gating, not the movement:
+
+    - ``authority`` must hold the ``seize`` capability (checked here as
+      defense in depth, and earlier by ``resolve_intent`` at the
+      capability gate, the same boundary that enforces ownership).
+    - the recipient defaults to the authority (the state seizes into its
+      own); a different ``to_entity`` is the redistribution case — the
+      authority is the actor and the recipient is declared, and a
+      VALIDATOR may constrain where seized assets may go.
+    - goods movement is goods-conserving: the quantity leaves the
+      victim's holding (a debit that raises ``InsufficientHoldingsError``
+      if the victim is short — fail-closed) and enters the recipient's.
+      Like ``transfer_parcel`` it records no ``Transaction`` (transactions
+      are money-only); the movement is carried by the holding rows.
+    - parcels are reassigned via the same ownership flip as
+      ``parcels.grant_parcel`` (which refuses a parcel with running
+      processes bound to it); the victim must currently own each parcel.
+    - ``rule_ref`` rides ``ctx.op`` so a VALIDATOR can veto an illegal
+      seizure — e.g. that the quantity exceeds what the schedule permits
+      — exactly as for levy. Validators are fail-closed, so a broken
+      policy gate never silently expropriates.
+
+    At least one of (``symbol``+``quantity``) or ``parcel_ids`` must be
+    given; both may be given (seize a farm and its standing crop in one
+    act). Returns a summary of what moved.
+    """
+    # markets imports services (circular) — defer, like fiscal/constitution.
+    from . import markets, parcels
+
+    if not authority.has_capability(SEIZE):
+        raise MissingCapabilityError(authority.id, SEIZE)
+    wants_goods = symbol is not None or quantity is not None
+    wants_parcels = bool(parcel_ids)
+    if not wants_goods and not wants_parcels:
+        raise ValueError("seize needs goods (symbol+quantity) or parcels (parcel_ids)")
+    if wants_goods and (symbol is None or quantity is None):
+        raise ValueError("goods seizure needs both symbol and quantity")
+    if wants_goods and quantity <= 0:
+        raise ValueError("quantity must be positive")
+    recipient = to_entity or authority
+
+    op = {
+        "type": "seize",
+        "entity_id": authority.id,
+        "from_entity_id": from_entity.id,
+        "to_entity_id": recipient.id,
+        "symbol": symbol,
+        "quantity": str(quantity) if quantity is not None else None,
+        "parcel_ids": list(parcel_ids) if parcel_ids else [],
+        "reference": reference,
+        "rule_ref": rule_ref,
+    }
+    scripting.fire_validators(session, op)
+    _ = date or datetime.now(timezone.utc)  # goods/parcels are untimed; parity with levy
+
+    goods_moved = Decimal("0")
+    if wants_goods:
+        # debit the victim first (raises InsufficientHoldingsError if
+        # short), then credit the recipient — goods-conserving, and atomic
+        # under the caller's savepoint.
+        markets.adjust_holding(session, from_entity, symbol, -quantity)
+        markets.adjust_holding(session, recipient, symbol, quantity)
+        goods_moved = quantity
+
+    parcels_moved = 0
+    for parcel_id in parcel_ids or []:
+        parcel = session.get(Parcel, parcel_id)
+        if parcel is None:
+            raise ValueError("unknown parcel")
+        if parcel.owner_id != from_entity.id:
+            raise ValueError("entity does not own parcel")
+        parcels.grant_parcel(session, parcel, recipient)
+        parcels_moved += 1
+
+    summary = {
+        "goods_symbol": symbol,
+        "goods_quantity": str(goods_moved),
+        "parcels": parcels_moved,
+        "to_entity_id": recipient.id,
+    }
+    scripting.fire_hooks(session, {**op, **summary})
+    return summary
 
 
 def set_fiscal_policy(

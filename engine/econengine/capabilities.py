@@ -20,10 +20,10 @@ This is the platform's rule layer for actor authorisation
   so a capability denial is a clean rejection at the boundary — the same
   place ownership is enforced — rather than a buried exception.
 
-Capabilities not yet wired to an action (seize, grant_capability)
+Capabilities not yet wired to an action (grant_capability)
 are declared here as constants and listed for documentation, but absent
-from `INTENT_CAPABILITIES` until the action exists (step 4+). Declaring
-them now keeps the vocabulary stable across the build.
+from `INTENT_CAPABILITIES` until the action exists. Declaring them now
+keeps the vocabulary stable across the build.
 """
 
 # --- capability names ------------------------------------------------------
@@ -59,8 +59,11 @@ LEGISLATE = "legislate"
 #: ordinary law must obey.
 AMEND_CONSTITUTION = "amend_constitution"
 
-#: Expropriate assets outright (seizure). Future; shares the levy
-#: mechanism under a different rule class.
+#: Expropriate assets outright — goods and/or parcels, not money (the
+#: goods/parcels half of enforced state action; levy is the money half).
+#: Wired via `services.seize` and the `seize` intent under its own
+#: capability, sharing levy's gating model (capability + declared rule +
+#: VALIDATOR veto).
 SEIZE = "seize"
 
 #: Confer capabilities on another entity. Future, meta — the act of
@@ -98,7 +101,7 @@ INTENT_CAPABILITIES: dict[str, str] = {
     # amend_constitution. It is checked in resolve_intent's enact branch
     # after the proposal (and its type) is loaded — the one intent whose
     # required capability is not a pure function of its name.
-    # "seize": SEIZE,                        # future — expropriate goods/parcels
+    "seize": SEIZE,                       # expropriate goods/parcels (the goods half of levy's primitive)
 }
 
 
