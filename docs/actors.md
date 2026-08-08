@@ -318,6 +318,39 @@ or `amend_constitution` (constitutional) from the proposal's tier.
 (Judicial review / a constitutional court that strikes down an enacted law
 is *already* the validator layer — it costs nothing extra.)
 
+**4a-5. Capability transfer — `grant_capability` / `revoke_capability`.**
+*Done.* The meta-privilege above every other capability: changing *who
+can exercise power*. Both the `grant_capability` and `revoke_capability`
+intents gate on the single `GRANT_CAPABILITY` capability (conferring and
+withdrawing power are the same meta-act), checked at the intent boundary
+AND in the service, exactly like levy/seize. Three locked decisions:
+
+- **Free-grant model.** A holder may confer any *declared* capability
+  (`capabilities.ALL`) on any entity — a legislature constitutes agencies
+  with powers it does not itself exercise. The safety floor is the gate +
+  a VALIDATOR veto + the supermajority (below), not "you may only delegate
+  what you hold" (capabilities are non-conserved permissions, not
+  assets). A VALIDATOR may veto any grant/revoke (fail-closed), so the
+  constitution can forbid conferring a dangerous capability regardless of
+  who authorises it.
+- **Constitutional-tier mutations.** As a proposal mutation, a capability
+  transfer is constitutional (`CONSTITUTIONAL_MUTATIONS`) — power transfer
+  is meta, so a simple majority must not be able to escalate power. An
+  ordinary proposal may not carry one; a constitutional proposal may. This
+  is the governance the roadmap demanded ("granting power must itself be
+  governed: a vote / constitutional process").
+- **Defense-in-depth + atomic rollback.** The capability is checked at the
+  intent boundary (`INTENT_CAPABILITIES`) and re-checked in the service
+  (`MissingCapabilityError`); a veto during enactment rolls back the whole
+  grant. Reaching every actor surface: `POST /intents`, the tick loop
+  (`ctx.action.grant_capability(to_id, cap)` / `revoke_capability` from an
+  enacted directive), and the vote→enact path.
+
+The admin path (`PATCH /admin/entities/{id}`) remains the bootstrap; the
+engine primitive lets a self-governing world transfer power in-world
+without an operator. No migration (capabilities are a JSON column on
+`Entity`).
+
 ### Build sequence
 
 - **Step 4a-i — `set_script`.** *Done* (this PR). The minimum that
@@ -360,11 +393,12 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 
 ### What stays explicitly unbuilt (engine)
 
-The enforced-state-action primitive (tax *and* seizure) is now complete.
-What remains is the platform-layer cadence/trials/UI — and
-`grant_capability`, which must itself be governed (a vote /
-constitutional process) before it is an action rather than an admin-only
-operation.
+The enforced-state-action primitive (tax *and* seizure) is now complete,
+and `grant_capability` / `revoke_capability` — the meta-privilege of
+changing *who can exercise power* — is wired and governed. **What remains
+is platform-layer only:** the enactment-day cadence/scheduler, trials
+(copy-on-write fork audit, §4.2), and the proposal/campaigning UI. The
+engine's primitive surface is complete.
 
 ## Status
 
@@ -378,9 +412,11 @@ operation.
   the `monetary_authority` capability, so existing worlds keep working.
   Admin grants capabilities via `PATCH /admin/entities/{id}` (granting
   power is itself privileged). `levy`, `set_fiscal_policy`, `seize`,
-  `legislate`, `amend_constitution` are wired to their actions;
-  `grant_capability` is declared but not yet wired (granting power must
-  itself be governed first).
+  `legislate`, `amend_constitution` are wired to their actions; and
+  `grant_capability` / `revoke_capability` are now wired too (the
+  meta-privilege of changing who can exercise power — see "Capability
+  transfer" below). Every declared capability now gates at least one
+  intent.
 - Step 2 — **done**. The levy mechanism landed: `services.levy(authority,
   from_account, to_account, amount, rule_ref, ...)` generalises
   `conditions._apply_estate` from death to policy — money moves out of an
@@ -471,5 +507,10 @@ operation.
   representative chamber). The `liquid` weight model has since landed too
   (liquid democracy — direct democracy plus transitive delegation,
   `engine/econengine/delegations.py`, a WorldSetting delegation graph).
-  **Remaining unbuilt (engine):**
-  platform-layer cadence/trials/UI.
+  The `grant_capability` / `revoke_capability` primitives have since landed
+  too (the meta-privilege of changing who can exercise power — both gate
+  on `GRANT_CAPABILITY`, both are constitutional-tier mutations, and a
+  VALIDATOR may veto any transfer). **The engine's primitive surface is
+  complete; remaining work is platform-layer only:** the enactment-day
+  cadence/scheduler, trials (copy-on-write fork audit, §4.2), and the
+  proposal/campaigning UI.

@@ -796,3 +796,54 @@ def test_liquid_governance_cycle_via_api(client):
     # DELETE clears the graph (back to direct democracy)
     r = client.delete("/admin/delegations/senate", headers=_auth("u-admin"))
     assert r.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# capability transfer — grant / revoke via the intent API
+# ---------------------------------------------------------------------------
+
+def test_grant_and_revoke_capability_via_api(client):
+    """A government holding grant_capability confers seize on an agency via
+    POST /intents, then revokes it. A non-holder is rejected."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Republic", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["grant_capability", "legislate"]},
+                 headers=_auth("u-admin"))
+    agency = client.post("/admin/entities",
+        json={"name": "Agency", "entity_type": "individual",
+              "owner_id": "u-admin"},
+        headers=_auth("u-admin")).json()["id"]
+    peasant = client.post("/admin/entities",
+        json={"name": "Peasant", "entity_type": "individual",
+              "owner_id": "u-admin"},
+        headers=_auth("u-admin")).json()["id"]
+
+    # government grants seize to the agency
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "grant_capability",
+         "params": {"to_entity_id": agency, "capability": "seize"}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "applied"
+    agency_caps = client.get(f"/entities/{agency}",
+                             headers=_auth("u-admin")).json()["capabilities"]
+    assert "seize" in agency_caps
+
+    # peasant (no grant_capability) cannot grant
+    r = client.post("/intents", json=[
+        {"entity_id": peasant, "type": "grant_capability",
+         "params": {"to_entity_id": agency, "capability": "levy"}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+
+    # government revokes seize from the agency
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "revoke_capability",
+         "params": {"to_entity_id": agency, "capability": "seize"}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "applied"
+    agency_caps = client.get(f"/entities/{agency}",
+                             headers=_auth("u-admin")).json()["capabilities"]
+    assert "seize" not in agency_caps

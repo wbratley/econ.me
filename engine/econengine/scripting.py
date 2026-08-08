@@ -550,6 +550,31 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             with session.begin_nested():
                 services.set_constitution(session, authority, params, reference)
 
+        elif intent.intent_type in ("grant_capability", "revoke_capability"):
+            # Governed capability transfer — the meta-privilege of changing
+            # *who can exercise power*. The capability gate above already
+            # proved `entity` holds GRANT_CAPABILITY; the service re-checks
+            # it and fires a VALIDATOR (so the constitution can forbid
+            # conferring a dangerous capability regardless of who
+            # authorises it). The capability name is validated against the
+            # declared vocabulary; the target must exist. As a proposal
+            # mutation this is constitutional-tier (power transfer is meta).
+            capability = intent.params.get("capability", "")
+            target = session.get(Entity, intent.params.get("to_entity_id"))
+            if target is None:
+                return rejected("unknown target entity")
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            fn = (services.grant_capability
+                  if intent.intent_type == "grant_capability"
+                  else services.revoke_capability)
+            with session.begin_nested():
+                try:
+                    fn(session, authority, target, capability, reference)
+                except ValueError as exc:
+                    return rejected(str(exc))
+
         elif intent.intent_type == "create_proposal":
             # Open a proposal for vote (step 4a-ii). No capability gates
             # this — participation *is* the electorate, defined by the

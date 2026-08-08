@@ -20,10 +20,8 @@ This is the platform's rule layer for actor authorisation
   so a capability denial is a clean rejection at the boundary — the same
   place ownership is enforced — rather than a buried exception.
 
-Capabilities not yet wired to an action (grant_capability)
-are declared here as constants and listed for documentation, but absent
-from `INTENT_CAPABILITIES` until the action exists. Declaring them now
-keeps the vocabulary stable across the build.
+Capabilities as policy data are themselves policy the platform drives;
+every declared capability now gates at least one intent.
 """
 
 # --- capability names ------------------------------------------------------
@@ -66,9 +64,17 @@ AMEND_CONSTITUTION = "amend_constitution"
 #: VALIDATOR veto).
 SEIZE = "seize"
 
-#: Confer capabilities on another entity. Future, meta — the act of
-#: granting power must itself be governed (vote / constitutional process),
-#: so it is admin-only until that machinery exists.
+#: Confer or revoke capabilities on another entity — the meta-privilege of
+#: changing *who can exercise power*. Both the `grant_capability` and
+#: `revoke_capability` intents gate on this single capability (conferring
+#: and withdrawing power are the same meta-act). It is itself governed:
+#: checked at the intent boundary AND in the service, vetoable by a
+#: VALIDATOR, and (as a proposal mutation) a constitutional-tier op needing
+#: supermajority. Free-grant model: a holder may confer any *declared*
+#: capability on any entity (a legislature constitutes agencies with powers
+#: it does not itself exercise); the safety floor is the capability gate +
+#: validator veto + the supermajority, not "you may only delegate what you
+#: hold."
 GRANT_CAPABILITY = "grant_capability"
 
 #: All declared capability names, for validation and introspection.
@@ -96,6 +102,8 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "set_script": LEGISLATE,               # step 4a — enact a new version of a (non-validator) law
     "set_validator": AMEND_CONSTITUTION,   # step 4b — amend a VALIDATOR (the constitution)
     "set_constitution": AMEND_CONSTITUTION,  # step 4b — amend the voting-system floor
+    "grant_capability": GRANT_CAPABILITY,   # confer a capability (meta; constitutional-tier mutation)
+    "revoke_capability": GRANT_CAPABILITY,  # revoke a capability (meta; constitutional-tier mutation)
     # NOTE: `enact` is deliberately NOT here. The capability an enactment
     # needs is data on the proposal: ordinary -> legislate, constitutional ->
     # amend_constitution. It is checked in resolve_intent's enact branch
