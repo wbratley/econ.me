@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field, field_serializer, field_validator
 
@@ -503,6 +503,20 @@ class ComputeBudgetUpdate(BaseModel):
 
 class ComputeBudgetRead(BaseModel):
     budget_ms: Optional[int] = None
+
+
+class CouncilWrite(BaseModel):
+    """Seed a council register. ``members`` may be a list of entity ids
+    (an equal-weight council — every member weight 1) or a mapping
+    ``{entity_id: weight}`` (a weighted council). The stored form is always
+    ``{member_id: weight_str}``; the ``council`` model ignores weights and
+    the ``weighted`` model honours them."""
+    members: Union[list[str], dict[str, str]]
+
+
+class CouncilRead(BaseModel):
+    name: str
+    members: dict[str, str]  # {member_entity_id: weight_str}
 
 
 class IntentRequest(BaseModel):

@@ -636,3 +636,85 @@ def test_seize_moves_goods_from_victim_to_state_via_api(client):
     ], headers=_auth("u-admin"))
     assert r.json()[0]["status"] == "rejected"
     assert "seize" in r.json()[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# council governance — the council/weighted weight models via the API
+# ---------------------------------------------------------------------------
+
+def test_council_governance_cycle_via_api(client):
+    """Seed a council register (PUT /admin/councils), then run the full
+    proposal → vote → enact cycle over POST /intents: a councillor proposes,
+    a non-member is rejected, a weighted majority carries, and the enacted
+    directive binds the government."""
+    gov = client.post("/admin/entities",
+                      json={"name": "Republic", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["legislate", "set_fiscal_policy"]},
+                 headers=_auth("u-admin"))
+    alice = client.post("/admin/entities",
+                        json={"name": "Alice", "entity_type": "individual",
+                              "owner_id": "u-admin"},
+                        headers=_auth("u-admin")).json()
+    bob = client.post("/admin/entities",
+                      json={"name": "Bob", "entity_type": "individual",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    carol = client.post("/admin/entities",
+                        json={"name": "Carol", "entity_type": "individual",
+                              "owner_id": "u-admin"},
+                        headers=_auth("u-admin")).json()
+    # seed the council: Alice weighted 3, Bob 1 (Carol holds no seat)
+    r = client.put(f"/admin/councils/senate",
+                   json={"members": {alice["id"]: "3", bob["id"]: "1"}},
+                   headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    assert r.json()["members"] == {alice["id"]: "3", bob["id"]: "1"}
+
+    # GET reads it back
+    got = client.get(f"/admin/councils/senate", headers=_auth("u-admin")).json()
+    assert got["members"][alice["id"]] == "3"
+
+    mutations = [{"type": "set_fiscal_policy",
+                  "params": {"policy": "{\"flat_rate\": \"0.1\"}"}}]
+    # a non-member (Carol) cannot propose
+    r = client.post("/intents", json=[
+        {"entity_id": carol["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "weight_model": "weighted:senate",
+                    "threshold": "0.6", "quorum": "0",
+                    "mutations": json.dumps(mutations)}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+
+    # a councillor (Alice) proposes
+    r = client.post("/intents", json=[
+        {"entity_id": alice["id"], "type": "create_proposal",
+         "params": {"target_id": gov["id"], "weight_model": "weighted:senate",
+                    "threshold": "0.6", "quorum": "0",
+                    "mutations": json.dumps(mutations)}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "applied"
+    pid = r.json()[0]["proposal_id"]
+
+    # weighted vote: Alice (3) FOR carries over Bob (1) AGAINST → 3/4 = 0.75
+    client.post("/intents", json=[
+        {"entity_id": alice["id"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "for"}},
+    ], headers=_auth("u-admin"))
+    client.post("/intents", json=[
+        {"entity_id": bob["id"], "type": "vote",
+         "params": {"proposal_id": pid, "choice": "against"}},
+    ], headers=_auth("u-admin"))
+
+    # enact as the government
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "enact",
+         "params": {"proposal_id": pid}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["proposal_status"] == "enacted"
+
+    # DELETE removes the register
+    r = client.delete(f"/admin/councils/senate", headers=_auth("u-admin"))
+    assert r.status_code == 204
