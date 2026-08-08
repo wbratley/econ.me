@@ -37,7 +37,7 @@ build plan for the platform-era controls on top of it.
 The last row is the key. The engine already moves assets against an owner's
 will — it just only does it for *death* today.
 
-## The engine primitive that was missing, now half-built
+## The engine primitive that was missing, now built
 
 **Enforced state action: tax and seizure.** In the inequality experiment
 tax is *voluntary* — `firm.lua` chooses to remit. That is fine while one
@@ -52,11 +52,15 @@ outcomes."*
 rule from death to policy — an entity holding the `levy` capability compels
 a money transfer out of an account it does not own, into its own, under a
 declared `rule_ref`, and a VALIDATOR may veto it (fail-closed). **Seizure**
-(outright expropriation of goods/parcels, not just money) shares the same
-mechanism under a future `seize` capability and is still unbuilt.
+(outright expropriation of goods/parcels, not just money) is the
+companion primitive — `services.seize` shares levy's gating model under
+the `seize` capability, moving goods and/or parcels the authority does
+not own into a declared recipient (itself by default), under a declared
+`rule_ref`, vetoable by a VALIDATOR (fail-closed).
 
-So the government can now compel *money* and set its own rates votably.
-Compelling goods (seizure) is the remaining unbuilt half of this primitive.
+So the government can now compel *money* and *goods* and set its own
+rates votably. The enforced-state-action primitive (tax and seizure) is
+complete.
 
 ## The forks (decisions, with the chosen option marked)
 
@@ -347,9 +351,12 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 
 ### What stays explicitly unbuilt (engine)
 
-`seize` (expropriation of goods/parcels, not money) remains its own
-capability sharing the levy mechanism — orthogonal to governance,
-landable anytime.
+The enforced-state-action primitive (tax *and* seizure) is now complete.
+What remains is the governance machinery's later weight models
+(council / weighted / representative / liquid) and the platform-layer
+cadence/trials/UI — and `grant_capability`, which must itself be governed
+(a vote / constitutional process) before it is an action rather than an
+admin-only operation.
 
 ## Status
 
@@ -362,8 +369,10 @@ landable anytime.
   `is_monetary_authority` is kept as a backward-compatible alias implying
   the `monetary_authority` capability, so existing worlds keep working.
   Admin grants capabilities via `PATCH /admin/entities/{id}` (granting
-  power is itself privileged). `levy`, `set_fiscal_policy`, `seize` are
-  declared but not yet wired to actions.
+  power is itself privileged). `levy`, `set_fiscal_policy`, `seize`,
+  `legislate`, `amend_constitution` are wired to their actions;
+  `grant_capability` is declared but not yet wired (granting power must
+  itself be governed first).
 - Step 2 — **done**. The levy mechanism landed: `services.levy(authority,
   from_account, to_account, amount, rule_ref, ...)` generalises
   `conditions._apply_estate` from death to policy — money moves out of an
@@ -377,8 +386,20 @@ landable anytime.
   loop, and `ctx.action.levy(...)` from scripts (the stub step 3's policy
   actor drives). Movement is money-conserving (a DEBIT/CREDIT pair, like
   `transfer`); the levy-ness lives in op-type + `rule_ref`, not a new
-  transaction flavour. `seize` (goods/parcels, not money) remains unbuilt
-  and will share this mechanism under its own capability.
+  transaction flavour. **`seize` landed** as levy's goods/parcels
+  companion: `services.seize(authority, from_entity, *, symbol, quantity,
+  parcel_ids, to_entity, rule_ref)` moves goods (goods-conserving, debit
+  victim / credit recipient, raises if the victim is short — fail-closed)
+  and/or parcels (reassigned via `parcels.grant_parcel`, which refuses a
+  parcel with running processes) out of an entity the authority does not
+  own, into a declared recipient (itself by default; a different recipient
+  is redistribution). It records no `Transaction` (transactions are
+  money-only); the movement rides the holding rows and parcel ownership,
+  like `transfer_parcel`. The `seize` capability gates it at the intent
+  boundary and in the service; `rule_ref` rides `ctx.op`; a VALIDATOR may
+  veto (fail-closed). Reachable from every actor surface: `POST /intents`,
+  the tick loop, and `ctx.action.seize(from_id, spec, rule_ref)` from
+  scripts.
 - Step 3 — **done**. The government is a policy actor. The
   mechanism/data/policy split (`docs/design.md` §2) is now complete for
   tax: **mechanism** = `services.levy` (step 2); **data** = the
@@ -435,7 +456,7 @@ landable anytime.
   `set_script` (a BEHAVIOUR script bound to the firm), so the directive
   runs as the firm next tick. A corporation is now a row in
   `weights.WEIGHT_MODELS`, not new mechanism. The governance stack
-  (4a-i/ii + 4b + 4c) is complete. **Remaining unbuilt (engine):** `seize`
-  (goods/parcels expropriation), which will share the levy mechanism under
-  its own capability; and the later weight models (council / weighted /
+  (4a-i/ii + 4b + 4c) is complete. `seize` (step 2's goods/parcels
+  companion) has since landed — see Step 2. **Remaining unbuilt (engine):**
+  the later weight models (council / weighted /
   representative / liquid) and platform-layer cadence/trials/UI.

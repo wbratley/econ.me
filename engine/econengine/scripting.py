@@ -417,6 +417,43 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                     reference,
                 )
 
+        elif intent.intent_type == "seize":
+            # Privileged expropriation: the authority compels goods and/or
+            # parcels out of an entity it does NOT own, into a declared
+            # recipient (itself by default). The capability gate above
+            # already proved `entity` holds SEIZE; services.seize re-checks
+            # it and bypasses ownership on the victim's holdings/parcels.
+            # The goods/parcels analogue of levy (the money half).
+            from_entity = session.get(Entity, intent.params.get("from_entity_id"))
+            if from_entity is None:
+                return rejected("unknown source entity")
+            authority = session.get(Entity, intent.entity_id)
+            if authority is None:
+                return rejected("unknown entity")
+            to_entity = None
+            if intent.params.get("to_entity_id"):
+                to_entity = session.get(Entity, intent.params.get("to_entity_id"))
+                if to_entity is None:
+                    return rejected("unknown recipient entity")
+            symbol = intent.params.get("symbol") or None
+            quantity = amount_of("quantity") if "quantity" in intent.params else None
+            raw_parcels = intent.params.get("parcel_ids", "") or ""
+            try:
+                parcel_ids = json.loads(raw_parcels) if raw_parcels else None
+            except ValueError:
+                return rejected("invalid parcel_ids JSON")
+            with session.begin_nested():
+                summary = services.seize(
+                    session, authority, from_entity,
+                    symbol=symbol, quantity=quantity, parcel_ids=parcel_ids,
+                    to_entity=to_entity,
+                    rule_ref=intent.params.get("rule_ref", ""),
+                    reference=reference,
+                )
+            extra["seized_goods"] = summary["goods_quantity"]
+            extra["seized_symbol"] = summary["goods_symbol"]
+            extra["seized_parcels"] = summary["parcels"]
+
         elif intent.intent_type == "set_fiscal_policy":
             # Replace the votable fiscal-policy dict. The capability gate
             # above already proved `entity` holds SET_FISCAL_POLICY; the

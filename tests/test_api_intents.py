@@ -581,3 +581,58 @@ def test_shareholders_enact_a_directive_via_api(client):
     assert r.json()[0]["proposal_status"] == "enacted"
     got = client.get(f"/admin/proposals/{pid}", headers=_auth("u-admin")).json()
     assert got["status"] == "enacted" and got["tally_yes"][:2] == "70"
+
+
+# ---------------------------------------------------------------------------
+# seize — expropriation of goods (actors step 2, goods/parcels half)
+# ---------------------------------------------------------------------------
+
+def test_seize_moves_goods_from_victim_to_state_via_api(client):
+    """A seize-capable government expropriates goods from an individual over
+    POST /intents — the goods/parcels analogue of levy, reachable from the
+    machine client. A government without the capability is rejected."""
+    gov = client.post("/admin/entities",
+                      json={"name": "State", "entity_type": "government",
+                            "owner_id": "u-admin"},
+                      headers=_auth("u-admin")).json()
+    client.patch(f"/admin/entities/{gov['id']}",
+                 json={"capabilities": ["seize"]},
+                 headers=_auth("u-admin"))
+    victim = client.post("/admin/entities",
+                         json={"name": "Victim", "entity_type": "individual",
+                               "owner_id": "u-admin"},
+                         headers=_auth("u-admin")).json()
+    client.post("/admin/holdings",
+                json={"entity_id": victim["id"], "symbol": "GRAIN", "delta": "1000"},
+                headers=_auth("u-admin"))
+
+    r = client.post("/intents", json=[
+        {"entity_id": gov["id"], "type": "seize",
+         "params": {"from_entity_id": victim["id"], "symbol": "GRAIN",
+                    "quantity": "300", "rule_ref": "tax:inkind"}},
+    ], headers=_auth("u-admin"))
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["status"] == "applied"
+    assert r.json()[0]["seized_goods"] == "300"
+
+    victim_holdings = {h["symbol"]: h["quantity"] for h in
+                       client.get(f"/admin/holdings?entity_id={victim['id']}",
+                                  headers=_auth("u-admin")).json()}
+    gov_holdings = {h["symbol"]: h["quantity"] for h in
+                    client.get(f"/admin/holdings?entity_id={gov['id']}",
+                               headers=_auth("u-admin")).json()}
+    assert victim_holdings.get("GRAIN", "0").startswith("700")
+    assert gov_holdings.get("GRAIN", "0").startswith("300")
+
+    # a government without the seize capability cannot expropriate
+    plain = client.post("/admin/entities",
+                        json={"name": "PlainGov", "entity_type": "government",
+                              "owner_id": "u-admin"},
+                        headers=_auth("u-admin")).json()
+    r = client.post("/intents", json=[
+        {"entity_id": plain["id"], "type": "seize",
+         "params": {"from_entity_id": victim["id"], "symbol": "GRAIN",
+                    "quantity": "1", "rule_ref": "r"}},
+    ], headers=_auth("u-admin"))
+    assert r.json()[0]["status"] == "rejected"
+    assert "seize" in r.json()[0]["reason"]

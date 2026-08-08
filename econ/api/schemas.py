@@ -528,6 +528,9 @@ class IntentResult(BaseModel):
     proposal_id: Optional[str] = None     # present for create_proposal / vote / enact
     vote_id: Optional[str] = None         # present for vote
     proposal_status: Optional[str] = None  # present for enact ("enacted" | "failed")
+    seized_goods: Optional[str] = None      # present for seize (quantity of goods)
+    seized_symbol: Optional[str] = None     # present for seize (the goods symbol)
+    seized_parcels: Optional[int] = None    # present for seize (parcel count)
 
 
 class NeedStateRead(BaseModel):
