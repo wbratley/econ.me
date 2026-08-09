@@ -89,9 +89,10 @@ def test_registry_gates_only_privileged_intents():
     assert capabilities.required_for("transfer") is None
     assert capabilities.required_for("place_order") is None
     assert capabilities.required_for("start_process") is None
-    # grant_capability is declared but not yet wired (granting power must
-    # itself be governed first)
-    assert "grant_capability" not in capabilities.INTENT_CAPABILITIES
+    # governed capability transfer — both grant and revoke gate on the
+    # single meta-capability (conferring and withdrawing power are one act)
+    assert capabilities.required_for("grant_capability") == capabilities.GRANT_CAPABILITY
+    assert capabilities.required_for("revoke_capability") == capabilities.GRANT_CAPABILITY
 
 
 # --- resolve_intent capability gate ---

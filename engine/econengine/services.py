@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION, SEIZE
+from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION, SEIZE, GRANT_CAPABILITY
 from .models.entity import Entity, EntityType
 from .models.account import Account
 from .models.script import Script, ScriptType
@@ -585,7 +585,10 @@ def set_script(
 #: limited to ordinary mutations, while a CONSTITUTIONAL proposal may mix
 #: constitutional and ordinary changes in one enactment.
 ORDINARY_MUTATIONS = frozenset({"set_fiscal_policy", "set_script"})
-CONSTITUTIONAL_MUTATIONS = frozenset({"set_validator", "set_constitution"})
+CONSTITUTIONAL_MUTATIONS = frozenset({
+    "set_validator", "set_constitution",
+    "grant_capability", "revoke_capability",  # power transfer is meta
+})
 ALL_MUTATIONS = ORDINARY_MUTATIONS | CONSTITUTIONAL_MUTATIONS
 
 
@@ -696,6 +699,93 @@ def set_constitution(
     setting = constitution.set_constitution(session, params)
     scripting.fire_hooks(session, {**op, "setting_key": setting.key})
     return setting
+
+
+# ---------------------------------------------------------------------------
+# Governance — capability transfer (the meta-privilege)
+# ---------------------------------------------------------------------------
+
+
+def grant_capability(
+    session: Session,
+    authority: Entity,
+    target: Entity,
+    capability: str,
+    reference: str = "",
+) -> dict:
+    """Confer ``capability`` on ``target`` by engine authority.
+
+    The meta-privilege above every other capability: changing *who can
+    exercise power*. ``authority`` must hold ``GRANT_CAPABILITY`` (checked
+    here AND at the intent boundary, like levy/seize). The free-grant model:
+    a holder may confer any *declared* capability (``capabilities.ALL``) on
+    any entity — a legislature constitutes agencies with powers it does not
+    itself exercise. The safety floor is this gate + a VALIDATOR veto + (for
+    a voted grant) the constitutional supermajority, not "you may only
+    delegate what you hold."
+
+    A VALIDATOR may veto the grant (fail-closed): the constitution can
+    forbid conferring a dangerous capability (e.g. ``seize``) regardless of
+    who authorises it. Idempotent — granting a capability already held is a
+    no-op success. Returns the target's resulting capability list.
+    """
+    from . import capabilities as _caps
+
+    if not authority.has_capability(GRANT_CAPABILITY):
+        raise MissingCapabilityError(authority.id, GRANT_CAPABILITY)
+    if capability not in _caps.ALL:
+        raise ValueError(f"unknown capability {capability!r}")
+    op = {
+        "type": "grant_capability",
+        "entity_id": authority.id,
+        "to_entity_id": target.id,
+        "capability": capability,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+    caps = list(target.capabilities or [])
+    if capability not in caps:
+        caps.append(capability)
+        target.capabilities = caps
+        session.flush()
+    scripting.fire_hooks(session, op)
+    return {"entity_id": target.id, "capabilities": list(target.capabilities or [])}
+
+
+def revoke_capability(
+    session: Session,
+    authority: Entity,
+    target: Entity,
+    capability: str,
+    reference: str = "",
+) -> dict:
+    """Remove ``capability`` from ``target`` by engine authority.
+
+    The symmetric partner of ``grant_capability`` — withdrawing power is
+    the same meta-privilege as conferring it, so gated by the same
+    ``GRANT_CAPABILITY`` capability (and vetoable by a VALIDATOR). A
+    revoke of a capability not held is a no-op success (the postcondition —
+    target lacks it — already holds). Removing a capability an entity
+    exercises via the legacy ``is_monetary_authority`` flag does *not*
+    clear that flag (the flag is its own backward-compatible grant); the
+    capability list and the flag are independent grants.
+    """
+    if not authority.has_capability(GRANT_CAPABILITY):
+        raise MissingCapabilityError(authority.id, GRANT_CAPABILITY)
+    op = {
+        "type": "revoke_capability",
+        "entity_id": authority.id,
+        "to_entity_id": target.id,
+        "capability": capability,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+    caps = [c for c in (target.capabilities or []) if c != capability]
+    if len(caps) != len(target.capabilities or []):
+        target.capabilities = caps
+        session.flush()
+    scripting.fire_hooks(session, op)
+    return {"entity_id": target.id, "capabilities": list(target.capabilities or [])}
 
 
 # ---------------------------------------------------------------------------

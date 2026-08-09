@@ -454,6 +454,32 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _grant_capability(to_entity_id, capability, priority=100):
+        # Governed capability transfer (the meta-privilege): confer
+        # `capability` on `to_entity_id`. resolve_intent gates this on the
+        # `grant_capability` capability and fires a VALIDATOR (so the
+        # constitution can forbid conferring a dangerous capability).
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="grant_capability",
+            params={"to_entity_id": str(to_entity_id),
+                    "capability": str(capability)},
+            resource_ids=[str(to_entity_id)],
+            priority=int(priority),
+        ))
+
+    def _revoke_capability(to_entity_id, capability, priority=100):
+        # The symmetric partner of grant_capability — withdraw a
+        # capability. Same gate (grant_capability) and VALIDATOR path.
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="revoke_capability",
+            params={"to_entity_id": str(to_entity_id),
+                    "capability": str(capability)},
+            resource_ids=[str(to_entity_id)],
+            priority=int(priority),
+        ))
+
     def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", proposal_type="ordinary", priority=100):
         # Open a proposal for vote (step 4a-ii). `mutations` is a Lua table
         # (a list of {type=..., params={...}}); converted to Python and
@@ -513,6 +539,8 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["set_script"]  = _set_script
     action_tbl["set_validator"] = _set_validator
     action_tbl["set_constitution"] = _set_constitution
+    action_tbl["grant_capability"] = _grant_capability
+    action_tbl["revoke_capability"] = _revoke_capability
     action_tbl["create_proposal"] = _create_proposal
     action_tbl["vote"]            = _vote
     action_tbl["enact"]           = _enact
