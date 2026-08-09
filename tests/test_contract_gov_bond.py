@@ -248,3 +248,32 @@ def test_monetization_cap_forbids_issuance(world):
     assert g.balance == Decimal("5100")   # no new money created
     vetoed = [e for e in tick.events if e.get("status") == "rejected"]
     assert vetoed and "monetization cap" in vetoed[0]["reason"].lower()
+
+
+def test_monetization_cap_data_driven_override(world):
+    """The cap is retunable by writing data (Step 5c), not by re-enacting the
+    validator: a monetary:issue_cap WorldSetting overrides the in-source
+    DEFAULT_CAP, read live each op through ctx.query.world_setting."""
+    from econengine.models import Script, ScriptType, WorldSetting
+    session, alice, bob, gov, a, b, g = world
+
+    session.add(Script(
+        name="printer", source=f"ctx.action.issue_money('{g.id}', '100', 'print')",
+        script_type=ScriptType.POLICY, entity_id=gov.id, is_active=True,
+    ))
+    session.add(Script(
+        name="monetization-cap", source=MONETIZATION_CAP,
+        script_type=ScriptType.VALIDATOR, is_active=True,
+    ))
+    session.flush()
+
+    # Default cap ("0", in source) forbids -- no setting posted yet.
+    run_tick(session)
+    assert g.balance == Decimal("5000")
+
+    # An oracle lifts the ceiling to 200 via a WorldSetting; the same op now
+    # passes without touching the validator script.
+    session.add(WorldSetting(key="monetary:issue_cap", value={"cap": "200"}))
+    session.flush()
+    run_tick(session)
+    assert g.balance == Decimal("5100")   # 100 created, under the 200 cap

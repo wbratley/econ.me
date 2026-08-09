@@ -152,8 +152,8 @@ Each step is independently useful and unblocks the next.
    *data + Lua*, not as engine features: (a) `ctx.tick`, (b) an
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
-   "Step 5 design" below. *— 5a + 5b convention done (gov bond ships);
-   5c affordance + the rest of 5d next.*
+   "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); the
+   rest of 5d next.*
 
 ### A correctness note for step 2
 
@@ -561,8 +561,11 @@ proposal/campaigning UI.
   invariant across sale/coupons/redemption; a traded bond pays its new
   holder; proportional multi-holder payout; skip-safe schedule; an
   insolvent issuer's coupon is rejected not crashed; goods retirement; the
-  cap vetoes issuance). 5c's `ctx.query.world_setting` affordance and the
-  rest of 5d (bank, loan, futures, option, insurance) remain.
+  cap vetoes issuance). 5c is done: `ctx.query.world_setting(key)` ships
+  (the generic read behind fiscal_policy/constitution and the Fork-A
+  signal channel), and the bond's `monetization_cap` cap is now
+  data-driven through it. The rest of 5d (bank, loan, futures, option,
+  insurance) remains.
 
 ## Step 5 design: the financial substrate
 
@@ -767,9 +770,17 @@ smallest, validates the most, and is the template for the rest.
 3. **5c (decision + one affordance)** — confirm a generic
    `world_setting(key)` query exists (add it if not); lock the
    signals-as-WorldSettings convention. Fork C deferred with a trigger.
-   *— open:* the one engine affordance (`ctx.query.world_setting`) is not
-   yet built; it is the natural next addition (the bond's
-   `monetization_cap` notes the data-driven-cap upgrade it unlocks).
+   *— done:* `ctx.query.world_setting(key)` ships in `build_queries`
+   (`scripting.py`) — the generic read behind `fiscal_policy()` and
+   `constitution()`, and the Fork-A signal channel (an oracle posts a
+   `WorldSetting`; contract scripts read it live each tick instead of each
+   keeping a copy). The engine affordance is read-only (writing is
+   platform/oracle-layer, like every other `ctx.query`). Fork A locked;
+   Fork C (a shared `ctx.events` world-event channel) deferred until event
+   volume grows. Proven inside a real contract: the bond's
+   `monetization_cap.lua` cap is now data-driven through it (a
+   `monetary:issue_cap` signal retunes the ceiling without re-enacting the
+   validator). Tests: `tests/test_world_setting_query.py`.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
    the engine. *— government bond done; bank/loan/futures/option/insurance
