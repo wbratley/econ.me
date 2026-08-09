@@ -153,7 +153,7 @@ Each step is independently useful and unblocks the next.
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
    "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
-   underway (bank done); loan/futures/option/insurance next.*
+   underway (bank + loan done); futures/option/insurance next.*
 
 ### A correctness note for step 2
 
@@ -572,7 +572,18 @@ proposal/campaigning UI.
   settles bank-to-bank in base money; `bank.lua` accrues skip-safe interest;
   the reserve-floor VALIDATOR gates withdrawals (and documents why no
   engine validator can gate lending — a book entry is not an engine op).
-  The rest of 5d (loan, futures, option, insurance) remains.
+  5d-3 (secured loan + collateral seizure) is done: `contracts/loan/`
+  validates `levy`/`seize` as the enforcement spine of private debt — a
+  lender disburses base money against pledged collateral; on default,
+  `enforce()` levies cash and seizes the collateral (non-recourse). The
+  lender must hold `LEVY` + `SEIZE` (a license — sovereign power delegated to
+  a creditor). The usury-cap VALIDATOR gates `levy` to the statutory max
+  claim, read from a per-loan WorldSetting oracle — because a validator
+  cannot read another script's state, the loan's terms are mirrored into a
+  queryable `loan:account:*` WorldSetting (the 5c signal pattern). Usurious
+  interest is uncollectible by force; voluntary repayment at any rate is the
+  borrower's own money.
+  The rest of 5d (futures, option, insurance) remains.
 
 ## Step 5 design: the financial substrate
 
@@ -754,6 +765,19 @@ validates the most substrate first).*
 - **Loan + collateral seizure** — a lender's script holds the loan book,
   accrues interest, levies payment or `seize`s collateral on default.
   *Validates `levy`/`seize` as the enforcement spine of private debt.*
+  *— done:* `contracts/loan/` (`loan.py` + `loan.lua` + `usury_cap.lua`),
+  tested in `tests/test_contract_loan.py`. A lender disburses real base money
+  (`transfer`) against pledged collateral; `loan.lua` accrues skip-safe
+  interest from `ctx.tick` and marks default at maturity; `enforce()` is the
+  foreclosure — `levy` to compel cash, `seize` to expropriate the collateral
+  (non-recourse). The lender must hold `LEVY` + `SEIZE` (a license —
+  sovereign enforcement power delegated to a private creditor). The usury-cap
+  VALIDATOR gates `levy` to the statutory max claim, read from a per-loan
+  WorldSetting *oracle* — because a validator cannot read another script's
+  state, the loan's terms are mirrored into a queryable `loan:account:*`
+  WorldSetting (the 5c signal pattern). Usurious interest is uncollectible by
+  force (the levy is vetoed); a voluntary repayment at any rate is the
+  borrower's own money.
 - **Futures + margin** — an exchange CORPORATION matches longs/shorts,
   holds margin (`seize` on margin breach), settles cash or physical at
   expiry against a signal price (5c). *Validates `seize` as margin call;
@@ -799,8 +823,8 @@ smallest, validates the most, and is the template for the rest.
    validator). Tests: `tests/test_world_setting_query.py`.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
-   the engine. *— government bond + commercial bank done;
-   loan/futures/option/insurance remain.*
+   the engine. *— government bond + commercial bank + secured loan done;
+   futures/option/insurance remain.*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
