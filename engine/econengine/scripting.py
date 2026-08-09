@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
 from . import capabilities as _capabilities
-from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType
+from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick
 
 
 class OperationVetoedError(ValueError):
@@ -113,7 +113,22 @@ def _op_ctx(session: Session, script: Script, op: dict) -> dict:
         "state": dict(script.state or {}),
         "op": op,
         "queries": build_queries(session),
+        # The latest committed tick. For tick-run scripts (_build_script_ctx)
+        # ctx.tick is the tick currently executing (threaded in). A validator
+        # or hook fires mid-operation, before the current tick is committed,
+        # so the honest value here is the last-completed tick — the world as
+        # it stood when the op was applied. A direct API op (between ticks)
+        # reads the same field and gets the true latest.
+        "tick": _latest_tick_number(session),
     }
+
+
+def _latest_tick_number(session: Session) -> int:
+    """Number of the most recently committed Tick, or 0 before tick 1."""
+    row = session.execute(
+        select(Tick.number).order_by(Tick.number.desc()).limit(1)
+    ).scalar_one_or_none()
+    return row if row is not None else 0
 
 
 # ---------------------------------------------------------------------------

@@ -152,7 +152,7 @@ Each step is independently useful and unblocks the next.
    *data + Lua*, not as engine features: (a) `ctx.tick`, (b) an
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
-   "Step 5 design" below. *— next.*
+   "Step 5 design" below. *— 5a done; 5b/5c/5d next.*
 
 ### A correctness note for step 2
 
@@ -526,6 +526,21 @@ proposal/campaigning UI.
   VALIDATOR may veto any transfer). **The governance/enforcement primitive
   surface is complete; the next engine work is the financial substrate
   (Step 5, see below).**
+- Step 5 — **5a done**. `ctx.tick` is now exposed to every script: for
+  POLICY/BEHAVIOUR scripts the tick currently executing (threaded from
+  `run_tick`'s `number` into `_build_script_ctx`); for VALIDATOR/HOOK
+  scripts the latest committed tick (`_op_ctx` reads the newest `Tick`
+  row — honest, since the op applies before the current tick commits, and
+  correct for direct API ops between ticks). Surfaced on the Lua `ctx` in
+  `lua_engine.py` and documented in its module docstring. The motivating
+  gap it closes: maturity dates and coupon/expiry schedules that read
+  `ctx.tick` survive a compute-budget skip, where a self-counter in
+  `state` would desynchronise and drift. No migration, no model. Tests:
+  `tests/test_ctx_tick.py` (tick reflects the current tick across two
+  ticks; the budget-skip acceptance test — a skipped tick leaves the
+  counter unchanged and the next run reads the true wall-tick, not a
+  run-count; BEHAVIOUR scripts see the same tick; a hook reads the latest
+  committed tick, both before tick 1 and after). 5b–5d remain.
 
 ## Step 5 design: the financial substrate
 
@@ -715,6 +730,7 @@ smallest, validates the most, and is the template for the rest.
 
 1. **5a (`ctx.tick`)** — first; trivial, unblocks every maturity-bearing
    script, and is a dependency of the bond reference impl. Engine.
+   *— done (see Status).*
 2. **5b (decision + convention)** — no engine build yet under Fork A; lock
    the bonds-as-goods convention and the claim-issuance pattern. Re-opens
    as "build Fork B" only if 5d produces a traded non-fungible claim.

@@ -141,7 +141,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
                 prev_events if script_type == ScriptType.POLICY
                 else [e for e in prev_events if e.get("entity_id") == entity.id]
             )
-            ctx = _build_script_ctx(session, entity, script, entity_events)
+            ctx = _build_script_ctx(session, entity, script, entity_events, number)
             result = lua_engine.run(script.source, ctx, timeout_ms=script.timeout_ms)
             used_ms[entity.id] = used_ms.get(entity.id, 0.0) + result.elapsed_ms
             if result.error:
@@ -227,8 +227,9 @@ def _tick_scripts(session: Session, script_type: ScriptType):
     ).scalars().all()
 
 
-def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_events: list) -> dict:
+def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_events: list, tick_number: int) -> dict:
     return {
+        "tick": tick_number,
         "entity": {
             "id": entity.id,
             "name": entity.name,
