@@ -152,8 +152,8 @@ Each step is independently useful and unblocks the next.
    *data + Lua*, not as engine features: (a) `ctx.tick`, (b) an
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
-   "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); the
-   rest of 5d next.*
+   "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
+   underway (bank done); loan/futures/option/insurance next.*
 
 ### A correctness note for step 2
 
@@ -564,8 +564,15 @@ proposal/campaigning UI.
   cap vetoes issuance). 5c is done: `ctx.query.world_setting(key)` ships
   (the generic read behind fiscal_policy/constitution and the Fork-A
   signal channel), and the bond's `monetization_cap` cap is now
-  data-driven through it. The rest of 5d (bank, loan, futures, option,
-  insurance) remains.
+  data-driven through it. 5d-2 (commercial bank + deposit shadow-ledger)
+  is done: `contracts/bank/` proves the two-tier-money framing — `lend`
+  creates deposit money by a book entry in script state (no `issue_money`,
+  no `ISSUANCE` transaction, base-money supply invariant); after a loan,
+  deposits exceed reserves; `pay` is a pure book transfer; `interbank_pay`
+  settles bank-to-bank in base money; `bank.lua` accrues skip-safe interest;
+  the reserve-floor VALIDATOR gates withdrawals (and documents why no
+  engine validator can gate lending — a book entry is not an engine op).
+  The rest of 5d (loan, futures, option, insurance) remains.
 
 ## Step 5 design: the financial substrate
 
@@ -734,7 +741,16 @@ validates the most substrate first).*
   CORPORATION whose BEHAVIOUR script keeps deposit balances in `state`,
   creates deposits by lending, settles interbank in base money via
   `transfer`. *Validates the two-tier-money framing; shows credit money is
-  a book, not a ledger feature.*
+  a book, not a ledger feature.* *— done:* `contracts/bank/` (`bank.py` +
+  `bank.lua` + `reserve_floor.lua`), tested in `tests/test_contract_bank.py`.
+  Deposits are a shadow ledger in script `state`; `lend` creates deposit
+  money by a book entry (no `transfer`, no `issue_money`, no `ISSUANCE`
+  transaction — the base-money supply is invariant across a loan); after a
+  loan deposits exceed reserves (fractional reserve); intra-bank `pay` is a
+  pure book transfer; `interbank_pay` settles bank-to-bank in base money;
+  `bank.lua` accrues skip-safe interest from `ctx.tick`; the reserve-floor
+  VALIDATOR gates withdrawals (and documents why no validator can gate
+  lending itself — a book entry is not an engine op).
 - **Loan + collateral seizure** — a lender's script holds the loan book,
   accrues interest, levies payment or `seize`s collateral on default.
   *Validates `levy`/`seize` as the enforcement spine of private debt.*
@@ -783,8 +799,8 @@ smallest, validates the most, and is the template for the rest.
    validator). Tests: `tests/test_world_setting_query.py`.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
-   the engine. *— government bond done; bank/loan/futures/option/insurance
-   remain.*
+   the engine. *— government bond + commercial bank done;
+   loan/futures/option/insurance remain.*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
