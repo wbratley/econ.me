@@ -147,6 +147,12 @@ Each step is independently useful and unblocks the next.
    voting (step 3) stays the common case; code voting is the rare path
    that makes the world self-governing. *— done (4a-i, 4a-ii, 4b, 4c all
    landed; see "Step 4 design" below and Status).*
+5. **The financial substrate** — the four affordances that make bonds,
+   loans, credit money, derivatives, and insurance implementable as
+   *data + Lua*, not as engine features: (a) `ctx.tick`, (b) an
+   owned-claim/position primitive, (c) a signal/observation layer, (d) a
+   reference contract library. Each is independently focusable; see
+   "Step 5 design" below. *— next.*
 
 ### A correctness note for step 2
 
@@ -393,12 +399,19 @@ proposals are still `set_fiscal_policy` edits, because most legislation
 
 ### What stays explicitly unbuilt (engine)
 
-The enforced-state-action primitive (tax *and* seizure) is now complete,
-and `grant_capability` / `revoke_capability` — the meta-privilege of
-changing *who can exercise power* — is wired and governed. **What remains
-is platform-layer only:** the enactment-day cadence/scheduler, trials
-(copy-on-write fork audit, §4.2), and the proposal/campaigning UI. The
-engine's primitive surface is complete.
+The governance/enforcement primitive surface (steps 1–4) is complete:
+capabilities, levy/seize, the policy actor, the governed-script lifecycle,
+proposal/vote/enact, the constitutional tier, share/council/weighted/liquid
+weight models, and governed capability transfer. **The next engine work is
+the financial substrate (Step 5):** three small, individually-focusable
+affordances — `ctx.tick`, an owned-claim/position primitive, and a
+signal/observation layer — that together make the full richness of the real
+economy (bonds, loans, bank credit money, futures, options, insurance)
+implementable as Lua + data rather than as engine features. The reference
+contract library (5d) that consumes them is platform-layer. Beyond Step 5,
+the genuinely platform-only items remain: the enactment-day
+cadence/scheduler, trials (copy-on-write fork audit, §4.2), and the
+proposal/campaigning UI.
 
 ## Status
 
@@ -510,7 +523,216 @@ engine's primitive surface is complete.
   The `grant_capability` / `revoke_capability` primitives have since landed
   too (the meta-privilege of changing who can exercise power — both gate
   on `GRANT_CAPABILITY`, both are constitutional-tier mutations, and a
-  VALIDATOR may veto any transfer). **The engine's primitive surface is
-  complete; remaining work is platform-layer only:** the enactment-day
-  cadence/scheduler, trials (copy-on-write fork audit, §4.2), and the
-  proposal/campaigning UI.
+  VALIDATOR may veto any transfer). **The governance/enforcement primitive
+  surface is complete; the next engine work is the financial substrate
+  (Step 5, see below).**
+
+## Step 5 design: the financial substrate
+
+### The gap steps 1–4 left
+
+Steps 1–4 built the machinery of power: who may act (capabilities), how the
+state enforces its will (levy/seize), how policy is set and voted on
+(scripts + governance), and how power itself transfers. What they did *not*
+build is the machinery of **obligation over time** — one entity promising
+another a future payment, a stream of coupons, a delivery at a strike. That
+is the substrate of the whole financial economy: bonds, loans, bank
+deposits, futures, options, insurance.
+
+The architectural insight that governs this step (and rejects the
+instinct to add a `Contract` engine model): **a financial instrument is
+data + a behaviour/policy script that interprets that data each tick.**
+The tick loop is the clock; `transfer`/`levy`/`seize`/`issue_money` move
+value; script `state` + `WorldSetting`s hold the terms; capabilities
+enforce that only the issuer/bank/exchange can act. Almost every
+instrument reduces to those primitives *today, with no new engine code*.
+
+This is not a coincidence. It is the same mechanism/data/policy split
+(design.md §2) that already governs tax: **mechanism** = the money/goods
+movement primitives; **data** = the contract terms (script state or
+WorldSettings); **policy** = the contract script. A bond is no more an
+engine feature than a tax schedule is — and a dedicated `Contract` table
+would be the same mistake a `Tax` table would be.
+
+One alignment worth naming, because it shapes 5b and 5d: the engine is
+already a **faithful two-tier monetary system**. The ledger that
+`issue_money` writes is *base money* (central-bank reserves) — only the
+monetary authority creates it. A commercial bank's deposit balances are,
+by construction, a *shadow ledger in the bank's script state* — claims on
+the bank, created by lending, not base money. That is exactly how real
+banks create money, and it costs the engine nothing: 5d's bank reference
+script does not create money, it keeps a book.
+
+Step 5 closes the four gaps that stop this from being *convenient*. They
+are small, ordered by dependency, and each is independently focusable.
+
+### 5a. `ctx.tick` — the time primitive (engine, trivial)
+
+*The need.* Maturity dates, coupon schedules, futures expiry, loan
+due-dates are all "tick T". A settlement script must know the current
+tick. Today a script counts its own runs in `state` (`s.n = (s.n or 0)+1`)
+— workable, but **wrong the moment a script is ever skipped** (compute
+budget exceeded → the counter desynchronises from wall-tick and every
+maturity drifts).
+
+*The change.* One line in `_build_script_ctx` (tick.py): add `"tick":
+number` to the ctx dict, and surface it as `ctx.tick` in the Lua context.
+The tick number is already computed at the top of `run_tick`; pass it
+through. No migration, no model.
+
+*The fork (minor).* Should the engine also expose a *calendar* (a
+world-defined tick→day/month mapping, so a script says "pay on the 1st of
+the month")? **Defer.** Raw `ctx.tick` is enough for v1; a calendar is a
+convention a world can layer in WorldSettings if it wants it. Build only
+`ctx.tick` now.
+
+*Acceptance.* A script reads `ctx.tick` and writes it to `state`; two
+consecutive ticks show `ctx.tick` increment by exactly 1 even if the
+script was budget-skipped on one of them.
+
+### 5b. Owned claims / positions — the ownership primitive (engine, the
+meaty fork)
+
+*The need.* "Entity X owns claim Y" should be an engine-mediated record so
+that (a) transfers are enforced by an invariant, not by a script's
+bookkeeping; (b) a query can enumerate everything an entity owns; (c) a
+contract script can issue/redeem without reinventing a register each time.
+
+*The fork.*
+
+- **Fork A — bonds-as-goods (do nothing).** A claim *is* a `Holding` row
+  with a symbol (e.g. `TBILL-2030`); transfer via `markets`; query via
+  `ctx.query.holding` / `holders`; issue/redeem via `adjust_holding`.
+  Covers every **fungible, identical-terms** instrument — government bonds,
+  shares, tokenised deposits — for free. **Limit:** cannot represent a
+  non-fungible or varying-terms claim (loan #42 with *its* collateral; an
+  option with *its* strike).
+- **Fork B — a generic `Position` model.** A first-class
+  `Position(entity_id, instrument_id, quantity)` where `Instrument` is a
+  record (issuer, kind, terms-JSON); a new `transfer_position` mutation;
+  `ctx.query.positions(entity_id)`. Fully expressive (fungible *and*
+  bespoke), but a new model + migration + mutation type.
+- **Fork C — contract registry as a WorldSetting.** A contract is a row in
+  a JSON blob; ownership is a field; a registry-script mediates transfers.
+  Cheapest, but **no engine invariant** — the registry script *is* the
+  invariant, and a bug there silently loses money.
+
+*Recommendation.* **Ship Fork A as the default, defer Fork B until a
+traded non-fungible instrument actually demands it.** The decisive
+question is *does the claim trade?* A loan does not trade (it lives in the
+lender's book); a bond does (it must move between strangers). Traded
+fungible claims are already `Holding`s. Non-fungible traded claims
+(securitised loans, bespoke OTC derivatives) are the *only* thing that
+justifies Fork B — and those are a v2 concern. So: build the reference
+library (5d) on Fork A; revisit Fork B empirically when something hurts.
+
+*What this step therefore builds now.* Nothing new, *if* Fork A holds.
+What 5b actually delivers is a **decision and a convention**: a documented
+claim-issuance pattern ("a bond issuance = `adjust_holding` of a symbol +
+a POLICY script bound to the issuer that honours coupons/redemption") and
+the query affordances it needs (`ctx.query.holders` already exists; add
+`ctx.query.issuer_state` only if a script can't reach the issuer's book
+another way). If, during 5d, a non-fungible traded claim appears, 5b
+re-opens as "build Fork B."
+
+### 5c. Signals / observation — the trigger primitive (engine, small)
+
+*The need.* A settlement script wants "the wheat price crossed 50" or
+"loan #42 defaulted" delivered to it, not polled for. Today every
+interested script re-reads the same `WorldSetting` each tick — fine at
+small scale, wasteful and noisy at large scale.
+
+*The fork.*
+
+- **Fork A — signals-as-WorldSettings (do nothing new).** A price-feed
+  POLICY script posts `signal:wheat` each tick; consumers read
+  `ctx.query.world_setting("signal:wheat")`. Costs nothing. Works today.
+  Limit: every consumer polls.
+- **Fork B — an event/signal bus.** Scripts subscribe to conditions; the
+  engine dispatches when met. Efficient at scale, but a real engine
+  feature (subscription model, dispatch ordering, lifecycle).
+- **Fork C — enrich `ctx.events`.** `ctx.events` already carries the
+  previous tick's per-entity outcomes. Extend it to carry *world events*
+  (a price crossed a level, a payment defaulted, a maturity fired) that
+  any script can react to. Cheaper than Fork B, richer than Fork A.
+
+*Recommendation.* **Fork A for v1; revisit Fork C if event volume grows.**
+The poll cost is one WorldSetting read per interested script per tick —
+negligible until a world has hundreds of reacting scripts, at which point
+Fork C (a shared event channel) is the natural upgrade and reuses the
+existing `ctx.events` plumbing. Do not build Fork B (a general pub/sub)
+speculatively — it is the most engine for the least current need.
+
+*What this step therefore builds now.* Possibly nothing, *if* Fork A
+holds — except a documented signal convention and confirming that
+`ctx.query` exposes a generic `world_setting(key)` read (if it does not,
+that is the one small engine affordance here). Fork C is deferred with a
+clear trigger condition.
+
+### 5d. The reference contract library (platform, the payoff)
+
+*The need.* The engine ships *primitives*, not instruments. Worlds should
+not each reinvent the data shape of a bond. A reference library of
+documented, tested Lua contract scripts — each a template to adopt or fork
+— is what makes the richness *available*, and it is the empirical test of
+5a–5c (every "this hurt" moment is a substrate decision re-opened with
+evidence).
+
+*The catalogue (each a separately-focusable deliverable, ordered by what
+validates the most substrate first).*
+
+- **Government bond** (fungible, Fork A) — issuance as `adjust_holding` of
+  a symbol; a POLICY script bound to the issuer honours coupons (pays
+  `ctx.query.holders`) and redeems at maturity (`ctx.tick` + 5a). *Validates
+  5a and Fork A; shows a bond sale does not create money (only a
+  MONETARY_AUTHORITY purchase does).*
+- **Commercial bank + deposit shadow-ledger** (two-tier money) — a
+  CORPORATION whose BEHAVIOUR script keeps deposit balances in `state`,
+  creates deposits by lending, settles interbank in base money via
+  `transfer`. *Validates the two-tier-money framing; shows credit money is
+  a book, not a ledger feature.*
+- **Loan + collateral seizure** — a lender's script holds the loan book,
+  accrues interest, levies payment or `seize`s collateral on default.
+  *Validates `levy`/`seize` as the enforcement spine of private debt.*
+- **Futures + margin** — an exchange CORPORATION matches longs/shorts,
+  holds margin (`seize` on margin breach), settles cash or physical at
+  expiry against a signal price (5c). *Validates `seize` as margin call;
+  validates the signal convention.*
+- **Option** — same shape, settlement pays the long only if in the money.
+- **Insurance** — premium `transfer` in, risk pool in `state`, payout on a
+  trigger event read from `ctx.events`.
+
+Each ships with a documented `state` shape and at least one VALIDATOR
+(e.g. a usury cap on loan rates, a margin-sufficiency check on futures) —
+the same constitutional-constraint pattern fiscal policy already uses.
+
+*Where it lives.* A `contracts/` (or `examples/contracts/`) directory plus
+tests against the current engine — platform-layer, no engine changes
+beyond 5a–5c. The bond is the natural first deliverable: it is the
+smallest, validates the most, and is the template for the rest.
+
+### Build sequence & decisions (locked for now)
+
+1. **5a (`ctx.tick`)** — first; trivial, unblocks every maturity-bearing
+   script, and is a dependency of the bond reference impl. Engine.
+2. **5b (decision + convention)** — no engine build yet under Fork A; lock
+   the bonds-as-goods convention and the claim-issuance pattern. Re-opens
+   as "build Fork B" only if 5d produces a traded non-fungible claim.
+3. **5c (decision + one affordance)** — confirm a generic
+   `world_setting(key)` query exists (add it if not); lock the
+   signals-as-WorldSettings convention. Fork C deferred with a trigger.
+4. **5d (reference library)** — platform; one instrument at a time,
+   starting with the government bond, each validated end-to-end against
+   the engine.
+
+*Decisions locked here:*
+- **No `Contract` engine model.** A contract is data + a script. The
+  orphan branch's `Contract`/`ContractEvent` tables (a dedicated lifecycle)
+  are explicitly rejected as the wrong layer.
+- **Fork A defaults.** Bonds-as-goods for fungible claims; loans in
+  script-state books; signals as WorldSettings. Forks B and C are deferred
+  *with explicit re-opening triggers*, not abandoned.
+- **The engine/platform line holds.** 5a–5c are engine; 5d is platform. The
+  engine never ships an instrument, only the affordances that make
+  instruments expressible.
+
