@@ -4,6 +4,8 @@ Sandboxed Lua execution engine.
 Each call to LuaEngine.run() gets a fresh LuaRuntime — no shared state between executions.
 Scripts interact with the simulation via a `ctx` object injected as a Lua global:
 
+  ctx.tick         the current tick number (for POLICY/BEHAVIOUR: the tick
+                   executing; for VALIDATOR/HOOK: the latest committed tick)
   ctx.entity        read-only entity info
   ctx.accounts      read-only account list
   ctx.holdings      read-only commodity holdings list
@@ -551,6 +553,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["transfer_parcel"] = _transfer_parcel
 
     ctx_tbl = lua.table()
+    ctx_tbl["tick"]   = ctx.get("tick")
     ctx_tbl["entity"]   = entity_tbl
     ctx_tbl["accounts"] = accounts_tbl
     ctx_tbl["holdings"] = holdings_tbl
