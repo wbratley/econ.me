@@ -152,7 +152,8 @@ Each step is independently useful and unblocks the next.
    *data + Lua*, not as engine features: (a) `ctx.tick`, (b) an
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
-   "Step 5 design" below. *— 5a done; 5b/5c/5d next.*
+   "Step 5 design" below. *— 5a + 5b convention done (gov bond ships);
+   5c affordance + the rest of 5d next.*
 
 ### A correctness note for step 2
 
@@ -541,6 +542,27 @@ proposal/campaigning UI.
   counter unchanged and the next run reads the true wall-tick, not a
   run-count; BEHAVIOUR scripts see the same tick; a hook reads the latest
   committed tick, both before tick 1 and after). 5b–5d remain.
+- Step 5 — **5a done; government bond (5d-1) done; 5b convention locked.**
+  The reference contract library opened with the government bond
+  (`contracts/bond/`): a fungible bond is a `Holding` whose symbol is the
+  bond's (Fork A), the live register is `ctx.query.holders`, and the terms
+  live in the issuer's servicing-script `state`. `gov_bond.lua` (a POLICY
+  bound to the issuer) honours coupons and redeems face each tick from
+  `ctx.tick` — proving the time primitive works inside a real contract and
+  that a schedule survives a compute-budget skip. `bond.py` is the data
+  half: `issue_bond` (a `transfer` of existing money + an `adjust_holding`
+  of the claim — neither creates money) and `redeem_holdings` (retires the
+  units; scripts move money, not goods, so the goods half of redemption is
+  an admin op). `monetization_cap.lua` is the ships-with VALIDATOR: a
+  constitutional cap on `issue_money` that can forbid monetising the debt.
+  This locks the 5b bonds-as-goods convention (no non-fungible traded claim
+  has appeared to demand Fork B) and validates 5a end-to-end. Tests:
+  `tests/test_contract_gov_bond.py` (full lifecycle; total money supply
+  invariant across sale/coupons/redemption; a traded bond pays its new
+  holder; proportional multi-holder payout; skip-safe schedule; an
+  insolvent issuer's coupon is rejected not crashed; goods retirement; the
+  cap vetoes issuance). 5c's `ctx.query.world_setting` affordance and the
+  rest of 5d (bank, loan, futures, option, insurance) remain.
 
 ## Step 5 design: the financial substrate
 
@@ -700,7 +722,11 @@ validates the most substrate first).*
   a symbol; a POLICY script bound to the issuer honours coupons (pays
   `ctx.query.holders`) and redeems at maturity (`ctx.tick` + 5a). *Validates
   5a and Fork A; shows a bond sale does not create money (only a
-  MONETARY_AUTHORITY purchase does).*
+  MONETARY_AUTHORITY purchase does).* *— done:* `contracts/bond/`
+  (`gov_bond.lua` + `bond.py` + `monetization_cap.lua`), tested in
+  `tests/test_contract_gov_bond.py` (lifecycle, no-money-creation, traded
+  bond pays new holder, skip-safe schedule, insolvency, goods retirement,
+  and the constitutional cap).
 - **Commercial bank + deposit shadow-ledger** (two-tier money) — a
   CORPORATION whose BEHAVIOUR script keeps deposit balances in `state`,
   creates deposits by lending, settles interbank in base money via
@@ -734,12 +760,20 @@ smallest, validates the most, and is the template for the rest.
 2. **5b (decision + convention)** — no engine build yet under Fork A; lock
    the bonds-as-goods convention and the claim-issuance pattern. Re-opens
    as "build Fork B" only if 5d produces a traded non-fungible claim.
+   *— done:* the convention is locked and proven by the government bond
+   (a claim is a `Holding`; the register is `ctx.query.holders`; issuance
+   is `adjust_holding` + `transfer`). Fork B stays deferred — no
+   non-fungible traded claim has appeared yet.
 3. **5c (decision + one affordance)** — confirm a generic
    `world_setting(key)` query exists (add it if not); lock the
    signals-as-WorldSettings convention. Fork C deferred with a trigger.
+   *— open:* the one engine affordance (`ctx.query.world_setting`) is not
+   yet built; it is the natural next addition (the bond's
+   `monetization_cap` notes the data-driven-cap upgrade it unlocks).
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
-   the engine.
+   the engine. *— government bond done; bank/loan/futures/option/insurance
+   remain.*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
