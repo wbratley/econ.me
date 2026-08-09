@@ -155,6 +155,16 @@ Each step is independently useful and unblocks the next.
    "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
    COMPLETE: all six reference contracts built (bond, bank, loan, futures,
    insurance, option).*
+6. **The embodied entity** — physical attributes, survival, and the
+   demographic lifecycle. Most of this is *already built* (the needs →
+   conditions → effects survival loop; skills/attributes as holdings) and
+   already invariant-protected (scripts cannot adjust holdings, so no
+   entity can lie about its own hunger or intelligence). The one genuine
+   gap is **age**: a monotonic, tick-derived quantity that does not fit
+   the holding model and is currently untracked. Closing it opens the
+   demographic lifecycle — birth, aging, retirement, generational
+   replacement — and turns a fixed cast into a population. See "Step 6
+   design" below.
 
 ### A correctness note for step 2
 
@@ -636,6 +646,22 @@ proposal/campaigning UI.
   obligation, settlement pays the long only if in the money). With this,
   the entire Step 5d reference library is complete: six contracts, each
   exercising a distinct engine affordance.
+- Step 6 — **design written (not started)**. See "Step 6 design: the
+  embodied entity" below. The framing is recognition, not build: most of
+  the request (hunger/thirst/tiredness/exposure → degradation → death;
+  skill/intelligence/constitution as holdings; the `modifies` action
+  overlay) is *already shipped* and already invariant-protected (scripts
+  cannot adjust holdings, so no entity can lie about its own body). The
+  one genuine engine gap is **age** — a monotonic, tick-derived quantity
+  that does not fit the holding model and is currently untracked
+  (`Entity` has no `birth_tick`). Proposed: `birth_tick` + a derived
+  `ctx.query.age()`, with age's *effects* (retirement, age-gating,
+  death-by-old-age) left to world policy at first (layer 1: scripts read
+  age and act). The lifecycle this opens — birth, aging, generational
+  replacement — turns a fixed cast into a population. Interests and
+  political leaning are explicitly *not* engine concepts (emergent from
+  economic position, or attribute holdings shifting via declared recipes).
+  No code yet.
 
 ## Step 5 design: the financial substrate
 
@@ -947,3 +973,246 @@ smallest, validates the most, and is the template for the rest.
   engine never ships an instrument, only the affordances that make
   instruments expressible.
 
+
+## Step 6 design: the embodied entity
+
+### The framing
+
+A common feature request — weight, age, hunger, thirst, tiredness, skill
+level, intelligence, constitution, interests, political leaning — sounds
+like a pile of new attributes to build. It is not. Most of it *already
+exists*, and exists precisely because the engine was designed around one
+principle: **the entity-attached goods family** — skills, attributes, and
+conditions, all stored as `Holding` rows distinguished only by `Good`
+properties (`models/good.py`). The request is a catalogue of members of a
+family the engine already defines.
+
+The principle the request is really pointing at — *"some of these would
+need to be built onto the world and not changeable at an individual level"*
+— is **already the law**. Scripts **cannot adjust holdings** (there is no
+`adjust_holding` Lua action; scripts move money, not goods). The only ways
+*any* holding — a skill, an attribute, a condition — can change are the
+declared engine passes: production (recipe outputs), consumption (needs),
+decay, auto-issue, the estate transfer, and the capability-gated
+`seize`/`levy`. So no entity can write `hunger = 0` or `intelligence = 20`
+to escape its body. It can only *eat* (satisfy the need, which the engine
+translates into less condition accrual) or *study* (run a recipe that
+outputs skill). The physical substrate is invariant-driven; the entity
+influences it only through declared channels. That is the mechanism/data/
+policy split (design.md §2), applied to bodies — and it is already the
+default, not something to build.
+
+This step is therefore mostly *recognition* (mapping the request onto what
+exists) plus one genuine engine gap (age) plus the demographic lifecycle
+that gap has been blocking.
+
+### The catalogue — what already exists
+
+Three concepts already cover the physical and capacity half of the request.
+None requires engine work; each is configured with data (Good/Need rows)
+and exercised by the existing tick passes.
+
+#### Survival: needs → conditions → effects (shipped)
+
+The survival loop — *hunger accumulates → degrades performance →
+eventually kills you* — is fully shipped (`needs.py`, `conditions.py`,
+design.md §conditions):
+
+- A **Need** declares what an entity type must consume each tick (satisfier
+  symbols, quantity, priority). The consumption pass draws down holdings
+  and rewrites a satisfaction score.
+- An unmet tick **credits a condition** scaled by the shortfall
+  (`condition_quantity × (1 − satisfaction)`). The memory of deprivation
+  lives in the holding, where `decay_per_tick` is natural recovery and a
+  healing recipe can consume it.
+- A **Condition** is a `Good` with two effect properties:
+  - `modifies: {pattern, factor}` — an effective-quantity overlay, read at
+    exactly two sites (recipe requirements + auto-issue targets). A fever
+    halves what your SKILL-SMITH counts for *without drawing the holding
+    down* (that is atrophy's job). Multiplication commutes, so
+    determinism is free.
+  - `incapacitates_at: N` — hold ≥ the threshold and the engine
+    deactivates the entity and applies the estate rule (burn / heir /
+    treasury — votable data; the transfer is engine, because no script may
+    move a dead entity's assets).
+
+Mapping the request onto this loop:
+
+| requested | how it is expressed today |
+|---|---|
+| **hunger** | a Need (`FOOD` satisfier) → unmet accrues `COND-HUNGER` → `modifies LABOR-*` → `incapacitates_at` |
+| **thirst** | a Need (`WATER`) → `COND-THIRST` → same |
+| **tiredness** | a Need (`REST`/`SLEEP`) → `COND-FATIGUE` → same |
+| **exposure** | a Need (`SHELTER`/`WARMTH`) → `COND-EXPOSURE` → same |
+| **dehydration / starvation** | the incapacitating condition the need accrues toward |
+| **"modifiers on actions"** | the `modifies` overlay on recipe requirements + auto-issue |
+
+The insurance contract (Step 5d-5) is already a consumer of this loop: its
+trigger is the real `entity_incapacitated` event that this machinery
+emits. The survival half of the request is done — and is invariant-
+protected by construction, not by convention.
+
+#### Capacity: skills and attributes as holdings (template shipped)
+
+| requested | how it is expressed today |
+|---|---|
+| **skill level / experience** | a `SKILL-X` holding; quantity = level; learning-by-doing (recipe byproduct) + `decay_per_tick`; equilibrium = gain ÷ decay |
+| **intelligence, constitution, strength** | an **Attribute** holding (`ATTR-INT`, `ATTR-CON`) — explicitly named in design.md as the template: *"an attribute (STRENGTH as a holding, if a world wants one) is the same pattern"* |
+| **weight** | an attribute holding, or a derived quantity (see "derived quantities" below) |
+
+Skills and attributes are bare holdings with no special column — a world
+creates them by declaring a `Good` row and granting them at genesis or via
+recipes. They are non-tradable by market absence (policy), and they change
+only through declared mechanisms (learning, decay). No engine work; no new
+mechanism.
+
+### The genuine gap: age
+
+Everything above is a **holding** — it has a quantity that grants and
+decays. **Age is the odd one out.** It is:
+
+- **Monotonic** — it never decays and never grants; it only increases. The
+  opposite of every holding.
+- **Tick-derived** — `age = current_tick − birth_tick`. Storing and
+  mutating it would be wasteful and error-prone; it is a computed value.
+- **A demographic axis** — it drives cohorts, retirement, dependency
+  ratios, generational replacement. None of which a holding expresses.
+
+Today the engine does not track it at all: `Entity` has no `birth_tick` or
+`created_at` column. This is the one piece of the request that needs new
+engine mechanism, and it is small.
+
+#### The mechanism: `birth_tick` + a derived `age`
+
+- Add **`birth_tick: int`** to `Entity` (nullable; migration backfills
+  existing entities with the current tick, or 0 — they are ageless
+  immortals until a world decides otherwise, which preserves every
+  existing run).
+- Expose **`ctx.query.age()`** (and/or `ctx.entity.age` in the script
+  context) as `ctx.tick − birth_tick`. Never stored-and-mutated; always
+  computed. Unforgeable — a script cannot change its birth tick any more
+  than it can change its holdings.
+
+Age is **derived data**, not a holding. The engine tracks time-since-birth;
+it does not opine on what age *means*. That is world policy, and it has
+three layers of increasing engine weight:
+
+1. **Pure script (zero engine change beyond `birth_tick` + the query).** A
+   POLICY script reads `ctx.query.age()` and acts — pays a pension at 65,
+   fires a `came_of_age` event at 18, refuses to hire children. Age-gating
+   a recipe is a VALIDATOR that vetoes `start_process` for entities under
+   the threshold. This is the recommended starting point: the engine stays
+   honest, the world defines what age means.
+2. **Age as an incapacitation axis (small engine extension).** Mirror
+   `incapacitates_at` but keyed on derived age rather than a holding —
+   "at age N the engine ends the entity." Reuses the estate rule. This is
+   death-by-old-age as mechanism; appropriate when a world wants
+   demographic turnover to be invariant, not votable per tick.
+3. **A new requirement type** (`age ≥ N` on recipes). Probably unnecessary:
+   a VALIDATOR (layer 1) covers the same ground without a new column on
+   `RecipeRequirement`. Defer unless a profiling reason appears.
+
+The recommendation is **layer 1 first** (`birth_tick` + `ctx.query.age()`),
+with layer 2 held in reserve for worlds that want invariant mortality. The
+engine should track age; worlds should decide what it does.
+
+### The demographic lifecycle (opened by age)
+
+Age alone is inert; its payoff is the **lifecycle** it unlocks — and this
+is what turns a fixed cast into a *population* (design.md line 828: *"are
+all persons players, or are there NPC persons?"*). With `birth_tick`
+tracked, the pieces fall into place:
+
+- **Birth** — a new entity with `birth_tick = ctx.tick`. The mechanism is
+  an engine intent (`spawn_entity`?) or a privileged act; the *policy*
+  (who may bear children, at what cost, with what endowment) is votable.
+  This is the genuine new mechanism here, and it is small (one row + an
+  estate-style endowment transfer).
+- **Aging** — free; it is the derived `age` above.
+- **Retirement** — layer-1 policy (a script reads age and pays a pension).
+- **Death-by-old-age** — layer 2 (age-based incapacitation) or layer 1
+  (a script that, with a new `incapacitate` action, ends the entity at a
+  threshold).
+- **Generational replacement** — emergent: birth + death-by-old-age
+  produce turnover; dependency ratios (working-age vs young + old) become
+  real economic pressures; the estate rule (heir) makes inheritance the
+  bridge between generations.
+
+None of this requires the survival loop or the attribute template to
+change. The lifecycle layers *on top* of them: a young entity has low
+skill (attribute) and grows it; an old entity accrues infirmity
+(condition) and eventually dies (incapacity); an heir inherits the
+estate. The demographic cycle is the survival loop + attributes *over a
+lifetime*, which is exactly why age is the missing keystone.
+
+### Interests and political leaning — not physical, no new mechanism
+
+The request's last pair — interests, political leaning — is different: it
+is **decision input**, not survival or capacity. Two clean options, neither
+needing anything new:
+
+- **Emergent (no storage).** A person's leaning is derived from economic
+  position — compute it from holdings/wealth when needed (in a weight-
+  model resolver, or a script). This is the most honest reading for an
+  economics sim: political leaning *is* economic interest, so do not store
+  a redundant (and immediately stale) copy.
+- **Attribute template (if a world wants slow-moving personal taste).**
+  Store `LEAN-LEFT` / `INTEREST-FARMING` as holdings that shift via
+  declared "persuasion/media" recipes — *exactly* as education shifts
+  skill. Same mechanism, no new code; `decay_per_tick` models fickle
+  attention; a media industry parallels the school industry.
+
+The choice is world-design, not engine-design. Either way the engine
+touches nothing.
+
+### What is and is not engine work
+
+| requested | status | layer |
+|---|---|---|
+| hunger, thirst, tiredness, exposure | **shipped** | data (Need/Condition rows) |
+| dehydration, starvation | **shipped** | data (`incapacitates_at`) |
+| skill level, experience | **shipped** | data (Skill holdings) |
+| intelligence, constitution, strength, weight | **templated** | data (Attribute holdings) |
+| modifiers on actions/scripts | **shipped** | mechanism (`modifies` overlay) |
+| interests, political leaning | **expressible** | data (emergent or Attribute) |
+| **age** | **gap** | **engine** (`birth_tick` + `ctx.query.age()`) |
+| **birth, death-by-old-age, lifecycle** | **gap** | **engine** (spawn) + policy (the rest) |
+
+The headline: **the survival and capacity halves of the request are
+already built and already invariant-protected.** The only engine work is
+`birth_tick` + a derived `age` query, plus (if a world wants demographic
+turnover) a spawn mechanism. Everything else is data, exercised by passes
+that already exist.
+
+### Build sequence (proposed)
+
+1. **6a — `birth_tick` + `ctx.query.age()`** (engine, small). One column,
+   one migration (backfill with the current tick so existing runs are
+   unaffected — every entity becomes "ageless from today"), one query.
+   Unblocks every age-driven policy. The keystone.
+2. **6b — age-driven policy, proven in an experiment** (platform). A
+   POLICY script that reads `age()` and pays a pension / fires a
+   coming-of-age event / age-gates a recipe via a VALIDATOR. No engine
+   change; proves the affordance end-to-end, the way the bond proved 5a–5c.
+3. **6c — spawn + the lifecycle** (engine + platform, if wanted). A
+   `spawn_entity` intent (the one genuinely new mechanism), an endowment
+   transfer (estate-style), and world policy for birth rate / cost /
+  eligibility. Opens generational turnover. Defer until a world asks for
+   a population rather than a fixed cast.
+4. **6d — death-by-old-age** (engine, optional). Layer 2: age-based
+   incapacitation, reusing the estate rule. Defer unless a world wants
+   invariant mortality rather than scripted retirement.
+
+*Decisions to lock here:*
+- **Age is derived data, not a holding.** It is monotonic and tick-
+  derived; storing it as a grantable/decayable good would be wrong.
+- **The engine tracks age; worlds define its effects.** Start at layer 1
+  (scripts read `age()` and act). Escalate to layer 2 (invariant age-based
+  incapacitation) only when a world wants mortality to be non-votable.
+- **Interests and leaning are not engine concepts.** They are emergent
+  (derived from economic position) or attribute holdings (shifting via
+  declared recipes). The engine ships neither.
+- **The survival loop and the attribute template are final.** They already
+  express the physical/capacity request and are invariant-protected by
+  construction (scripts cannot adjust holdings). Step 6 adds *age* on top,
+  not a parallel system.
