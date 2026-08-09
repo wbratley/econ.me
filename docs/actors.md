@@ -153,7 +153,8 @@ Each step is independently useful and unblocks the next.
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
    "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
-   underway (bank + loan + futures + insurance done); option next.*
+   COMPLETE: all six reference contracts built (bond, bank, loan, futures,
+   insurance, option).*
 
 ### A correctness note for step 2
 
@@ -616,7 +617,25 @@ proposal/campaigning UI.
   undocumented payout is vetoed fail-closed. The engine now offers three
   trigger sources, all exercised: `ctx.tick` (bond), a signal
   `world_setting` (futures), and `ctx.events` (insurance).
-  The rest of 5d (option) remains.
+  5d-6 (option) is done: `contracts/option/` is the asymmetric right — the
+  final reference instrument. An exchange (CCP) matches a buyer (holder of
+  a right) and a writer (the obligated party); the buyer pays a one-time
+  premium (the price of the right, posts no margin), the writer posts
+  margin (collateral). At settlement the buyer gets the intrinsic value
+  only if in the money (call: `max(0, signal - strike) * qty`; put:
+  `max(0, strike - signal) * qty`); otherwise the writer's margin returns
+  whole (the premium has already settled). The deficiency case (payout
+  exceeds margin) reuses the futures `seize`->`to_entity` pattern exactly
+  (seize goods from the writer, redirect to the buyer); the
+  option-sufficiency VALIDATOR gates it via an `option:deficiency:*`
+  WorldSetting oracle (the 5c pattern). `option.lua` marks to market from
+  the SAME `futures:price:SYMBOL` oracle a future reads — the underlying's
+  price is shared infrastructure. The headline asymmetry vs futures: a
+  future is a symmetric pair (both obligated, both post margin, settlement
+  pays both); an option is asymmetric (the buyer has a right, the writer an
+  obligation, settlement pays the long only if in the money). With this,
+  the entire Step 5d reference library is complete: six contracts, each
+  exercising a distinct engine affordance.
 
 ## Step 5 design: the financial substrate
 
@@ -630,8 +649,8 @@ another a future payment, a stream of coupons, a delivery at a strike. That
 is the substrate of the whole financial economy: bonds, loans, bank
 deposits, futures, options, insurance.
 
-  **All five reference contracts are now built** except the option: bond,
-  bank, loan, futures, insurance.
+  **All six reference contracts are now built:** bond, bank, loan, futures,
+  insurance, option.
 
 The architectural insight that governs this step (and rejects the
 instinct to add a `Contract` engine model): **a financial instrument is
@@ -834,6 +853,28 @@ validates the most substrate first).*
   WorldSetting oracle — the 5c pattern, as the loan's usury cap mirrors
   the loan book); a naked seize is vetoed fail-closed.
 - **Option** — same shape, settlement pays the long only if in the money.
+  *— done:* `contracts/option/` (`option.py` + `option.lua` +
+  `option_sufficiency.lua`), tested in `tests/test_contract_option.py`. An
+  exchange (CCP) matches a buyer (holder of a right) and a writer (the
+  obligated party). The buyer pays a one-time premium (the price of the
+  right) and posts NO margin; the writer posts margin (collateral). Each
+  tick `option.lua` (BEHAVIOUR) reads the shared `futures:price:SYMBOL`
+  signal (the underlying price is one oracle, read by futures and options
+  alike) and stamps the buyer's intrinsic value and the writer's credit
+  (margin minus the claim). At settlement `settle()` pays the buyer the
+  intrinsic value ONLY if in the money — call: `max(0, signal - strike) *
+  qty`; put: `max(0, strike - signal) * qty` — otherwise the writer's
+  margin returns whole (the premium has already settled hands). This is the
+  headline asymmetry vs futures: a future is a symmetric pair (both sides
+  obligated, both post margin, settlement pays both); an option is
+  asymmetric (the buyer has a right, the writer an obligation, settlement
+  pays the long only if in the money). The deficiency case (payout exceeds
+  margin) reuses the futures `seize`->`to_entity` pattern: seize goods from
+  the writer, redirect to the buyer. `settle()` is Python (like futures')
+  because the deficiency case needs try/except branching. The
+  option-sufficiency VALIDATOR gates the exchange's `seize` to a documented
+  deficiency (an `option:deficiency:*` WorldSetting oracle — the 5c
+  pattern, structurally identical to futures' margin-sufficiency check).
 - **Insurance** — premium `transfer` in, risk pool in `state`, payout on a
   trigger event read from `ctx.events`.
   *— done:* `contracts/insurance/` (`insurance.py` + `insurance.lua` +
@@ -892,8 +933,8 @@ smallest, validates the most, and is the template for the rest.
    validator). Tests: `tests/test_world_setting_query.py`.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
-   the engine. *— government bond + commercial bank + secured loan +
-   futures + insurance done; option remains.*
+   the engine. *— COMPLETE: all six reference contracts built (bond,
+   bank, loan, futures, insurance, option).*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
