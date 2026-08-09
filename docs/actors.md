@@ -153,7 +153,7 @@ Each step is independently useful and unblocks the next.
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
    "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
-   underway (bank + loan + futures done); option/insurance next.*
+   underway (bank + loan + futures + insurance done); option next.*
 
 ### A correctness note for step 2
 
@@ -599,7 +599,24 @@ proposal/campaigning UI.
   seize is vetoed fail-closed. The same primitive — `seize` — is now the
   enforcement spine in two private contracts (loan foreclosure + futures
   margin call).
-  The rest of 5d (option, insurance) remains.
+  5d-5 (insurance) is done: `contracts/insurance/` validates `ctx.events`
+  as a trigger source — the one engine affordance no earlier contract
+  exercises. An insurer (BUSINESS) collects a one-time premium into a risk
+  pool and pays a death benefit to a beneficiary when a trigger event
+  (`entity_incapacitated`) fires for a policyholder, read from `ctx.events`.
+  The trigger-and-pay engine is a POLICY script (the only script type that
+  sees every entity's events). The default trigger is a REAL engine event —
+  a policyholder crossing an incapacitating condition threshold
+  (`conditions.py`). Each tick the script scans `ctx.events`, marks
+  triggered policies, and pays via `ctx.action.transfer` (Lua-driven; a
+  local pool counter prevents over-commit). Risk-pool exhaustion is
+  graceful (deferred claims retry). The coverage-cap VALIDATOR gates the
+  insurer's outbound transfers to documented coverage (an
+  `insurance:coverage:*` WorldSetting oracle — the 5c pattern); an
+  undocumented payout is vetoed fail-closed. The engine now offers three
+  trigger sources, all exercised: `ctx.tick` (bond), a signal
+  `world_setting` (futures), and `ctx.events` (insurance).
+  The rest of 5d (option) remains.
 
 ## Step 5 design: the financial substrate
 
@@ -612,6 +629,9 @@ build is the machinery of **obligation over time** — one entity promising
 another a future payment, a stream of coupons, a delivery at a strike. That
 is the substrate of the whole financial economy: bonds, loans, bank
 deposits, futures, options, insurance.
+
+  **All five reference contracts are now built** except the option: bond,
+  bank, loan, futures, insurance.
 
 The architectural insight that governs this step (and rejects the
 instinct to add a `Contract` engine model): **a financial instrument is
@@ -816,6 +836,24 @@ validates the most substrate first).*
 - **Option** — same shape, settlement pays the long only if in the money.
 - **Insurance** — premium `transfer` in, risk pool in `state`, payout on a
   trigger event read from `ctx.events`.
+  *— done:* `contracts/insurance/` (`insurance.py` + `insurance.lua` +
+  `coverage_cap.lua`), tested in `tests/test_contract_insurance.py`. An insurer
+  (BUSINESS) collects a one-time premium into a risk pool and pays a death
+  benefit to a designated beneficiary when a trigger event fires for a
+  policyholder — read from `ctx.events`, the one affordance no earlier contract
+  exercises. The trigger-and-pay engine is a POLICY script (the only script
+  type that sees every entity's events; a death is an event on the deceased,
+  not the insurer). The default trigger is `entity_incapacitated` (a policyholder
+  crossing an incapacitating condition threshold — `conditions.py`). Each tick
+  the script scans `ctx.events`, marks matched policies triggered, and pays
+  triggered-unpaid claims via `ctx.action.transfer` — Lua-driven (unlike
+  futures' Python settle) because there is no branching to do: a local pool
+  counter prevents over-commit, and the coverage oracle matches the payout so
+  the validator cannot veto. Risk-pool exhaustion is graceful (deferred claims
+  retry next tick). The coverage-cap VALIDATOR gates the insurer's outbound
+  transfers to documented coverage (an `insurance:coverage:*` WorldSetting
+  oracle — the 5c pattern); a payout to an undocumented beneficiary is vetoed
+  fail-closed.
 
 Each ships with a documented `state` shape and at least one VALIDATOR
 (e.g. a usury cap on loan rates, a margin-sufficiency check on futures) —
@@ -855,7 +893,7 @@ smallest, validates the most, and is the template for the rest.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
    the engine. *— government bond + commercial bank + secured loan +
-   futures done; option/insurance remain.*
+   futures + insurance done; option remains.*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
