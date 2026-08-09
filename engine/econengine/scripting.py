@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine
 from . import capabilities as _capabilities
-from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick
+from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
 
 
 class OperationVetoedError(ValueError):
@@ -213,6 +213,23 @@ def build_queries(session: Session) -> dict:
             for entity_id, quantity in rows
         ]
 
+    def world_setting(key):
+        """Any world-level votable datum by key, or None if unset.
+
+        The generic read behind fiscal_policy() and constitution(): a
+        governance layer writes WorldSettings, scripts read them. This is
+        also the signal channel (Step 5c, Fork A) -- a price-feed POLICY
+        posts ``signal:wheat`` each tick; consumers read it here instead
+        of each keeping their own copy. A global read, like a published
+        rate or register; the rules of the world are public.
+
+        Returns the raw stored value (a dict) so a caller stores whatever
+        shape it needs and reads those keys back. ``None`` means unset --
+        a signal whose feed has gone dark, or a key never written.
+        """
+        setting = session.get(WorldSetting, str(key))
+        return setting.value if setting is not None else None
+
     def fiscal_policy():
         """The government's votable fiscal-policy dict (or {} if unset).
 
@@ -354,6 +371,7 @@ def build_queries(session: Session) -> dict:
         "holding": holding,
         "has_unlock": has_unlock,
         "holders": holders,
+        "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,
         "active_script": active_script,

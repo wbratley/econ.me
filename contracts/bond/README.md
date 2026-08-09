@@ -125,13 +125,22 @@ how many periods have been settled so each is paid exactly once.
 
 A bond world may want to bind its issuer at the constitutional tier: forbid
 money creation outright so bonds can be serviced **only from existing funds**,
-never by monetising the debt. Install `monetization_cap.lua` as a VALIDATOR — at
-`CAP = "0"` it is a hard-money standard. Raising `CAP` is a constitutional act
-(re-enact via `set_validator` at supermajority). This is the same
+never by monetising the debt. Install `monetization_cap.lua` as a VALIDATOR —
+at the default cap of `"0"` it is a hard-money standard. This is the same
 validator-constrains-policy pattern `fiscal_policy` already uses, aimed at the
-two-tier-money boundary the bond demonstrates. (A data-driven `CAP` keyed off a
-`WorldSetting` is the natural Step-5c upgrade once `ctx.query.world_setting`
-ships.)
+two-tier-money boundary the bond demonstrates.
+
+The cap is **two-layered** (the decision-rule/data-effect split that runs
+through the whole engine):
+
+- a `DEFAULT_CAP` in source — changing it is a constitutional act (re-enact
+  via `set_validator` at supermajority), the way `fiscal_policy`'s rates are
+  votable. Decision rules are code here.
+- a governed override read live each op from the `monetary:issue_cap`
+  WorldSetting (`{"cap": "<money>"}`) via `ctx.query.world_setting` (Step 5c) —
+  so a world can ease or tighten the ceiling by writing data (an oracle, or a
+  constitutional POLICY) without re-enacting the validator. Effect mechanisms
+  are engine.
 
 ## When this stops being enough (Fork B)
 
