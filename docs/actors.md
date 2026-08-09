@@ -153,7 +153,7 @@ Each step is independently useful and unblocks the next.
    owned-claim/position primitive, (c) a signal/observation layer, (d) a
    reference contract library. Each is independently focusable; see
    "Step 5 design" below. *— 5a + 5b + 5c done (gov bond ships); 5d
-   underway (bank + loan done); futures/option/insurance next.*
+   underway (bank + loan + futures done); option/insurance next.*
 
 ### A correctness note for step 2
 
@@ -583,7 +583,23 @@ proposal/campaigning UI.
   queryable `loan:account:*` WorldSetting (the 5c signal pattern). Usurious
   interest is uncollectible by force; voluntary repayment at any rate is the
   borrower's own money.
-  The rest of 5d (futures, option, insurance) remains.
+  5d-4 (futures + margin) is done: `contracts/futures/` validates `seize`
+  as a margin call and the signal convention (5c). An exchange (CCP)
+  matches a long and a short; both post cash margin (a `transfer` into a
+  commingled pool); `futures.lua` reads a signal price
+  (`ctx.query.world_setting("futures:price:SYMBOL")`) and marks to market
+  each tick — a pure book update (zero-sum, cumulative, skip-safe).
+  `settle()` pays out: if a side is in deficiency (credit < 0 — losses
+  exceeded margin), the exchange `seize`s goods worth the deficiency from
+  the defaulter and redirects them to the winner (`to_entity`), making the
+  winner whole without any cash-conversion. The exchange needs `SEIZE`
+  (a clearinghouse license). The margin-sufficiency VALIDATOR gates the
+  exchange's `seize` to a documented deficiency (a
+  `futures:deficiency:*` WorldSetting oracle — the 5c pattern); a naked
+  seize is vetoed fail-closed. The same primitive — `seize` — is now the
+  enforcement spine in two private contracts (loan foreclosure + futures
+  margin call).
+  The rest of 5d (option, insurance) remains.
 
 ## Step 5 design: the financial substrate
 
@@ -782,6 +798,21 @@ validates the most substrate first).*
   holds margin (`seize` on margin breach), settles cash or physical at
   expiry against a signal price (5c). *Validates `seize` as margin call;
   validates the signal convention.*
+  *— done:* `contracts/futures/` (`futures.py` + `futures.lua` +
+  `margin_sufficiency.lua`), tested in `tests/test_contract_futures.py`. An
+  exchange (CCP) matches a long and a short; both post cash margin (a
+  `transfer` into a commingled pool); `futures.lua` reads a signal price
+  (`ctx.query.world_setting("futures:price:SYMBOL")`) and marks to market
+  each tick — a pure book update (the pool is commingled; credits are
+  zero-sum, cumulative from the contract price, skip-safe). `settle()` pays
+  out: if a side is in deficiency (credit < 0 — losses exceeded margin), the
+  exchange `seize`s goods worth the deficiency from the defaulter and
+  redirects them to the winner (`to_entity`), making the winner whole
+  without any cash-conversion step. The exchange needs `SEIZE` (a
+  clearinghouse license). The margin-sufficiency VALIDATOR gates the
+  exchange's `seize` to a documented deficiency (a `futures:deficiency:*`
+  WorldSetting oracle — the 5c pattern, as the loan's usury cap mirrors
+  the loan book); a naked seize is vetoed fail-closed.
 - **Option** — same shape, settlement pays the long only if in the money.
 - **Insurance** — premium `transfer` in, risk pool in `state`, payout on a
   trigger event read from `ctx.events`.
@@ -823,8 +854,8 @@ smallest, validates the most, and is the template for the rest.
    validator). Tests: `tests/test_world_setting_query.py`.
 4. **5d (reference library)** — platform; one instrument at a time,
    starting with the government bond, each validated end-to-end against
-   the engine. *— government bond + commercial bank + secured loan done;
-   futures/option/insurance remain.*
+   the engine. *— government bond + commercial bank + secured loan +
+   futures done; option/insurance remain.*
 
 *Decisions locked here:*
 - **No `Contract` engine model.** A contract is data + a script. The
