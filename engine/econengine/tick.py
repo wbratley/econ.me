@@ -234,6 +234,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             "id": entity.id,
             "name": entity.name,
             "entity_type": entity.entity_type.value,
+            "age": (tick_number - entity.birth_tick) if entity.birth_tick is not None else None,
             "is_monetary_authority": entity.is_monetary_authority,
             "capabilities": list(entity.capabilities or []),
         },
@@ -279,7 +280,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
         "unlocks": tech.entity_unlocks(session, entity.id),
         "events": entity_events,
         "state": dict(script.state or {}),
-        "queries": build_queries(session),
+        "queries": build_queries(session, tick_number),
     }
 
 
