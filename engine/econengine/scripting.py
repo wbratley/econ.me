@@ -97,11 +97,16 @@ def _applicable_scripts(session: Session, script_type: ScriptType, op: dict):
 
 def _op_ctx(session: Session, script: Script, op: dict) -> dict:
     entity = session.get(Entity, op.get("entity_id")) if op.get("entity_id") else None
+    # The tick this op applies at: the latest committed (an op fires
+    # before the current tick commits). age() computes against the same
+    # value so it never disagrees with ctx.tick here.
+    _tick = _latest_tick_number(session)
     return {
         "entity": {
             "id": entity.id,
             "name": entity.name,
             "entity_type": entity.entity_type.value,
+            "age": (_tick - entity.birth_tick) if (entity and entity.birth_tick is not None) else None,
             "is_monetary_authority": entity.is_monetary_authority,
             "capabilities": list(entity.capabilities or []),
         } if entity else {},
@@ -112,14 +117,13 @@ def _op_ctx(session: Session, script: Script, op: dict) -> dict:
         "events": [],
         "state": dict(script.state or {}),
         "op": op,
-        "queries": build_queries(session),
-        # The latest committed tick. For tick-run scripts (_build_script_ctx)
+        "queries": build_queries(session, _tick),
         # ctx.tick is the tick currently executing (threaded in). A validator
         # or hook fires mid-operation, before the current tick is committed,
         # so the honest value here is the last-completed tick — the world as
         # it stood when the op was applied. A direct API op (between ticks)
         # reads the same field and gets the true latest.
-        "tick": _latest_tick_number(session),
+        "tick": _tick,
     }
 
 
@@ -135,9 +139,17 @@ def _latest_tick_number(session: Session) -> int:
 # Shared with the tick engine
 # ---------------------------------------------------------------------------
 
-def build_queries(session: Session) -> dict:
-    """ctx.query.* — read-only, string results so Lua sees exact decimals."""
+def build_queries(session: Session, tick_number: int | None = None) -> dict:
+    """ctx.query.* — read-only, string results so Lua sees exact decimals.
+
+    ``tick_number`` is the tick age() computes against, threaded from the
+    caller so it matches the ctx.tick that very script already sees
+    (executing tick for POLICY/BEHAVIOUR, latest committed for
+    VALIDATOR/HOOK). Unset (the bare ``build_queries(session)`` form used by
+    tests) falls back to the latest committed tick.
+    """
     from . import markets, tech  # deferred: markets imports this module
+    _tick = tick_number if tick_number is not None else _latest_tick_number(session)
 
     def balance(account_id):
         acct = session.get(Account, str(account_id))
@@ -364,6 +376,28 @@ def build_queries(session: Session) -> dict:
             "turnout": turnout,
         }
 
+    def age(entity_id):
+        """The age of an entity in ticks (current tick minus birth_tick),
+        or None if untracked.
+
+        Age is the one entity attribute that is NOT a holding (it is
+        monotonic and tick-derived, so storing and mutating it would be
+        wasteful and wrong -- Step 6, docs/actors.md). The engine stamps
+        birth_tick once at creation; this computes the derived value against
+        the same tick the calling script already sees as ctx.tick (executing
+        tick for POLICY/BEHAVIOUR, latest committed for VALIDATOR/HOOK), so
+        age and ctx.tick never disagree.
+
+        None means the entity has no birth_tick (it predates age-tracking,
+        or does not exist) -- nil in Lua, a dark read rather than an error.
+        A fail-closed age-gating script treats nil as "eligibility cannot
+        be certified".
+        """
+        e = session.get(Entity, str(entity_id))
+        if e is None or e.birth_tick is None:
+            return None
+        return _tick - e.birth_tick
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -371,6 +405,7 @@ def build_queries(session: Session) -> dict:
         "holding": holding,
         "has_unlock": has_unlock,
         "holders": holders,
+        "age": age,
         "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,

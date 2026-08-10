@@ -161,10 +161,10 @@ Each step is independently useful and unblocks the next.
    already invariant-protected (scripts cannot adjust holdings, so no
    entity can lie about its own hunger or intelligence). The one genuine
    gap is **age**: a monotonic, tick-derived quantity that does not fit
-   the holding model and is currently untracked. Closing it opens the
-   demographic lifecycle — birth, aging, retirement, generational
-   replacement — and turns a fixed cast into a population. See "Step 6
-   design" below.
+   the holding model. Closing it opens the demographic lifecycle — birth,
+   aging, retirement, generational replacement — and turns a fixed cast
+   into a population. See "Step 6 design" below. *— 6a done
+   (`birth_tick` + `ctx.query.age`); 6b–6d remain.*
 
 ### A correctness note for step 2
 
@@ -646,22 +646,30 @@ proposal/campaigning UI.
   obligation, settlement pays the long only if in the money). With this,
   the entire Step 5d reference library is complete: six contracts, each
   exercising a distinct engine affordance.
-- Step 6 — **design written (not started)**. See "Step 6 design: the
-  embodied entity" below. The framing is recognition, not build: most of
-  the request (hunger/thirst/tiredness/exposure → degradation → death;
+- Step 6 — **6a done**. See "Step 6 design: the embodied entity" below.
+  The framing is recognition, not build: most of the request
+  (hunger/thirst/tiredness/exposure → degradation → death;
   skill/intelligence/constitution as holdings; the `modifies` action
   overlay) is *already shipped* and already invariant-protected (scripts
   cannot adjust holdings, so no entity can lie about its own body). The
   one genuine engine gap is **age** — a monotonic, tick-derived quantity
-  that does not fit the holding model and is currently untracked
-  (`Entity` has no `birth_tick`). Proposed: `birth_tick` + a derived
-  `ctx.query.age()`, with age's *effects* (retirement, age-gating,
-  death-by-old-age) left to world policy at first (layer 1: scripts read
-  age and act). The lifecycle this opens — birth, aging, generational
-  replacement — turns a fixed cast into a population. Interests and
-  political leaning are explicitly *not* engine concepts (emergent from
-  economic position, or attribute holdings shifting via declared recipes).
-  No code yet.
+  that does not fit the holding model. **6a (`birth_tick` +
+  `ctx.query.age`) landed:** `Entity.birth_tick` (nullable Integer, no
+  backfill — NULL means predates tracking), stamped once at creation by
+  `services.create_entity` (`scripting._latest_tick_number`) and never
+  mutated. `ctx.query.age(entity_id)` returns `ctx.tick − birth_tick` (nil
+  for NULL / unknown entity); `ctx.entity.age` is the running entity's
+  own age. Age computes against the same tick the calling script already
+  sees as `ctx.tick` — `build_queries(session, tick_number)` now threads
+  the tick from each caller (`_build_script_ctx` passes the executing
+  tick; `_op_ctx` passes the latest committed), so age and ctx.tick never
+  disagree (the dual-source semantics from 5a, extended to a query).
+  Migration `a1b2c3d4e5f6` (NULL backfill — no script reads age() yet, so
+  existing runs are unaffected; a backfill would give old entities a wrong
+  age). Tests: `tests/test_age_query.py`. Age's *effects* (retirement,
+  age-gating, death-by-old-age) are still world policy (6b); the
+  lifecycle (birth, generational replacement) is 6c+. Interests and
+  political leaning remain explicitly *not* engine concepts.
 
 ## Step 5 design: the financial substrate
 
@@ -1084,14 +1092,18 @@ engine mechanism, and it is small.
 
 #### The mechanism: `birth_tick` + a derived `age`
 
-- Add **`birth_tick: int`** to `Entity` (nullable; migration backfills
-  existing entities with the current tick, or 0 — they are ageless
-  immortals until a world decides otherwise, which preserves every
-  existing run).
-- Expose **`ctx.query.age()`** (and/or `ctx.entity.age` in the script
-  context) as `ctx.tick − birth_tick`. Never stored-and-mutated; always
-  computed. Unforgeable — a script cannot change its birth tick any more
-  than it can change its holdings.
+- Add **`birth_tick: int`** to `Entity` (nullable). Existing rows are left
+  **NULL rather than backfilled**: no script reads `age()` before this
+  change, so existing runs are unaffected either way, and any backfill
+  would give a long-running world's old entities a wrong age (a
+  500-tick-old entity would read 0). NULL means "predates age-tracking";
+  `age()` reads nil for it, and a fail-closed age gate treats nil as
+  "eligibility cannot be certified". New entities created after the
+  migration are tracked from birth.
+- Expose **`ctx.query.age(entity_id)`** (and **`ctx.entity.age`** for the
+  running entity) as `ctx.tick − birth_tick`. Never stored-and-mutated;
+  always computed. Unforgeable — a script cannot change its birth tick any
+  more than it can change its holdings.
 
 Age is **derived data**, not a holding. The engine tracks time-since-birth;
 it does not opine on what age *means*. That is world policy, and it has
@@ -1187,9 +1199,16 @@ that already exist.
 ### Build sequence (proposed)
 
 1. **6a — `birth_tick` + `ctx.query.age()`** (engine, small). One column,
-   one migration (backfill with the current tick so existing runs are
-   unaffected — every entity becomes "ageless from today"), one query.
-   Unblocks every age-driven policy. The keystone.
+   one migration, one query. Unblocks every age-driven policy. The
+   keystone. *— done (see Status):* `Entity.birth_tick` (nullable, no
+   backfill — NULL means predates tracking), stamped once at creation by
+   `services.create_entity`; `ctx.query.age(entity_id)` returns
+   `ctx.tick − birth_tick` (nil for NULL/unknown) and `ctx.entity.age` is
+   the running entity's own age. `age()` computes against the same tick
+   the calling script already sees as `ctx.tick` (executing tick for
+   POLICY/BEHAVIOUR, latest committed for VALIDATOR/HOOK — `build_queries`
+   now threads the tick from each caller). Tests:
+   `tests/test_age_query.py`. Migration: `a1b2c3d4e5f6`.
 2. **6b — age-driven policy, proven in an experiment** (platform). A
    POLICY script that reads `age()` and pays a pension / fires a
    coming-of-age event / age-gates a recipe via a VALIDATOR. No engine

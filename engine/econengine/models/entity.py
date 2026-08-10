@@ -40,6 +40,12 @@ class Entity(Base):
         SAEnum(EntityStatus), nullable=False, default=EntityStatus.ACTIVE
     )
     incapacitated_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Tick the entity came into being; age = ctx.tick - birth_tick (Step 6,
+    # docs/actors.md). Set once at creation, never mutated -- age is
+    # unforgeable the way holdings are (a script cannot change its birth
+    # tick any more than it can change its body). NULL means the entity
+    # predates age-tracking; ``ctx.query.age()`` reads nil for it.
+    birth_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     heir_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("entities.id"), nullable=True
     )  # estate recipient under the "heir" rule; unset falls back to burn

@@ -49,6 +49,12 @@ class NotMonetaryAuthorityError(ValueError):
 
 def create_entity(session: Session, name: str, entity_type: EntityType) -> Entity:
     entity = Entity(name=name, entity_type=entity_type)
+    # Birth tick = the latest committed tick at creation. An entity spawned
+    # at genesis (before tick 1) is born at tick 0; one created between ticks
+    # is born at the last-completed tick. Set once, never mutated -- age is
+    # derived (ctx.tick - birth_tick) and unforgeable (Step 6,
+    # docs/actors.md).
+    entity.birth_tick = scripting._latest_tick_number(session)
     session.add(entity)
     session.flush()
     return entity
