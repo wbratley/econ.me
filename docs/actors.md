@@ -165,7 +165,8 @@ Each step is independently useful and unblocks the next.
    aging, retirement, generational replacement — and turns a fixed cast
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
-   6c design written (see §6c); 6c mechanism + 6d remain.*
+   6c design written (see §6c); 6c engine mechanism done; proving experiment
+   + 6d remain.*
 
 ### A correctness note for step 2
 
@@ -702,9 +703,12 @@ generic-`parents` provenance + `owner_id` (defaults to caller's owner) +
   binding cost is per-tick since every active entity runs its BEHAVIOUR
   each tick) → world cap + rules as validators. New queries `population()`
   (active count) and `parents()`/`children()`. Sex/marriage/permit stay
-  data, never engine fields. Mechanism + experiment to build; 6d stays
-  independent and optional. Interests and political leaning remain
-  explicitly *not* engine concepts.
+  data, never engine fields. **Engine mechanism done** (`spawn_entity` intent
+  + `SPAWN` capability, `Entity.parents` migration `b2c3d4e5f6a7`, the
+  executing-tick thread-local, the three server caps, the validator path,
+  and the `population()`/`parents()`/`children()` queries); proving
+  experiment to build; 6d stays independent and optional. Interests and
+  political leaning remain explicitly *not* engine concepts.
 
 ## Step 5 design: the financial substrate
 
@@ -1304,6 +1308,16 @@ a proving experiment — a world with a votable population cap and a two-
 parent birth rule (sex-holding + age + a marriage datum), mirroring the
 lifecycle demo. 6d (death-by-old-age, the estate rule's other end)
 remains independent and optional.
+
+*— engine mechanism done:* `spawn_entity` intent + `SPAWN` capability
+(fail-closed), `Entity.parents` (immutable generic-`list[entity_id]`, migration
+`b2c3d4e5f6a7`), the executing-tick thread-local so a mid-tick spawn stamps
+`birth_tick = ctx.tick` (not the prior tick), server hard caps
+(`ECON_MAX_ACTIVE_ENTITIES` / `ECON_MAX_ENTITIES` / `ECON_MAX_ENTITIES_PER_OWNER`,
+engine invariants, non-votable) enforced in the spawn path, the world cap +
+birth rules as VALIDATORs over `ctx.op`, and three queries — `population()`
+(active count), `parents(id)`, `children(id)`. `ctx.action.spawn_entity(parents,
+opts)` queues it. Sex/marriage/permit stay data. Proving experiment remains.
 
 ### Interests and political leaning — not physical, no new mechanism
 

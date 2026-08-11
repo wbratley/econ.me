@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from .lua_engine import Intent, LuaEngine
 from . import capabilities as _capabilities
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
+from .models.entity import EntityType
 
 
 class OperationVetoedError(ValueError):
@@ -133,6 +134,27 @@ def _latest_tick_number(session: Session) -> int:
         select(Tick.number).order_by(Tick.number.desc()).limit(1)
     ).scalar_one_or_none()
     return row if row is not None else 0
+
+
+def _executing_tick(session: Session) -> int:
+    """The tick currently executing, else the latest committed.
+
+    ``run_tick`` sets a thread-local to the tick in progress around the
+    intent-resolution phase, so a mid-tick ``spawn_entity`` stamps the very
+    tick the spawner saw as ``ctx.tick`` (not the one before it -- the
+    current Tick row is committed only at the *end* of run_tick). Outside a
+    tick (the API/test path, which resolves intents between ticks) the
+    thread-local is unset and this falls back to the latest committed tick,
+    matching ``create_entity``. Either way a newborn records the tick it
+    first exists at, so ``age()`` never disagrees with ``ctx.tick``.
+    """
+    t = getattr(_local, "tick", None)
+    return t if t is not None else _latest_tick_number(session)
+
+
+def set_executing_tick(number: int | None) -> None:
+    """Mark the tick in progress (called by ``run_tick``); None clears it."""
+    _local.tick = number
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +420,48 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
             return None
         return _tick - e.birth_tick
 
+    def population():
+        """Count of ACTIVE entities -- the living population.
+
+        The world-facing number a votable population cap checks (Step 6c,
+        docs/actors.md). Active only because the interesting quantity for a
+        living-population rule is who is *alive*, not the cumulative row
+        count (the dead still take storage but do not run scripts). The
+        server-tier hard cap counts both active and total internally and is
+        never script-visible; this is the policy-facing read.
+        """
+        from .models.entity import EntityStatus
+        return session.execute(
+            select(func.count()).select_from(Entity)
+            .where(Entity.status == EntityStatus.ACTIVE)
+        ).scalar_one()
+
+    def parents(entity_id):
+        """The parent ids of an entity (its provenance), or an empty list.
+
+        The stored ``parents`` list stamped once by ``spawn_entity`` --
+        engine-blind (the engine does not interpret it) but authoritative
+        (immutable, so inheritance and consanguinity rules rest on honest
+        data). Empty for an entity made at world setup or one spawned from
+        no parents (spontaneous generation). A consanguinity validator
+        walks this to decide "these two share a parent".
+        """
+        e = session.get(Entity, str(entity_id))
+        return list(e.parents or []) if e is not None else []
+
+    def children(entity_id):
+        """Every entity whose ``parents`` lists ``entity_id`` -- the reverse
+        of :func:`parents`.
+
+        Scans all entities (any status): a fertility-quota rule may count
+        living children, a genealogy rule may count all ever born. Either
+        is policy; this returns the raw set and lets the caller filter.
+        Bounded by the server's total-row cap, so the scan stays cheap.
+        """
+        pid = str(entity_id)
+        rows = session.execute(select(Entity.id, Entity.parents)).all()
+        return [eid for (eid, plist) in rows if plist and pid in plist]
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -406,6 +470,9 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
         "has_unlock": has_unlock,
         "holders": holders,
         "age": age,
+        "population": population,
+        "parents": parents,
+        "children": children,
         "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,
@@ -521,6 +588,49 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             extra["seized_goods"] = summary["goods_quantity"]
             extra["seized_symbol"] = summary["goods_symbol"]
             extra["seized_parcels"] = summary["parcels"]
+
+        elif intent.intent_type == "spawn_entity":
+            # Bring a new entity into being during a tick (Step 6c). The
+            # capability gate above already proved `entity` (the CALLER --
+            # a midwife, a factory, or one of the parents) holds SPAWN.
+            # `parents` is the declared provenance, independent of the
+            # caller: capability gates the caller, validators gate the
+            # parents. services.spawn_entity enforces the server hard caps
+            # (engine invariant) and fires a VALIDATOR (the world's votable
+            # rules), then stamps birth_tick + immutable parents and opens
+            # an empty account. It does NOT endow -- a transfer the
+            # spawning script / HOOK makes after, not the mechanism.
+            try:
+                parents = json.loads(intent.params.get("parents", "[]"))
+            except ValueError:
+                return rejected("invalid parents JSON")
+            if not isinstance(parents, list):
+                return rejected("parents must be a JSON array")
+            caller = entity  # loaded at the capability gate
+            owner_id = intent.params.get("owner_id") or caller.owner_id
+            currency = intent.params.get("currency")
+            if not currency:
+                # default to the caller's first account currency -- the
+                # money the spawner itself uses (matches how ctx.accounts[1]
+                # is read everywhere). A money-incapable caller must pass an
+                               # explicit currency.
+                acct = sorted(caller.accounts, key=lambda a: a.id)[0] if caller.accounts else None
+                if acct is None:
+                    return rejected("caller has no account to derive currency; pass currency")
+                currency = acct.currency
+            try:
+                et = EntityType(intent.params.get("entity_type", "individual"))
+            except ValueError:
+                return rejected(f"unknown entity_type {intent.params.get('entity_type')!r}")
+            name = intent.params.get("name") or "entity"
+            with session.begin_nested():
+                summary = services.spawn_entity(
+                    session, caller, parents=parents, owner_id=owner_id,
+                    currency=currency, name=name, entity_type=et,
+                    reference=reference,
+                )
+            extra["child_id"] = summary["child_id"]
+            extra["child_account_id"] = summary["account_id"]
 
         elif intent.intent_type == "set_fiscal_policy":
             # Replace the votable fiscal-policy dict. The capability gate

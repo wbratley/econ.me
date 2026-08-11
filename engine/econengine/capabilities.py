@@ -77,6 +77,17 @@ SEIZE = "seize"
 #: hold."
 GRANT_CAPABILITY = "grant_capability"
 
+#: Bring a new entity into being during a tick -- the one genuinely new
+#: mechanism of Step 6c (``docs/actors.md``). ``spawn_entity`` stamps an
+#: immutable generic-``parents`` provenance list, sets ``owner_id``
+#: (defaulting to the caller's owner), always creates an empty account, and
+#: fires VALIDATORs; it does NOT endow (starting wealth is a post-spawn
+#: transfer, policy not mechanism). Fail-closed by default: nobody spawns
+#: until a world grants this capability. Three concentric gates apply:
+#: this capability (constitutional), then server hard caps (engine
+#: invariant, non-votable), then world rules (validators, votable).
+SPAWN = "spawn"
+
 #: All declared capability names, for validation and introspection.
 ALL = frozenset({
     MONETARY_AUTHORITY,
@@ -86,6 +97,7 @@ ALL = frozenset({
     AMEND_CONSTITUTION,
     SEIZE,
     GRANT_CAPABILITY,
+    SPAWN,
 })
 
 # --- intent → required capability -----------------------------------------
@@ -104,6 +116,7 @@ INTENT_CAPABILITIES: dict[str, str] = {
     "set_constitution": AMEND_CONSTITUTION,  # step 4b — amend the voting-system floor
     "grant_capability": GRANT_CAPABILITY,   # confer a capability (meta; constitutional-tier mutation)
     "revoke_capability": GRANT_CAPABILITY,  # revoke a capability (meta; constitutional-tier mutation)
+    "spawn_entity": SPAWN,                  # bring a new entity into being during a tick (Step 6c)
     # NOTE: `enact` is deliberately NOT here. The capability an enactment
     # needs is data on the proposal: ordinary -> legislate, constitutional ->
     # amend_constitution. It is checked in resolve_intent's enact branch

@@ -74,7 +74,7 @@ from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
     ProcessStatus, Script, ScriptType, Tick, WorldSetting,
 )
-from .scripting import build_queries, resolve_intent
+from .scripting import build_queries, resolve_intent, set_executing_tick
 
 # Votable data (world_settings): max total ms of Lua execution an entity's
 # tick-scripts (POLICY + BEHAVIOUR) may consume in a single tick. Missing/None
@@ -186,17 +186,26 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     # each one in a savepoint, so a rejection is fully rolled back and the
     # retry starts clean. The held-back rejection is not recorded, so each
     # intent still produces exactly one event -- the outcome that stood.
-    retry: list[Intent] = []
-    for intent in intents:
-        outcome = resolve_intent(session, intent)
-        if intent.intent_type == "start_process" and outcome.get("short_of_holdings"):
-            retry.append(intent)
-            continue
-        events.append(outcome)
+    # Mark the tick in progress so a mid-tick spawn_entity stamps the
+    # executing tick (the one the spawner saw as ctx.tick), not the latest
+    # committed one (the current Tick row is only written at the end of
+    # run_tick). Cleared in finally so the API/test path -- which resolves
+    # intents between ticks -- falls back to the latest committed tick.
+    set_executing_tick(number)
+    try:
+        retry: list[Intent] = []
+        for intent in intents:
+            outcome = resolve_intent(session, intent)
+            if intent.intent_type == "start_process" and outcome.get("short_of_holdings"):
+                retry.append(intent)
+                continue
+            events.append(outcome)
 
-    events.extend(markets.run_auctions(session, tick_number=number))
-    for intent in retry:
-        events.append(resolve_intent(session, intent))
+        events.extend(markets.run_auctions(session, tick_number=number))
+        for intent in retry:
+            events.append(resolve_intent(session, intent))
+    finally:
+        set_executing_tick(None)
     events.extend(production.consume_per_tick_inputs(session, tick_number=number))
     events.extend(needs.run_consumption(session, tick_number=number))
     events.extend(goods.apply_decay(session, tick_number=number))
