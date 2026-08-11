@@ -165,8 +165,8 @@ Each step is independently useful and unblocks the next.
    aging, retirement, generational replacement — and turns a fixed cast
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
-   6c design written (see §6c); 6c engine mechanism done; proving experiment
-   + 6d remain.*
+   6c design written (see §6c); 6c engine mechanism + proving experiment done;
+   6d remains.*
 
 ### A correctness note for step 2
 
@@ -706,9 +706,13 @@ generic-`parents` provenance + `owner_id` (defaults to caller's owner) +
   data, never engine fields. **Engine mechanism done** (`spawn_entity` intent
   + `SPAWN` capability, `Entity.parents` migration `b2c3d4e5f6a7`, the
   executing-tick thread-local, the three server caps, the validator path,
-  and the `population()`/`parents()`/`children()` queries); proving
-  experiment to build; 6d stays independent and optional. Interests and
-  political leaning remain explicitly *not* engine concepts.
+  and the `population()`/`parents()`/`children()` queries); **proving experiment
+  done** (`experiments/population/`: a midwife POLICY births children mid-tick;
+  a birth-law VALIDATOR composes sex-holding + age + a marriage WorldSetting;
+  a population-cap VALIDATOR caps growth via `population()`; an endowment HOOK
+  transfers starting wealth — all no engine change); 6d stays independent and
+  optional. Interests and political leaning remain explicitly *not* engine
+  concepts.
 
 ## Step 5 design: the financial substrate
 
@@ -1317,7 +1321,8 @@ remains independent and optional.
 engine invariants, non-votable) enforced in the spawn path, the world cap +
 birth rules as VALIDATORs over `ctx.op`, and three queries — `population()`
 (active count), `parents(id)`, `children(id)`. `ctx.action.spawn_entity(parents,
-opts)` queues it. Sex/marriage/permit stay data. Proving experiment remains.
+opts)` queues it. Sex/marriage/permit stay data. **Proving experiment done**
+(`experiments/population/`).
 
 ### Interests and political leaning — not physical, no new mechanism
 
