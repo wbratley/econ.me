@@ -164,7 +164,8 @@ Each step is independently useful and unblocks the next.
    the holding model. Closing it opens the demographic lifecycle — birth,
    aging, retirement, generational replacement — and turns a fixed cast
    into a population. See "Step 6 design" below. *— 6a done
-   (`birth_tick` + `ctx.query.age`); 6b–6d remain.*
+   (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
+   6c–6d remain.*
 
 ### A correctness note for step 2
 
@@ -646,7 +647,7 @@ proposal/campaigning UI.
   obligation, settlement pays the long only if in the money). With this,
   the entire Step 5d reference library is complete: six contracts, each
   exercising a distinct engine affordance.
-- Step 6 — **6a done**. See "Step 6 design: the embodied entity" below.
+- Step 6 — **6a, 6b done**. See "Step 6 design: the embodied entity" below.
   The framing is recognition, not build: most of the request
   (hunger/thirst/tiredness/exposure → degradation → death;
   skill/intelligence/constitution as holdings; the `modifies` action
@@ -666,9 +667,31 @@ proposal/campaigning UI.
   disagree (the dual-source semantics from 5a, extended to a query).
   Migration `a1b2c3d4e5f6` (NULL backfill — no script reads age() yet, so
   existing runs are unaffected; a backfill would give old entities a wrong
-  age). Tests: `tests/test_age_query.py`. Age's *effects* (retirement,
-  age-gating, death-by-old-age) are still world policy (6b); the
-  lifecycle (birth, generational replacement) is 6c+. Interests and
+  age). Tests: `tests/test_age_query.py`.
+
+  **6b (age-driven policy, proven in experiment) landed:**
+  `experiments/lifecycle` exercises all three instruments — an age-gate
+  VALIDATOR (poll-tax vetoed outside the working-age band), a pension
+  POLICY (seniors paid each tick), and a coming-of-age grant POLICY
+  (one-time at the threshold) — on a four-citizen cast of staggered
+  `birth_tick`, so both lifecycle transitions (admission, retirement)
+  fire inside six ticks. **Headline finding: the dual-source lead.**
+  Because a POLICY reads the executing tick and a VALIDATOR reads the
+  last-committed tick (5a), a policy-side transition and the matching
+  validator-side transition for the *same* threshold fire one tick apart
+  — the policy leads. Eve is granted at tick 3 (policy sees 16) but
+  admitted to labor at tick 4 (validator catches up); Noah is pensioned
+  at tick 2 but tax-exempt only at tick 3 (and both pensioned and taxed
+  for one tick). Not a bug — validators must see committed reality for
+  integrity. This *confirms* the affordance works as designed across
+  both script types. Run: `python -m experiments.lifecycle.run`. Tests:
+  `experiments/lifecycle/test_lifecycle.py`. No engine change.
+
+  What remains: the lifecycle itself — birth, generational replacement
+  (6c, `spawn_entity`, the one genuinely new mechanism) and invariant
+  mortality (6d, age-based incapacitation, optional layer 2). Age's
+  *effects* are now proven at layer 1 (scripts read age and act). The
+  population is still a fixed cast; turning it over is 6c+. Interests and
   political leaning remain explicitly *not* engine concepts.
 
 ## Step 5 design: the financial substrate
@@ -1213,6 +1236,18 @@ that already exist.
    POLICY script that reads `age()` and pays a pension / fires a
    coming-of-age event / age-gates a recipe via a VALIDATOR. No engine
    change; proves the affordance end-to-end, the way the bond proved 5a–5c.
+   *— done (see Status):* `experiments/lifecycle` proves all three — an
+   age-gate VALIDATOR (poll-tax vetoed for minors/retirees), a pension
+   POLICY, and a coming-of-age grant POLICY — on a four-citizen cast of
+   staggered `birth_tick`. **Headline finding: the dual-source lead.** A
+   POLICY reads the executing tick and a VALIDATOR reads the last-committed
+   tick (5a), so a policy-side transition and the matching validator-side
+   transition for the *same* threshold fire one tick apart — the policy
+   leads (Eve is granted at tick 3 but admitted to labor at tick 4; Noah is
+   pensioned at tick 2 but tax-exempt at tick 3). Not a bug: validators must
+   see committed reality for integrity. Layer 1 (scripts read age and act)
+   is validated end-to-end. Run: `python -m experiments.lifecycle.run`. Tests:
+   `experiments/lifecycle/test_lifecycle.py`.
 3. **6c — spawn + the lifecycle** (engine + platform, if wanted). A
    `spawn_entity` intent (the one genuinely new mechanism), an endowment
    transfer (estate-style), and world policy for birth rate / cost /
