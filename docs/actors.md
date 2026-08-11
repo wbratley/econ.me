@@ -166,7 +166,7 @@ Each step is independently useful and unblocks the next.
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
    6c design written (see §6c); 6c engine mechanism + proving experiment done;
-   6d remains.*
+   6d design written (see §6d), mechanism remains.*
 
 ### A correctness note for step 2
 
@@ -1324,6 +1324,108 @@ birth rules as VALIDATORs over `ctx.op`, and three queries — `population()`
 opts)` queues it. Sex/marriage/permit stay data. **Proving experiment done**
 (`experiments/population/`).
 
+### Step 6d design: death-by-old-age
+
+Death closes the demographic cycle that 6c (spawn) opened: birth → aging
+(free, derived) → **death** → inheritance (the estate rule). It is the
+last engine piece of Step 6, and the smallest. The roadmap framed it as
+layer 2 — *"age as an incapacitation axis: mirror `incapacitates_at` but
+keyed on derived age rather than a holding — 'at age N the engine ends
+the entity.' Reuses the estate rule ... appropriate when a world wants
+demographic turnover to be invariant, not votable per tick."* This section
+locks how.
+
+**The mechanism — a per-entity `lifespan` column, read by the existing
+incapacity pass.** One nullable Integer on `Entity`: `lifespan`. `NULL`
+means *immortal* (the default, so nothing already built ever dies and the
+feature is opt-in). For every active entity with a non-NULL `lifespan` AND
+a non-NULL `birth_tick`, the end-of-tick incapacity pass checks `age =
+tick − birth_tick`; at `age >= lifespan` it deactivates the entity and
+applies the estate rule — *exactly* the existing `_apply_estate` path,
+firing the same `entity_incapacitated` event with a synthetic
+`condition: "age"`. No new TransactionType, no new money movement; the
+dead entity's holdings/accounts/parcels move (or burn) per the votable
+estate rule, condition holdings always burn. An old-age death is, to the
+engine, indistinguishable from a starvation death — same event, same
+estate, same insurance trigger. The only difference is the *cause label*.
+
+**Why per-entity data, not a votable WorldSetting.** The roadmap's own
+qualifier settles this: layer-2 mortality is *"invariant, not votable per
+tick."* A `lifespan` WorldSetting would be votable — the governance stack
+could repeal mortality itself, which is precisely the layer-1 (scripted)
+behaviour layer 2 exists to escape. So `lifespan` is **per-entity data,
+set once at birth, with no engine setter** — immutable the way
+`birth_tick` and `parents` are (no action exists to change it; a future
+`set_lifespan` intent under a capability is the reserved escape valve).
+Per-entity is also strictly more expressive than a single global number:
+humans die at 80, elves at 1000, the Government never (its `lifespan` is
+NULL), robots never — and the engine opines on **none** of it (no
+entity-type special-casing; immortality is just a NULL). The *votable*
+face of aging — retirement age, pension, eligibility — stays where it
+belongs: layer-1 script policy reading `age()`. The engine owns the
+biological limit; the world owns everything age *means*.
+
+**The refactor that makes age reuse free.** `_incapacitate` is currently
+coupled to a `Good` + `Holding` (it reads `good.symbol`, `holding.quantity`,
+`good.incapacitates_at`). It is generalised to take a cause descriptively
+— `condition`, `quantity`, `threshold` — so the condition loop calls it
+with a real symbol/holding/threshold and the age loop calls it with
+`condition="age"`, `quantity=age`, `threshold=lifespan`. The event shape is
+unchanged; every existing assertion on `entity_incapacitated` (insurance,
+the estate tests) still holds. Ordering within the pass: **conditions
+first, then age** (an entity crossing a condition threshold and its
+lifespan in one tick is recorded as dying of the condition — the first
+cause wins, consistent with the existing two-threshold rule).
+
+**What 6d deliberately does NOT add.** No new capability (mortality is an
+engine pass, not a privileged *act* — nothing "does" the killing; contrast
+`levy`/`seize` which are compelled actions). No new intent type, no new
+Lua action, no new TransactionType. The layer-1 alternative the roadmap
+named — *"a script that, with a new `incapacitate` action, ends the
+entity at a threshold"* — is **deferred**: it would add a capability and
+an action to express *what layer 2 already expresses as data*, so it is
+redundant until a world needs *scripted, conditional, non-age* killing
+(execution, eviction). Death-by-old-age needs none of it.
+
+**Inheritance and insurance come for free.** Because an old-age death is
+the `entity_incapacitated` event, everything built on that event works
+unchanged: the `heir` estate rule transfers the estate to `heir_id`
+(generational wealth, the bridge 6c's `parents` makes genealogically
+meaningful), and the insurance contract's death benefit fires on an
+old-age death exactly as on a starvation death. A world that sets
+`lifespan` on every child (the spawn POLICY passes it) and an `heir` gets
+turnover + inheritance with zero new policy code.
+
+**Observability.** A `ctx.query.lifespan(entity_id)` mirror of `age()` —
+returns the entity's lifespan (int) or nil (immortal/predates tracking) —
+so an insurance or pension POLICY can read remaining life
+(`lifespan − age`) without inventing a datum. `spawn_entity`'s `opts`
+takes an optional `lifespan` (stringly, like every other param); the
+midwife POLICY sets each child's lifespan at birth.
+
+*Decisions locked here:*
+- **`lifespan` is per-entity data, not a votable WorldSetting.** The
+  roadmap's "not votable per tick" makes a WorldSetting self-defeating;
+  per-entity is invariant, expressive (per-kind), and opinion-free.
+- **`NULL` = immortal.** Existing entities never die; the feature is
+  opt-in. The Government is immortal by default (no footgun, no
+  entity-type special-casing).
+- **Death reuses the estate rule and the `entity_incapacitated` event.**
+  One cause label (`"age"`) is the only new signal; inheritance and
+  insurance need nothing new.
+- **No new capability / intent / action / TransactionType.** Mortality
+  is an engine pass, like the condition pass it extends. The layer-1
+  `incapacitate` action is deferred as redundant.
+- **Conditions fire before age** in the pass (first cause wins).
+
+*Deferred:* a `set_lifespan` intent (mutable lifespan under a capability),
+per-entity-type default lifespans at spawn, and the layer-1
+`incapacitate` action for scripted/non-age killing. Build: engine
+mechanism (`lifespan` column + migration + the age pass + the
+`_incapacitate` refactor + the `lifespan` query + the spawn `opts`
+param), then a proving experiment (a world where founders die of old age
+and heirs inherit, closing the cycle 6c opened).
+
 ### Interests and political leaning — not physical, no new mechanism
 
 The request's last pair — interests, political leaning — is different: it
@@ -1413,8 +1515,16 @@ that already exist.
    engine mechanism + queries, then a proving experiment (population cap
    + two-parent birth rule), mirroring 6a→6b.
 4. **6d — death-by-old-age** (engine, optional). Layer 2: age-based
-   incapacitation, reusing the estate rule. Defer unless a world wants
-   invariant mortality rather than scripted retirement.
+   incapacitation, reusing the estate rule. *— design written (see
+   "Step 6d design: death-by-old-age" below):* a per-entity `lifespan`
+   column (nullable; NULL = immortal, the default — opt-in, nothing
+   built ever dies); the end-of-tick incapacity pass checks
+   `age >= lifespan` and reuses the estate rule, firing
+   `entity_incapacitated` with `condition: "age"` (so inheritance and
+   insurance work unchanged). Per-entity, not a votable WorldSetting
+   (the roadmap's "not votable per tick"); no new capability/intent/
+   action/TransactionType. Build: engine mechanism + proving experiment
+   (founders die, heirs inherit — closing the cycle 6c opened).
 
 *Decisions to lock here:*
 - **Age is derived data, not a holding.** It is monotonic and tick-
