@@ -532,6 +532,37 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _spawn_entity(parents, opts=None, priority=100):
+        # Bring a new entity into being during a tick (Step 6c). The CALLER
+        # (the entity running this script) is the midwife/factory/parent;
+        # `parents` is the declared provenance, independent of the caller
+        # (capability gates the caller, validators gate the parents).
+        # resolve_intent gates this on the `spawn` capability; a VALIDATOR
+        # may veto (population cap, wrong parents). `parents` is a Lua list
+        # of entity ids; `opts` is an optional table with name / entity_type
+        # / currency / owner_id. The mechanism never endows -- the spawning
+        # script transfers wealth after, as policy.
+        import json
+        plist = _lua_to_python(parents)
+        if plist is None:
+            plist = []
+        elif not isinstance(plist, list):
+            plist = [plist]
+        parent_ids = [str(p) for p in plist]
+        params = {"parents": json.dumps(parent_ids)}
+        if opts is not None:
+            o = _lua_to_python(opts) or {}
+            for key in ("name", "entity_type", "currency", "owner_id"):
+                if o.get(key) is not None:
+                    params[key] = str(o[key])
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="spawn_entity",
+            params=params,
+            resource_ids=list(parent_ids),
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
@@ -546,6 +577,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["create_proposal"] = _create_proposal
     action_tbl["vote"]            = _vote
     action_tbl["enact"]           = _enact
+    action_tbl["spawn_entity"]    = _spawn_entity
     action_tbl["place_order"] = _place_order
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process

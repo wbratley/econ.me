@@ -46,6 +46,15 @@ class Entity(Base):
     # tick any more than it can change its body). NULL means the entity
     # predates age-tracking; ``ctx.query.age()`` reads nil for it.
     birth_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Provenance -- the parents of this entity (Step 6c, docs/actors.md).
+    # A generic list of entity ids stamped once by ``spawn_entity`` and
+    # never mutated: lineage must be authoritative for inheritance
+    # (``heir_id``) and consanguinity rules, so it cannot live in
+    # scribbleable script state. The engine STORES the list; it does NOT
+    # interpret it -- two-parent biology, one-parent manufacturing, and
+    # zero-parent spontaneous generation are just different-length lists.
+    # NULL means the entity predates spawn-tracking (made at world setup).
+    parents: Mapped[list | None] = mapped_column(JSON, nullable=True)
     heir_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("entities.id"), nullable=True
     )  # estate recipient under the "heir" rule; unset falls back to burn

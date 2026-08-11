@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import os
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import scripting
-from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION, SEIZE, GRANT_CAPABILITY
-from .models.entity import Entity, EntityType
+from .capabilities import LEVY, LEGISLATE, MONETARY_AUTHORITY, SET_FISCAL_POLICY, AMEND_CONSTITUTION, SEIZE, GRANT_CAPABILITY, SPAWN
+from .models.entity import Entity, EntityType, EntityStatus
 from .models.account import Account
 from .models.script import Script, ScriptType
 from .models.transaction import Transaction, TransactionType
@@ -379,6 +380,149 @@ def seize(
         "goods_quantity": str(goods_moved),
         "parcels": parcels_moved,
         "to_entity_id": recipient.id,
+    }
+    scripting.fire_hooks(session, {**op, **summary})
+    return summary
+
+
+class ServerCapExceededError(ValueError):
+    """A server-tier (non-votable) entity cap was reached.
+
+    Distinct from a validator veto: this is the operator's physical ceiling
+    (capacity/fairness), enforced in the engine spawn path the way the
+    balance check enforces solvency -- no vote reaches it. Subclasses
+    ValueError so resolve_intent's broad ``except ValueError`` reports it
+    as a clean rejection.
+    """
+    pass
+
+
+def _server_cap(name: str) -> int | None:
+    """Read an integer server-cap env var, or None if unset/invalid."""
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def _enforce_server_caps(session: Session, owner_id: str | None) -> None:
+    """Tier B of the three spawn gates: the operator's non-votable ceiling.
+
+    Three independent caps, each optional (default unbounded):
+      * ``ECON_MAX_ACTIVE_ENTITIES`` -- the binding capacity bound, since
+        every ACTIVE entity runs its BEHAVIOUR script each tick;
+      * ``ECON_MAX_ENTITIES`` -- total rows (the dead still take storage);
+      * ``ECON_MAX_ENTITIES_PER_OWNER`` -- fairness (no one player hogs
+        entity slots).
+    Checked before a VALIDATOR runs (tier C): a physical limit is a hard
+    floor, so failing fast keeps a saturated world from even consulting
+    policy. None of these is a validator (a world could vote its own
+    cap-checker out) or a WorldSetting (governance could amend it) -- that
+    is exactly why the check lives here, in the mechanism.
+    """
+    active_cap = _server_cap("ECON_MAX_ACTIVE_ENTITIES")
+    if active_cap is not None:
+        active = session.execute(
+            select(func.count()).select_from(Entity)
+            .where(Entity.status == EntityStatus.ACTIVE)
+        ).scalar_one()
+        if active >= active_cap:
+            raise ServerCapExceededError(
+                f"server cap reached: {active} active entities (limit {active_cap})")
+    total_cap = _server_cap("ECON_MAX_ENTITIES")
+    if total_cap is not None:
+        total = session.execute(
+            select(func.count()).select_from(Entity)
+        ).scalar_one()
+        if total >= total_cap:
+            raise ServerCapExceededError(
+                f"server cap reached: {total} entities (limit {total_cap})")
+    per_owner_cap = _server_cap("ECON_MAX_ENTITIES_PER_OWNER")
+    if per_owner_cap is not None and owner_id is not None:
+        owned = session.execute(
+            select(func.count()).select_from(Entity)
+            .where(Entity.owner_id == owner_id)
+        ).scalar_one()
+        if owned >= per_owner_cap:
+            raise ServerCapExceededError(
+                f"server cap reached: owner holds {owned} entities (limit {per_owner_cap})")
+
+
+def spawn_entity(
+    session: Session,
+    caller: Entity,
+    *,
+    parents: list[str],
+    owner_id: str | None = None,
+    currency: str = "USD",
+    name: str = "entity",
+    entity_type: EntityType = EntityType.INDIVIDUAL,
+    reference: str = "",
+) -> dict:
+    """Bring a new entity into being during a tick -- the one genuinely new
+    mechanism of Step 6c (``docs/actors.md``).
+
+    Where :func:`create_entity` is the platform/setup path (entities minted
+    between ticks at world genesis), this is the mid-tick path: a caller
+    that holds the ``spawn`` capability (validated by the caller; checked
+    here as defense in depth) brings a child into the world. The child is
+    stamped with immutable provenance (``parents``), an owner (defaulting
+    to the caller's owner), a birth tick (the executing tick, so age never
+    disagrees with ctx.tick), and an always-created empty account.
+
+    All the safety lives in the gating, not the creation:
+      * ``caller`` must hold ``spawn`` (checked here, and earlier by
+        ``resolve_intent`` at the capability gate) -- tier A;
+      * the server hard caps (active / total / per-owner) are enforced
+        before any VALIDATOR runs -- tier B, a non-votable engine invariant;
+      * a VALIDATOR may veto the spawn (population cap, wrong parents,
+        missing permit) under ``ctx.op`` -- tier C, the world's votable
+        rules. Validators are fail-closed, so a broken policy gate never
+        silently births.
+
+    The mechanism does NOT endow. Starting wealth/goods are a transfer the
+    spawning script or a HOOK makes *after* spawn -- how much a child
+    inherits is policy, not mechanism, the way the levy rate is data.
+    Returns the new entity and account ids.
+    """
+    if not caller.has_capability(SPAWN):
+        raise MissingCapabilityError(caller.id, SPAWN)
+
+    owner_id = owner_id if owner_id is not None else caller.owner_id
+    _enforce_server_caps(session, owner_id)
+
+    op = {
+        "type": "spawn_entity",
+        "entity_id": caller.id,
+        "parents": list(parents),
+        "owner_id": owner_id,
+        "currency": str(currency).upper(),
+        "name": name,
+        "entity_type": entity_type.value,
+        "reference": reference,
+    }
+    scripting.fire_validators(session, op)
+
+    child = Entity(name=name, entity_type=entity_type)
+    child.birth_tick = scripting._executing_tick(session)
+    child.parents = list(parents) if parents else None
+    child.owner_id = owner_id
+    session.add(child)
+    session.flush()
+
+    account = Account(entity=child, currency=str(currency).upper(), balance=Decimal("0"))
+    session.add(account)
+    session.flush()
+
+    summary = {
+        "child_id": child.id,
+        "account_id": account.id,
+        "parents": list(parents),
+        "owner_id": owner_id,
     }
     scripting.fire_hooks(session, {**op, **summary})
     return summary
