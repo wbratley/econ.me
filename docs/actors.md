@@ -165,7 +165,7 @@ Each step is independently useful and unblocks the next.
    aging, retirement, generational replacement — and turns a fixed cast
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
-   6c–6d remain.*
+   6c design written (see §6c); 6c mechanism + 6d remain.*
 
 ### A correctness note for step 2
 
@@ -691,8 +691,20 @@ proposal/campaigning UI.
   (6c, `spawn_entity`, the one genuinely new mechanism) and invariant
   mortality (6d, age-based incapacitation, optional layer 2). Age's
   *effects* are now proven at layer 1 (scripts read age and act). The
-  population is still a fixed cast; turning it over is 6c+. Interests and
-  political leaning remain explicitly *not* engine concepts.
+  population is still a fixed cast; turning it over is 6c+.
+
+  **6c design written** (see "Step 6c design: spawn_entity" below):
+  `spawn_entity` (`SPAWN` capability, fail-closed) stamps immutable
+generic-`parents` provenance + `owner_id` (defaults to caller's owner) +
+  an always-created empty account; endowment is a post-spawn transfer.
+  Three concentric gates: capability → **server hard caps** (active
+  entities, total rows, per-owner — engine invariants, non-votable; the
+  binding cost is per-tick since every active entity runs its BEHAVIOUR
+  each tick) → world cap + rules as validators. New queries `population()`
+  (active count) and `parents()`/`children()`. Sex/marriage/permit stay
+  data, never engine fields. Mechanism + experiment to build; 6d stays
+  independent and optional. Interests and political leaning remain
+  explicitly *not* engine concepts.
 
 ## Step 5 design: the financial substrate
 
@@ -1180,6 +1192,119 @@ skill (attribute) and grows it; an old entity accrues infirmity
 estate. The demographic cycle is the survival loop + attributes *over a
 lifetime*, which is exactly why age is the missing keystone.
 
+### Step 6c design: spawn_entity
+
+Birth is the one genuinely new mechanism in the whole Step 6 arc — the
+first intent that brings an entity into being *during* a tick (entities
+are otherwise minted platform-side at world setup). Everything else
+about reproduction — who may spawn, how many, under what conditions, with
+what endowment — is **policy**, exactly as tax is mechanism and the rate
+is data. The design splits along the same three lines the rest of the
+engine uses.
+
+**The mechanism** (`spawn_entity`, capability `SPAWN`, fail-closed by
+default — nobody spawns until a world grants it):
+
+- Creates a new `Entity` with `birth_tick = ctx.tick` (the 6a keystone).
+- Stamps **provenance** — `parents: list[entity_id]` — once, immutably.
+  This is the one datum that *must* be engine-owned: lineage has to be
+  authoritative for inheritance (the `heir_id` estate rule) and for
+  consanguinity rules ("these two are siblings"), so it cannot live in
+  scribbleable script state. It is immutable for the same reason
+  `birth_tick` is. The engine **stores** the list; it does **not
+  interpret** it. Two-parent biology, one-parent manufacturing, zero-
+  parent spontaneous generation are just different-length lists.
+- Sets `owner_id`, defaulting to **the caller's owner** (Alice's Adam and
+  Eve have a child → Alice owns the child). Explicitly overridable, so a
+  spawn can target the server's own pool (the server/admin is just another
+  owner) or any designated public/wild owner.
+- Always creates an empty account, so the newborn is immediately money-
+  capable. (Harmless in a goods-only world; uniform otherwise.)
+- Does **not** endow. Starting wealth/goods come from a **transfer** the
+  spawning script or a HOOK makes *after* spawn. How much a child inherits
+  is policy, not mechanism — same reason the levy rate is data.
+
+**Caller vs. parents.** An intent has one subject (`ctx.entity`), but
+biological spawn has two parents. So `parents` are explicit params and the
+caller may be one of them, or a third party — a temple, a factory, a
+state "midwife" script. The **capability gates the caller** (who may
+invoke spawn at all); the **validators check the parents** (are these the
+right parents, under the right conditions). A machine combining DNA from
+two donors is the caller, the donors are the parents, and nothing about
+the mechanism changes.
+
+**The three concentric gates** (in order, each able to refuse):
+
+| tier | checks | set by | votable? | lives in |
+|---|---|---|---|---|
+| **A. capability** | caller holds `SPAWN` | governance (`grant_capability`) | yes (constitutional) | engine, like `levy`/`seize` |
+| **B. server hard caps** | active entities ≤ cap; total rows ≤ cap; per-owner ≤ cap | **the operator** (deployment config) | **no** | **engine invariant** in the spawn path — hard error, bypassable by nothing |
+| **C. world cap + rules** | population ≤ world cap; right parents/age/permit | the world's governance | yes | **validators** reading `WorldSetting`s |
+
+Tier B is the new concept: a **server-owned, non-votable ceiling**. It
+cannot be a validator (a world could vote out its own cap-checking
+validator) and cannot be a world `WorldSetting` (governance could amend
+it), so it lives in the engine's spawn implementation, reading operator
+config — the same place the balance check lives (`InsufficientFundsError`
+is not a vote either). The binding constraint is **per-tick cost**: every
+*active* entity runs its BEHAVIOUR script each tick, so the active-entity
+count is the real capacity bound; the total-row count is the storage
+bound. Both are server-tier, env-configured (`ECON_MAX_ACTIVE_ENTITIES`,
+`ECON_MAX_ENTITIES`, `ECON_MAX_ENTITIES_PER_OWNER`; default unbounded),
+checked before any row is written. The world's votable cap is a validator
+reading a `WorldSetting` *on top* — a world can tighten below the server
+ceiling but never exceed it; a world with no cap validator simply inherits
+the server's hard ceiling.
+
+**What the engine does NOT bake in.** Sex/gender is not an entity field
+(the robot example proves it is not universal) — it is an entity-attached
+holding (like intelligence), read by a validator. Marriage is a datum
+(a `WorldSetting` registry, a pairwise capability, or a holding — the
+world picks). A permit is a capability (`grant_capability` already
+exists) or a holding or a setting. "Born vs. built" is not a mechanism
+branch — it is a different validator over the same generic `parents`
+list. The engine ships none of these semantics; worlds compose them.
+
+**New read queries** (the validators need to count and to walk lineage,
+and the engine exposes neither today):
+- `ctx.query.population()` — count of **active** entities (the living,
+  world-facing number a world cap checks). The server tier counts both
+  active and total internally, but only the active count is script-visible.
+- `ctx.query.parents(id)` / `ctx.query.children(id)` — lineage, so
+  per-parent fertility quotas and consanguinity rules work.
+
+These are pure derived reads, the same shape as `age()` (6a) and
+`world_setting()` (5c).
+
+**Decisions locked:**
+- **Provenance is a generic `parents` list**, engine-blind and immutable.
+- **Both server caps and votable caps exist**, at different tiers: server
+caps are engine invariants (active + total + per-owner, non-votable);
+the world cap is a validator over a `WorldSetting`.
+- **`spawn_entity` always creates an account.**
+- **Endowment is a transfer, not mechanism.**
+- **Caller and parents are independent params**; capability gates the
+caller, validators gate the parents.
+- **`owner_id` defaults to the caller's owner**, overridable; the server
+pool is just another owner.
+
+**Deferred from 6c** (siblings, not blockers):
+- **`transfer_ownership`** — its own mechanism with its own policy surface
+(who may hand off an entity, and whether the entity consents). Follow-on.
+- **Votable per-owner cap** — the server-tier per-owner cap covers the
+fairness case now; a world-tier per-owner cap would need an owner-count
+query and owner made script-visible, so defer until a world asks.
+- **Body-attribute initialization** — the newborn's attribute template
+(hunger, skills, etc.) is filled by a world HOOK after spawn, not by the
+mechanism.
+
+**Build sequence** (keystone → proving experiment, as for 6a/6b): engine
+mechanism + provenance + the three cap tiers + the two queries first; then
+a proving experiment — a world with a votable population cap and a two-
+parent birth rule (sex-holding + age + a marriage datum), mirroring the
+lifecycle demo. 6d (death-by-old-age, the estate rule's other end)
+remains independent and optional.
+
 ### Interests and political leaning — not physical, no new mechanism
 
 The request's last pair — interests, political leaning — is different: it
@@ -1252,7 +1377,22 @@ that already exist.
    `spawn_entity` intent (the one genuinely new mechanism), an endowment
    transfer (estate-style), and world policy for birth rate / cost /
   eligibility. Opens generational turnover. Defer until a world asks for
-   a population rather than a fixed cast.
+   a population rather than a fixed cast. *— design written (see "Step 6c
+   design: spawn_entity" below):* mechanism is `spawn_entity` (`SPAWN`
+   capability, fail-closed) stamping immutable generic-`parents`
+   provenance + `owner_id` (defaults to caller's owner) + an always-
+   created empty account; endowment is a post-spawn transfer, not
+   mechanism. Three concentric gates: (A) `SPAWN` capability
+   [constitutional]; (B) **server hard caps** — active entities, total
+   rows, and per-owner, all engine invariants reading operator config
+   (the binding cost is per-tick: every active entity runs its BEHAVIOUR
+   each tick), non-votable; (C) world cap + relationship rules as
+   validators over `WorldSetting`s. New queries: `population()` (active
+   count), `parents(id)`/`children(id)`. Sex/marriage/permit are data
+   (holdings/settings/capability), never engine fields. Deferred:
+   `transfer_ownership`, votable per-owner cap, body-template init. Build:
+   engine mechanism + queries, then a proving experiment (population cap
+   + two-parent birth rule), mirroring 6a→6b.
 4. **6d — death-by-old-age** (engine, optional). Layer 2: age-based
    incapacitation, reusing the estate rule. Defer unless a world wants
    invariant mortality rather than scripted retirement.
