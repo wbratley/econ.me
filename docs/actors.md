@@ -1365,6 +1365,27 @@ face of aging — retirement age, pension, eligibility — stays where it
 belongs: layer-1 script policy reading `age()`. The engine owns the
 biological limit; the world owns everything age *means*.
 
+**How mortality actually adjusts (three levers).** "Immutable lifespan"
+sounds frozen; it isn't — it is *one* of three levers, and the one that is
+deliberately fixed:
+
+| lever | what it adjusts | how | votable? |
+|---|---|---|---|
+| **conditions** (shipped) | *why/whether* someone dies this tick | food, medicine, needs, decay — all data; reduce a condition below `incapacitates_at` and the entity lives | yes (Needs/Goods/Recipes) |
+| **the spawn POLICY** (6c+6d) | what lifespan **future** births get | amend the governed script (`set_script`, ordinary tier), or the `WorldSetting` it reads and stamps onto each child | yes (ordinary law) |
+| **the stamped `lifespan`** (6d) | a *living* entity's death date | nothing — immutable once stamped at birth | **no** (the invariant floor) |
+| **`set_lifespan`** (deferred) | a *living* entity's lifespan | a capability-gated intent | gated (reserved) |
+
+Most "mortality adjusts" in a world is row 1 — the survival loop, every
+tick, causally (you live longer *because* you ate, not because a number
+moved). Row 2 is how a world changes its *regime*: vote a new default
+lifespan and every birth from then on carries it; existing lives keep
+theirs. Row 3 is the ceiling 6d exists to provide — the part that *cannot*
+be voted away to rescue someone mid-life, which is exactly the "not
+votable per tick" of layer 2. Row 4 is the narrow escape (healthcare that
+adds years, a blessing/curse), deferred because it overlaps with row 1,
+which models causes rather than just effects.
+
 **The refactor that makes age reuse free.** `_incapacitate` is currently
 coupled to a `Good` + `Holding` (it reads `good.symbol`, `holding.quantity`,
 `good.incapacitates_at`). It is generalised to take a cause descriptively
