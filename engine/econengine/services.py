@@ -461,6 +461,7 @@ def spawn_entity(
     currency: str = "USD",
     name: str = "entity",
     entity_type: EntityType = EntityType.INDIVIDUAL,
+    lifespan: int | None = None,
     reference: str = "",
 ) -> dict:
     """Bring a new entity into being during a tick -- the one genuinely new
@@ -503,6 +504,7 @@ def spawn_entity(
         "currency": str(currency).upper(),
         "name": name,
         "entity_type": entity_type.value,
+        "lifespan": lifespan,
         "reference": reference,
     }
     scripting.fire_validators(session, op)
@@ -511,6 +513,7 @@ def spawn_entity(
     child.birth_tick = scripting._executing_tick(session)
     child.parents = list(parents) if parents else None
     child.owner_id = owner_id
+    child.lifespan = lifespan  # None = immortal (the default); Step 6d
     session.add(child)
     session.flush()
 
