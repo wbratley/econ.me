@@ -166,7 +166,8 @@ Each step is independently useful and unblocks the next.
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
    6c design written (see §6c); 6c engine mechanism + proving experiment done;
-   6d design written (see §6d); engine mechanism done.*
+   6d design written (see §6d); engine mechanism + proving experiment done.
+   Step 6 complete.*
 
 ### A correctness note for step 2
 
@@ -1554,6 +1555,12 @@ that already exist.
    with the condition path (conditions fire first); `ctx.query.lifespan()`
    mirror of `age()`; `spawn_entity` opts take an optional `lifespan`.
    Tests: `tests/test_lifespan.py`. Migration: `c3d4e5f6a7b8`.
+   *Proving experiment done:* `experiments/generations` — three founders die
+   of old age on schedule (lifespan 3/4/5); two leave estates to a shared
+   heir (the `heir` rule + `heir_id`), one burns heirless (the fallback);
+   money supply 900 -> 800. No Lua scripts — death is an invariant engine
+   pass, the opposite face of 6c's spawn. The lineage queries close the
+   cycle 6c opened. 21 experiment tests.
 
 *Decisions to lock here:*
 - **Age is derived data, not a holding.** It is monotonic and tick-
