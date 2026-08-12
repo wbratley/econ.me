@@ -55,6 +55,21 @@ class Entity(Base):
     # zero-parent spontaneous generation are just different-length lists.
     # NULL means the entity predates spawn-tracking (made at world setup).
     parents: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # The age (in ticks) at which this entity dies of old age -- the
+    # invariant mortality floor of Step 6d (docs/actors.md). The engine's
+    # end-of-tick incapacity pass deactivates the entity once
+    # ``age = tick - birth_tick`` reaches this and applies the estate
+    # rule, firing ``entity_incapacitated`` with ``condition: "age"``.
+    # NULL means *immortal* (the default): nothing already built ever
+    # dies of old age, and the feature is opt-in. It is per-entity data,
+    # not a votable WorldSetting -- the roadmap's "not votable per tick"
+    # makes a votable lifespan self-defeating. Stamped once at
+    # spawn/creation; there is no engine setter, so it is immutable the
+    # way ``birth_tick`` and ``parents`` are (a future ``set_lifespan``
+    # intent under a capability is the reserved escape valve). The world
+    # adjusts the *regime* by amending the governed spawn POLICY; the
+    # *dynamic* face of mortality stays the shipped condition pass.
+    lifespan: Mapped[int | None] = mapped_column(Integer, nullable=True)
     heir_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("entities.id"), nullable=True
     )  # estate recipient under the "heir" rule; unset falls back to burn

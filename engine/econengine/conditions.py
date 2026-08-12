@@ -154,11 +154,24 @@ def _estate_recipient(session: Session, entity: Entity) -> tuple[str, Entity | N
 
 
 def run_incapacity(session: Session, tick_number: int) -> list[dict]:
-    """Deactivate every active entity holding >= an incapacitating threshold
-    and apply the estate rule. Runs AFTER decay, so this tick's natural
-    recovery counts before the threshold is read. Ordering is explicit:
-    conditions symbol-ascending, entities id-ascending; an entity crossing
-    two thresholds in one tick is incapacitated by the first."""
+    """Deactivate every active entity that has crossed a death threshold and
+    apply the estate rule. Runs AFTER decay, so this tick's natural recovery
+    counts before the threshold is read.
+
+    Two thresholds are checked, in order:
+      1. CONDITIONS (``incapacitates_at``) -- a held Good at/over its
+         declared level (symbol-ascending, then entity id-ascending);
+      2. AGE (Step 6d) -- a non-NULL ``lifespan`` reached by
+         ``age = tick_number - birth_tick`` (entity id-ascending).
+
+    An entity crossing a condition threshold and its lifespan in one tick
+    is incapacitated by whichever fires FIRST (the condition), so the
+    recorded cause is deterministic. Both paths share ``_incapacitate``:
+    an old-age death is, to the engine, indistinguishable from a
+    starvation death (same event, same estate, same insurance trigger) --
+    only the ``condition`` cause label differs (``"age"`` vs the Good
+    symbol). Entities with a NULL ``lifespan`` or a NULL ``birth_tick``
+    are immortal by age."""
     events: list[dict] = []
     goods = session.execute(
         select(Good).where(Good.incapacitates_at.is_not(None)).order_by(Good.symbol)
@@ -178,18 +191,45 @@ def run_incapacity(session: Session, tick_number: int) -> list[dict]:
             entity = holding.entity
             if entity.status != EntityStatus.ACTIVE:  # crossed an earlier threshold
                 continue
-            events.append(_incapacitate(session, entity, good, holding, tick_number))
+            events.append(_incapacitate(
+                session, entity, tick_number,
+                condition=good.symbol,
+                quantity=holding.quantity,
+                threshold=good.incapacitates_at,
+            ))
+    # Age-based mortality (Step 6d). Only entities with BOTH a lifespan
+    # and a birth_tick can die of old age; the rest are immortal by age.
+    rows = session.execute(
+        select(Entity)
+        .where(
+            Entity.status == EntityStatus.ACTIVE,
+            Entity.lifespan.is_not(None),
+            Entity.birth_tick.is_not(None),
+            Entity.lifespan <= (tick_number - Entity.birth_tick),
+        )
+        .order_by(Entity.id)
+    ).scalars().all()
+    for entity in rows:
+        if entity.status != EntityStatus.ACTIVE:  # killed by a condition above
+            continue
+        events.append(_incapacitate(
+            session, entity, tick_number,
+            condition="age",
+            quantity=tick_number - entity.birth_tick,
+            threshold=entity.lifespan,
+        ))
     if events:
         session.flush()
     return events
 
 
 def _incapacitate(
-    session: Session, entity: Entity, good: Good, holding: Holding, tick_number: int
+    session: Session, entity: Entity, tick_number: int,
+    *, condition: str, quantity, threshold,
 ) -> dict:
     entity.status = EntityStatus.INCAPACITATED
     entity.incapacitated_tick = tick_number
-    quantity_at_threshold = holding.quantity  # the estate zeroes the holding below
+    quantity_at_threshold = quantity  # the estate zeroes holdings/balances below
 
     for order in session.execute(
         select(Order)
@@ -211,9 +251,9 @@ def _incapacitate(
     return {
         "type": "entity_incapacitated",
         "entity_id": entity.id,
-        "condition": good.symbol,
+        "condition": condition,
         "quantity": str(quantity_at_threshold),
-        "threshold": str(good.incapacitates_at),
+        "threshold": str(threshold),
         "estate_policy": policy,
         "recipient_id": recipient.id if recipient else None,
         **estate,

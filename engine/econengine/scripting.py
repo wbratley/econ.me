@@ -420,6 +420,28 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
             return None
         return _tick - e.birth_tick
 
+    def lifespan(entity_id):
+        """The age (in ticks) at which this entity dies of old age, or None if
+        it is immortal.
+
+        The invariant mortality floor of Step 6d (docs/actors.md): the
+        engine's incapacity pass deactivates the entity once its derived
+        age reaches this and applies the estate rule. None (nil in Lua)
+        means immortal -- either the entity has no lifespan (the default;
+        the feature is opt-in) or does not exist. Per-entity data, not a
+        votable WorldSetting, and immutable once stamped at spawn.
+
+        A pension or insurance POLICY reads this to compute remaining life
+        (``lifespan - age``) without inventing a datum; a death-by-old-age
+        script gates on it. Note this is the hard FLOOR: the *dynamic* face
+        of mortality stays the shipped condition/incapacitates_at pass
+        (food, medicine, needs, decay), which a script reads separately.
+        """
+        e = session.get(Entity, str(entity_id))
+        if e is None:
+            return None
+        return e.lifespan
+
     def population():
         """Count of ACTIVE entities -- the living population.
 
@@ -470,6 +492,7 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
         "has_unlock": has_unlock,
         "holders": holders,
         "age": age,
+        "lifespan": lifespan,
         "population": population,
         "parents": parents,
         "children": children,
@@ -623,11 +646,20 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
             except ValueError:
                 return rejected(f"unknown entity_type {intent.params.get('entity_type')!r}")
             name = intent.params.get("name") or "entity"
+            lifespan_raw = intent.params.get("lifespan")
+            lifespan: int | None = None
+            if lifespan_raw not in (None, ""):
+                try:
+                    lifespan = int(lifespan_raw)
+                except ValueError:
+                    return rejected(f"invalid lifespan {lifespan_raw!r}; must be an integer")
+                if lifespan < 0:
+                    return rejected("lifespan must be non-negative")
             with session.begin_nested():
                 summary = services.spawn_entity(
                     session, caller, parents=parents, owner_id=owner_id,
                     currency=currency, name=name, entity_type=et,
-                    reference=reference,
+                    lifespan=lifespan, reference=reference,
                 )
             extra["child_id"] = summary["child_id"]
             extra["child_account_id"] = summary["account_id"]

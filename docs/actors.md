@@ -166,7 +166,7 @@ Each step is independently useful and unblocks the next.
    into a population. See "Step 6 design" below. *— 6a done
    (`birth_tick` + `ctx.query.age`); 6b done (lifecycle experiment);
    6c design written (see §6c); 6c engine mechanism + proving experiment done;
-   6d design written (see §6d), mechanism remains.*
+   6d design written (see §6d); engine mechanism done.*
 
 ### A correctness note for step 2
 
@@ -1545,7 +1545,15 @@ that already exist.
    insurance work unchanged). Per-entity, not a votable WorldSetting
    (the roadmap's "not votable per tick"); no new capability/intent/
    action/TransactionType. Build: engine mechanism + proving experiment
-   (founders die, heirs inherit — closing the cycle 6c opened).
+   (founders die, heirs inherit — closing the cycle 6c opened). *— engine
+   mechanism done:* `Entity.lifespan` (nullable Integer; NULL = immortal —
+   no backfill, opt-in), checked by the incapacity pass at
+   `age >= lifespan` and reusing the estate rule, firing
+   `entity_incapacitated` with `condition: "age"`; `_incapacitate`
+   generalised to a descriptive cause so the age path shares one code path
+   with the condition path (conditions fire first); `ctx.query.lifespan()`
+   mirror of `age()`; `spawn_entity` opts take an optional `lifespan`.
+   Tests: `tests/test_lifespan.py`. Migration: `c3d4e5f6a7b8`.
 
 *Decisions to lock here:*
 - **Age is derived data, not a holding.** It is monotonic and tick-

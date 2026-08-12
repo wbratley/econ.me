@@ -540,7 +540,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
         # resolve_intent gates this on the `spawn` capability; a VALIDATOR
         # may veto (population cap, wrong parents). `parents` is a Lua list
         # of entity ids; `opts` is an optional table with name / entity_type
-        # / currency / owner_id. The mechanism never endows -- the spawning
+        # / currency / owner_id / lifespan. The mechanism never endows -- the spawning
         # script transfers wealth after, as policy.
         import json
         plist = _lua_to_python(parents)
@@ -552,7 +552,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
         params = {"parents": json.dumps(parent_ids)}
         if opts is not None:
             o = _lua_to_python(opts) or {}
-            for key in ("name", "entity_type", "currency", "owner_id"):
+            for key in ("name", "entity_type", "currency", "owner_id", "lifespan"):
                 if o.get(key) is not None:
                     params[key] = str(o[key])
         intents.append(Intent(
