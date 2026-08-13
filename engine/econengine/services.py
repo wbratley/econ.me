@@ -48,6 +48,24 @@ class NotMonetaryAuthorityError(ValueError):
     pass
 
 
+class OwnershipError(ValueError):
+    """Raised by the autonomy path (``set_entity_behaviour``) when the
+    acting user does not own the target entity (``docs/game.md`` §6).
+
+    The autonomy path's guard is *ownership* where ``set_script``'s is the
+    ``legislate`` capability: a player rewriting their own entity's
+    BEHAVIOUR script needs no vote and no capability, only proof that they
+    own the entity. This is its refusal, parallel to
+    ``MissingCapabilityError``. Defense in depth: the API checks ownership
+    (``_own_entity``) before calling the service; the service re-checks.
+    """
+
+    def __init__(self, owner_id: str, entity_id: str):
+        self.owner_id = owner_id
+        self.entity_id = entity_id
+        super().__init__(f"user {owner_id!r} does not own entity {entity_id!r}")
+
+
 def create_entity(session: Session, name: str, entity_type: EntityType) -> Entity:
     entity = Entity(name=name, entity_type=entity_type)
     # Birth tick = the latest committed tick at creation. An entity spawned
@@ -685,6 +703,16 @@ def set_script(
         raise ValueError(
             "cannot set_script on a validator; amend the constitution instead (step 4b)"
         )
+    if entity_id is not None:
+        # The immutable tier: both governed paths -- legislation here, and
+        # autonomy in ``set_entity_behaviour`` -- refuse a fixed entity
+        # (docs/game.md §4). Its behaviour is operator-set world-physics.
+        bound = session.get(Entity, entity_id)
+        if bound is not None and bound.is_fixed:
+            raise ValueError(
+                f"entity {entity_id} is fixed (immutable tier); "
+                "legislation may not change its behaviour"
+            )
     if not lineage_id:
         raise ValueError("lineage_id is required")
 
@@ -723,6 +751,102 @@ def set_script(
         "lineage_id": lineage_id,
         "script_id": new_script.id,
         "retired_script_id": current.id if current is not None else None,
+        "reference": reference,
+    }
+    scripting.fire_hooks(session, op)
+    return new_script
+
+
+def set_entity_behaviour(
+    session: Session,
+    entity: Entity,
+    source: str,
+    *,
+    owner_id: str,
+    description: str = "",
+    timeout_ms: int = 100,
+    reference: str = "",
+) -> Script:
+    """Ownership-gated autonomy path -- a player rewrites the BEHAVIOUR
+    script of an entity they own (docs/game.md §6).
+
+    This is *autonomy, not legislation*. It needs no vote and no
+    capability, only proof of ownership. It is the distinct counterpart to
+    ``set_script`` (the LEGISLATE-gated governed surface for polity-owned
+    entities): where legislation asks "may the polity impose this?",
+    autonomy asks "does the owner of this entity want it?".
+
+      * Scope -- BEHAVIOUR only. The signature fixes ``script_type``; a
+        player may not touch POLICY / VALIDATOR / HOOK scripts, which are
+        legislation or constitution.
+      * Authorisation -- ``entity.owner_id`` must equal ``owner_id``. A
+        server-owned entity (no owner) fails this by construction.
+      * Refusal -- entities marked ``is_fixed`` are refused: they are the
+        immutable tier (NPC labourers, world-physics), writable only by the
+        operator at content time.
+      * Safety -- unchanged. The money-scope invariant still binds, so an
+        autonomy script can spend only its own entity's money; capabilities
+        (issue/seize/levy) still gate privileged action.
+
+    Semantics match ``set_script``: retire-old + activate-new within an
+    entity-scoped lineage (``behaviour:{entity.id}``). Because "my entity's
+    behaviour" is singular, every currently-active BEHAVIOUR on the entity
+    is retired and the new source becomes the one active behaviour -- the
+    entity ends each edit with exactly the script the owner set, whatever
+    path set the previous one.
+    """
+    if entity.owner_id != owner_id:
+        raise OwnershipError(owner_id, entity.id)
+    if entity.is_fixed:
+        raise ValueError(
+            f"entity {entity.id} is fixed (immutable tier); "
+            "behaviour is operator-set world-physics, not player-editable"
+        )
+    if not source.strip():
+        raise ValueError("source is required")
+
+    lineage_id = f"behaviour:{entity.id}"
+
+    # Retire every currently-active BEHAVIOUR on this entity. Autonomy owns
+    # the whole behaviour surface of an owned entity: "my entity's
+    # behaviour" is one script, the one the owner last set, so a prior
+    # behaviour -- whether set by autonomy or by legislation -- is replaced.
+    retired: list[Script] = list(
+        session.execute(
+            select(Script).where(
+                Script.entity_id == entity.id,
+                Script.script_type == ScriptType.BEHAVIOUR,
+                Script.is_active.is_(True),
+            )
+        ).scalars()
+    )
+    for prior in retired:
+        prior.is_active = False
+
+    version_count = session.execute(
+        select(func.count()).select_from(Script).where(Script.lineage_id == lineage_id)
+    ).scalar_one()
+
+    new_script = Script(
+        name=f"{lineage_id}#{version_count + 1}",
+        description=description,
+        script_type=ScriptType.BEHAVIOUR,
+        source=source,
+        is_active=True,
+        timeout_ms=timeout_ms,
+        entity_id=entity.id,
+        lineage_id=lineage_id,
+    )
+    session.add(new_script)
+    session.flush()
+
+    op = {
+        "type": "set_behaviour",
+        "entity_id": entity.id,
+        "owner_id": owner_id,
+        "lineage_id": lineage_id,
+        "script_id": new_script.id,
+        "retired_script_ids": [s.id for s in retired] or None,
         "reference": reference,
     }
     scripting.fire_hooks(session, op)

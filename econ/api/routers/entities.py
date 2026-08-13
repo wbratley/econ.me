@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from econengine import services
 from econ.api.deps import get_current_user, get_session
 from econ.api.schemas import (
-    AccountCreate, AccountRead, EntityCreate, EntityRead, HoldingRead, NeedStateRead, TransactionRead,
+    AccountCreate, AccountRead, BehaviourScriptWrite, EntityCreate, EntityRead,
+    HoldingRead, NeedStateRead, ScriptRead, TransactionRead,
 )
-from econengine.models import Account, Entity, Holding, NeedState, User
+from econengine.models import Account, Entity, Holding, NeedState, Script, ScriptType, User
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 
@@ -113,3 +114,54 @@ def list_transactions(
     if account is None or account.entity_id != entity.id:
         raise HTTPException(status_code=404, detail="Account not found")
     return account.transactions
+
+
+@router.get("/{entity_id}/behaviour", response_model=ScriptRead)
+def get_behaviour(
+    entity_id: str,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """The entity's currently-active BEHAVIOUR script (what runs as it each
+    tick), or 404 if it has none. Ownership-gated: a player may read only
+    their own entities' behaviour."""
+    entity = _own_entity(entity_id, current_user, session)
+    script = session.query(Script).filter_by(
+        entity_id=entity.id, script_type=ScriptType.BEHAVIOUR, is_active=True
+    ).order_by(Script.created_at.desc()).first()
+    if script is None:
+        raise HTTPException(status_code=404, detail="No active behaviour script")
+    return script
+
+
+@router.post("/{entity_id}/behaviour", response_model=ScriptRead, status_code=201)
+def set_behaviour(
+    entity_id: str,
+    body: BehaviourScriptWrite,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Ownership-gated autonomy path (docs/game.md §6).
+
+    The authenticated owner replaces their entity's BEHAVIOUR script. This
+    is autonomy, not legislation: no vote, no capability, only ownership.
+    Server-owned / fixed (immutable-tier) entities are refused.
+    """
+    entity = _own_entity(entity_id, current_user, session)
+    if entity.is_fixed:
+        raise HTTPException(
+            status_code=409,
+            detail="Entity behaviour is fixed (immutable tier; not player-editable)",
+        )
+    try:
+        script = services.set_entity_behaviour(
+            session, entity, body.source,
+            owner_id=current_user.id,
+            description=body.description,
+            timeout_ms=body.timeout_ms,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    session.commit()
+    session.refresh(script)
+    return script

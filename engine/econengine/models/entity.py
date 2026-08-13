@@ -73,6 +73,16 @@ class Entity(Base):
     heir_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("entities.id"), nullable=True
     )  # estate recipient under the "heir" rule; unset falls back to burn
+    # The immutable-tier mark of the three-tier control model
+    # (``docs/game.md`` §4, §6). True means this entity's BEHAVIOUR is
+    # operator-set world-physics: both the autonomy path
+    # (``set_entity_behaviour``) and the legislation path (``set_script``)
+    # refuse to change it for the epoch. NPC labourers and environment
+    # actors are stamped True at content time; everything else defaults
+    # False. It is data the operator sets (admin API / scenario), never a
+    # governed mutation -- making a fixed entity editable would be a
+    # policy decision layered above the engine, not inside it.
+    is_fixed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     accounts: Mapped[list["Account"]] = relationship("Account", back_populates="entity")
     owner: Mapped["User | None"] = relationship("User", back_populates="entities")

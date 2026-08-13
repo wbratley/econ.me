@@ -143,6 +143,17 @@ class ScriptCreate(BaseModel):
     lineage_id: Optional[str] = None
 
 
+class BehaviourScriptWrite(BaseModel):
+    """Body for the ownership-gated autonomy path
+    (``POST /entities/{id}/behaviour``; docs/game.md §6). A player rewrites
+    the BEHAVIOUR script of an entity they own. ``script_type`` is fixed to
+    BEHAVIOUR by the endpoint -- autonomy may not touch POLICY / VALIDATOR /
+    HOOK."""
+    source: str
+    description: str = ""
+    timeout_ms: int = 100
+
+
 class ScriptRead(BaseModel):
     id: str
     name: str
