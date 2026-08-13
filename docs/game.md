@@ -91,7 +91,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | birth, ageing, death, inheritance | 6a–6d: `birth_tick`, `age`, `lifespan`, estate rule, lineage | ✅ done |
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
-| join / onboarding | pieces exist (`create_entity`, `create_account`, parcel endowment) | ⚠️ **platform flow** |
+| join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer | reads exist (`build_queries`) | ⚠️ **platform observer** (§7) |
 
 ## 6. The control model and the one engine gap
@@ -181,8 +181,12 @@ epoch):
 - **Capabilities don't breed.** A spawned child gets a minimal default
   (nothing, or just SPAWN so the line can continue) — never inherited
   privileges. Any real capability (SEIZE, LEVY, MONETARY_AUTHORITY) arrives
-  only by vote. *Phase 1 must confirm* spawn grants no privileged capability
-  by default, so a player cannot farm capability by spawning.
+  only by vote. ~~*Phase 1 must confirm* spawn grants no privileged
+  capability by default~~ — **confirmed (Phase 1):** a child is born with an
+  empty capability list even when the caller holds SPAWN + SEIZE + LEVY +
+  MONETARY_AUTHORITY (`test_spawn_child_inherits_no_capability`); the
+  platform `POST /join` path is the same (`test_join_does_not_grant_capability`).
+  A player cannot farm capability by spawning or joining.
 - **Elimination is a read.** A player is out when no entity with their
   `owner_id` is ACTIVE — computed by the platform each round. Elimination
   ends *that player's* epoch; the epoch ends for all when someone wins.
@@ -228,7 +232,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | phase | scope | engine change? |
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
-| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow; round scheduler; MCP player interface; confirm spawn grants no privilege | autonomy path **done**; the rest is platform |
+| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler; MCP player interface | autonomy path + onboarding + spawn-privilege check **done**; scheduler + MCP remain (platform) |
 | **2** | Governance-window cadence; victory observer + epoch records; leaderboard | none — platform |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 

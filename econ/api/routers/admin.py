@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 from econengine import conditions, councils, delegations, services, tick
 from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
+from econ.api.onboarding import get_join_config, set_join_config
 from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
     CouncilWrite, DelegationRead, DelegationWrite, EntityRead, EntityUpdate,
-    EstateRuleRead, EstateRuleUpdate, UserRead, UserUpdate,
+    EstateRuleRead, EstateRuleUpdate, JoinConfigRead, JoinConfigWrite, UserRead, UserUpdate,
 )
 from econengine.models import Entity, User
 
@@ -121,6 +122,34 @@ def set_compute_budget(
     tick.set_compute_budget_ms(session, body.budget_ms)
     session.commit()
     return ComputeBudgetRead(budget_ms=body.budget_ms)
+
+
+# --- player onboarding config (the founder package; docs/game.md §12.6) ---
+
+@router.get("/join-config", response_model=JoinConfigRead)
+def get_join_config_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Read the join-time founder package (endowment / currency / starter
+    behaviour). Defaults if unset."""
+    return JoinConfigRead(**get_join_config(session))
+
+
+@router.put("/join-config", response_model=JoinConfigRead)
+def set_join_config_endpoint(
+    body: JoinConfigWrite,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Configure what a new player starts with on ``POST /join``.
+
+    Merge semantics: only the fields you send change; the rest are left
+    alone, so you can rotate the starter without touching the endowment."""
+    fields = {k: v for k, v in body.model_dump().items() if k in body.model_fields_set}
+    cfg = set_join_config(session, **fields)
+    session.commit()
+    return JoinConfigRead(**cfg)
 
 
 # --- council registers (seeding membership for the council/weighted models) ---

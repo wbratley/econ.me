@@ -516,6 +516,37 @@ class ComputeBudgetRead(BaseModel):
     budget_ms: Optional[int] = None
 
 
+#: ---------------------------------------------------------------------------
+#: Player onboarding (docs/game.md §6, §12.6; Phase 1)
+#: ---------------------------------------------------------------------------
+
+class JoinConfigWrite(BaseModel):
+    """Operator-set founder package: what a new player starts with. All
+    fields optional; absent fields are left unchanged (merge semantics)."""
+    endowment: Optional[Decimal] = None
+    currency: Optional[str] = None
+    starter_behaviour: Optional[str] = None
+
+
+class JoinConfigRead(BaseModel):
+    endowment: Decimal
+    currency: str
+    starter_behaviour: Optional[str] = None
+
+    @field_serializer("endowment")
+    def _endowment(self, v: Decimal) -> str:
+        return str(v)
+
+
+class JoinResult(BaseModel):
+    """Returned by ``POST /join`` -- the founder entity, its endowment
+    account, and the starter behaviour applied (None if the world has no
+    starter configured)."""
+    entity: EntityRead
+    account: AccountRead
+    behaviour: Optional[ScriptRead] = None
+
+
 class CouncilWrite(BaseModel):
     """Seed a council register. ``members`` may be a list of entity ids
     (an equal-weight council — every member weight 1) or a mapping

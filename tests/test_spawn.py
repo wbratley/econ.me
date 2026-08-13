@@ -111,6 +111,26 @@ def test_spawn_creates_child_with_account(world, session):
     assert child.accounts[0].balance == Decimal("0")
 
 
+def test_spawn_child_inherits_no_capability(world, session):
+    """Capabilities don't breed (docs/game.md §8, Phase-1 confirmation).
+
+    Even when the birthing caller holds SPAWN *and* privileged capabilities
+    (SEIZE, LEVY, MONETARY_AUTHORITY), the child is born with an empty
+    capability list. A privilege arrives only by a later act of governance,
+    never by descent -- so a player cannot farm capability by spawning. This
+    is what makes the in-game spawn path (and the platform join path) safe
+    against privilege escalation by reproduction.
+    """
+    from econengine.models import Entity
+    gov = world["gov"]
+    gov.capabilities = [capabilities.SPAWN, capabilities.SEIZE,
+                        capabilities.LEVY, capabilities.MONETARY_AUTHORITY]
+    result = spawn_entity(session, gov, parents=[gov.id], currency="USD")
+    child = session.get(Entity, result["child_id"])
+    assert child.capabilities == []
+    assert child.is_monetary_authority is False
+
+
 def test_spawn_provenance_is_immutable(world, session):
     """Provenance is stamped once; the engine owns it (not script state)."""
     result = spawn_entity(session, world["gov"],
