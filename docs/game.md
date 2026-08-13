@@ -83,7 +83,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | each player edits their entity's behaviour | **per-entity BEHAVIOUR scripts** (`Script.entity_id`; tick runs each as `ctx.entity`) | ✅ mechanism |
 | owner→dynasty linkage | `Entity.owner_id` → User; **`spawn_entity` already propagates `caller.owner_id`** | ✅ done |
 | spawn caps / fairness | `ECON_MAX_ENTITIES_PER_OWNER` + caps; `entity_tick_compute_budget_ms` (votable) | ✅ done |
-| batched ticks | `run_tick()` is an independent step | ✅ mechanism; needs **scheduler** (platform) |
+| batched ticks | `run_tick()` is an independent step; `POST /admin/rounds/advance` resolves K per round | ✅ mechanism + scheduler |
 | propose / vote / enact on a slower cycle | full governance stack (`actors.md` 4) | ✅ done; needs **cadence** (platform) |
 | tech / skills / production | `Technology` (ENTITY/WORLD scope, DAG), `Recipe` (inputs/outputs/per_tick/deposit/facility/branches/unlocks) | ✅ rich; needs **content** |
 | land, resources, improvements | `Parcel` (`region_id`, opaque `extent_ref`), `Facility`, `Deposit` (depleting+regen) | ✅ model; needs content |
@@ -232,7 +232,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | phase | scope | engine change? |
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
-| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler; MCP player interface | autonomy path + onboarding + spawn-privilege check **done**; scheduler + MCP remain (platform) |
+| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface | autonomy path + onboarding + spawn-privilege check + scheduler **done**; MCP remains (platform) |
 | **2** | Governance-window cadence; victory observer + epoch records; leaderboard | none — platform |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
