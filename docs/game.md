@@ -90,7 +90,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | markets, money, borrowing, insurance | call auction; two-tier money; bank/bond/loan/futures/option/insurance | ✅ done |
 | birth, ageing, death, inheritance | 6a–6d: `birth_tick`, `age`, `lifespan`, estate rule, lineage | ✅ done |
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
-| **player sets OWN behaviour script** | — `set_script` is legislative (LEGISLATE cap); no autonomy path | ⚠️ **one small engine item** (§6) |
+| **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | pieces exist (`create_entity`, `create_account`, parcel endowment) | ⚠️ **platform flow** |
 | victory observer | reads exist (`build_queries`) | ⚠️ **platform observer** (§7) |
 
@@ -101,17 +101,21 @@ capability-gated by `LEGISLATE`, intended for proposal→vote→enact, and it is
 about *authority* (an entity holding a capability), with no notion of
 ownership. That is correct for legislation and must stay that way.
 
-**The gap.** A player replacing *their own entity's* BEHAVIOUR script is
-**autonomy, not legislation** — it needs no vote, only proof of ownership.
-Phase 1 adds an ownership-gated autonomy path with these properties:
+**The gap (now closed).** A player replacing *their own entity's* BEHAVIOUR
+script is **autonomy, not legislation** — it needs no vote, only proof of
+ownership. Phase 1 added an ownership-gated autonomy path — **implemented**
+as `services.set_entity_behaviour` (engine) plus the player-facing
+`POST /entities/{id}/behaviour` (API) — with these properties:
 
 - **Scope:** BEHAVIOUR scripts only (never POLICY/VALIDATOR/HOOK — those are
   legislation/constitution). 
 - **Authorisation:** the authenticated User must own the target entity
   (`entity.owner_id == user.id`). 
 - **Refusal:** server-owned-and-fixed entities are refused (immutable tier,
-  §4). How "fixed" is marked is a Phase-1 detail — likely a WorldSetting
-  listing immutable script lineages, or an attribute on the entity/script.
+  §4). "Fixed" is an attribute on the entity — `Entity.is_fixed` (resolved
+  in Phase 1); both `set_entity_behaviour` and the legislation path
+  (`set_script`) refuse it. The operator sets it at content time (admin
+  API / scenario); no governed path may flip it.
 - **Safety:** unchanged — the money-scope invariant still binds, so an
   autonomy script can only spend its own entity's money.
 
@@ -224,7 +228,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | phase | scope | engine change? |
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
-| **1** | Ownership-gated autonomy path (§6); join/onboarding flow; round scheduler; MCP player interface; confirm spawn grants no privilege | one small engine item (§6) |
+| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow; round scheduler; MCP player interface; confirm spawn grants no privilege | autonomy path **done**; the rest is platform |
 | **2** | Governance-window cadence; victory observer + epoch records; leaderboard | none — platform |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
@@ -328,8 +332,9 @@ path to "something tangible" and the substrate Phase 1 needs.
 
 - **Rejoin after elimination:** new-founder queue, or wait for next epoch?
   (Leaning: wait for next epoch — elimination should mean something.)
-- **Identity of fixed-tier mark:** WorldSetting list vs. entity/script
-  attribute. (Phase 1.)
+- **Identity of fixed-tier mark:** ~~WorldSetting list vs. entity/script
+  attribute.~~ **Resolved (Phase 1):** an attribute on the entity —
+  `Entity.is_fixed`. Both governed paths refuse it; the operator sets it.
 - **Office model for the `rule` victory condition:** how is "executive
   office" represented? Likely a WorldSetting naming the office-holder entity,
   set by a vote. (Phase 2, only if `rule` is used.)
