@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from econ.api.deps import get_current_user, get_session
+from econ.api.epochs import player_eliminated_in_running_epoch
 from econ.api.onboarding import get_join_config
 from econ.api.schemas import JoinResult
 from econengine import services
@@ -49,6 +50,15 @@ def join_world(
     they get a blank founder they must script themselves (the autonomy path).
     """
     cfg = get_join_config(session)
+
+    # §14.3 rejoin check: a player eliminated in the *running* epoch waits
+    # for the next epoch (elimination should mean something). Once the
+    # epoch ends the register is historical and they may found again.
+    if player_eliminated_in_running_epoch(session, current_user.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Eliminated in the running epoch; wait for the next epoch to rejoin",
+        )
 
     # The same non-votable fairness gate as spawn_entity: a saturated world
     # or a player at their ceiling is refused before any entity is created.

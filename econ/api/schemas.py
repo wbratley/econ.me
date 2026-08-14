@@ -570,6 +570,38 @@ class RoundSummary(BaseModel):
     events_by_type: dict[str, int]
     next_round: int            # the now-open round
     ticks_per_round: int
+    victory_stamps: list[dict] = []    # observer output, if an epoch ran (§14.2)
+    eliminations: list[dict] = []      # dynasty extinctions stamped this round
+
+
+#: ---------------------------------------------------------------------------
+#: Epochs + victory observer (game.md §7, §14; Phase 2a)
+#: ---------------------------------------------------------------------------
+
+class EpochStart(BaseModel):
+    """Start the next epoch: a ``{code, params}`` achievement spec from the
+    §7 victory menu (accumulate / innovate / endure / grow)."""
+    code: str
+    params: dict = {}
+
+
+class EpochRead(BaseModel):
+    """The current/last epoch's state. ``running`` is derived (state exists
+    and ``ended_tick`` is None); an absent epoch reads as running=False,
+    number=0 -- the world simply plays without a victory condition."""
+    running: bool
+    number: int
+    condition: Optional[dict] = None
+    started_tick: int = 0
+    ended_tick: Optional[int] = None
+    winner_user_ids: list[str] = []
+
+
+class EpochStatusRead(EpochRead):
+    """Player view of the epoch: the world fact plus the caller's own
+    elimination status (§14.3) -- the only dynasty-specific bit, and it is
+    the caller's own."""
+    eliminated_this_epoch: bool = False
 
 
 class CouncilWrite(BaseModel):

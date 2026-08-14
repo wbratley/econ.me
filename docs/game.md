@@ -92,7 +92,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
-| victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ⚠️ **platform observer** (§7; Phase 2 — §14) |
+| victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
 | leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ⚠️ **platform read** (Phase 2 — §14) |
 | governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ⚠️ **platform + content clerk** (Phase 2 — §14) |
 
@@ -235,7 +235,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
-| **2** | Epochs + victory observer + elimination records (§14.1–14.3); governance-window cadence (§14.4); leaderboard + publish (§14.5) — design in §14 | none — platform (+ one content-pack clerk script) |
+| **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4); leaderboard + publish (§14.5) | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
@@ -380,7 +380,7 @@ two structuring insights, both inherited from what Phase 1 built:
 ### 14.1 The epoch model — condition as data, set once
 
 - **`epoch.state` WorldSetting**: `{number, condition, started_tick,
-  ended_tick, winner_user_id}`. Absent ⇒ no epoch is running (the world
+  ended_tick, winner_user_ids}`. Absent ⇒ no epoch is running (the world
   plays without a victory condition; the observer is inert).
 - **The condition is the §7 achievement spec**, `{code, params}` — e.g.
   `{"code": "accumulate", "params": {"threshold": 5000}}`. Codes are the
@@ -418,7 +418,7 @@ two structuring insights, both inherited from what Phase 1 built:
   already made stands forever).
 - **The stamp.** On a genuine crossing the observer appends to
   `victory.stamps`: `{epoch, user_id, tick, code, value}`. **First
-  crossing ends the epoch**: `ended_tick` = that tick, `winner_user_id`
+  crossing ends the epoch**: `ended_tick` = that tick, `winner_user_ids`
   set. Players crossing at the *same* tick co-stamp as co-winners (a tie
   is a result, not a dispute). The stamp *is* the win — no intent, vote,
   or script can write the key (surface absence, above).
