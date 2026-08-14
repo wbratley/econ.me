@@ -92,7 +92,9 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
-| victory observer | reads exist (`build_queries`) | ⚠️ **platform observer** (§7) |
+| victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ⚠️ **platform observer** (§7; Phase 2 — §14) |
+| leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ⚠️ **platform read** (Phase 2 — §14) |
+| governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ⚠️ **platform + content clerk** (Phase 2 — §14) |
 
 ## 6. The control model and the one engine gap
 
@@ -233,7 +235,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
-| **2** | Governance-window cadence; victory observer + epoch records; leaderboard | none — platform |
+| **2** | Epochs + victory observer + elimination records (§14.1–14.3); governance-window cadence (§14.4); leaderboard + publish (§14.5) — design in §14 | none — platform (+ one content-pack clerk script) |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
@@ -334,8 +336,12 @@ path to "something tangible" and the substrate Phase 1 needs.
 
 ## 13. Open questions (decide as we hit them)
 
-- **Rejoin after elimination:** new-founder queue, or wait for next epoch?
-  (Leaning: wait for next epoch — elimination should mean something.)
+- **Rejoin after elimination:** ~~new-founder queue, or wait for next epoch?
+  (Leaning: wait for next epoch — elimination should mean something.)~~
+  **Resolved (Phase 2 design, §14.3):** wait for the next epoch. Elimination
+  is stamped (immutable, epoch-scoped) by the round scan; the platform
+  join path refuses a user eliminated in the running epoch. The epoch
+  boundary is the fresh start.
 - **Identity of fixed-tier mark:** ~~WorldSetting list vs. entity/script
   attribute.~~ **Resolved (Phase 1):** an attribute on the entity —
   `Entity.is_fixed`. Both governed paths refuse it; the operator sets it.
@@ -350,3 +356,134 @@ path to "something tangible" and the substrate Phase 1 needs.
   parity: the agent reasons over the same world its script will observe.
   World-visible facts (round clock, market prices) are public to all
   authenticated players, as they are in-world.
+
+---
+
+## 14. Phase 2 detail — epochs, victory, windows, leaderboard
+
+The durable spec for Phase 2, mirroring §12 (Phase 0). Everything here is
+**platform or content**: no engine model, no migration, no new intent. The
+two structuring insights, both inherited from what Phase 1 built:
+
+- **Immutability by surface absence.** No Lua action writes arbitrary
+  WorldSettings — the only script-writable keys ride dedicated intents
+  (`set_fiscal_policy`, `set_constitution`, ...). An append-only register
+  stored under a key no intent can reach (`victory.stamps`,
+  `epoch.eliminations`) is immutable by the same doctrine as "capabilities
+  don't breed": there is no path, not a promise.
+- **Cadence bites at enactment.** The engine does not time-gate
+  `create_proposal` or `vote` — and it should not. A proposal created
+  outside a governance window simply sits unenacted until the next window
+  close; *when enactment runs* is the platform's lever (§14.4). Proposals
+  are cheap; enactment is the law.
+
+### 14.1 The epoch model — condition as data, set once
+
+- **`epoch.state` WorldSetting**: `{number, condition, started_tick,
+  ended_tick, winner_user_id}`. Absent ⇒ no epoch is running (the world
+  plays without a victory condition; the observer is inert).
+- **The condition is the §7 achievement spec**, `{code, params}` — e.g.
+  `{"code": "accumulate", "params": {"threshold": 5000}}`. Codes are the
+  §7 menu: `accumulate`, `innovate`, `endure`, `grow` (`rule` stays §13).
+- **Set only at epoch start.** The operator (admin API) starts an epoch
+  with a condition; the condition is frozen for the epoch's life —
+  `ended_tick` is set (win or operator close), then a new epoch may begin
+  under a new condition. §7's defence 2 (constitutional mid-epoch amendment
+  + cooldown) is explicitly **post-v0**: not-amendable-at-all is the
+  stronger, simpler version of lock-in, and amendments-only-affect-future-
+  crossings (defence 3) holds trivially when there are no amendments.
+- **Epoch records are the stamps themselves** (§14.2) plus the ended
+  `epoch.state` rows — no separate history table.
+
+### 14.2 The victory observer — stamp, don't judge
+
+- **Runs inside round resolution**, after each tick of the K in
+  `advance_round` — per *tick*, not per round: an `accumulate` crossing
+  that dips back below before the batch ends still counts, which is the
+  anti-flash-dump defence (§7.1) operationalized. Monotonic conditions
+  (`innovate`, `endure`, `grow`) are crossing-safe by construction.
+- **Evaluation is pure reads** over engine tables, per dynasty
+  (`owner_id`):
+
+  | code | crossing when | reads |
+  |---|---|---|
+  | `accumulate` | Σ balances of accounts of owned ACTIVE entities ≥ threshold | Account |
+  | `innovate` | any owned entity holds an unlock of tech `technology` | Unlock, Technology |
+  | `endure` | tick ≥ started_tick + `ticks` and ≥ 1 owned ACTIVE entity | Tick, Entity |
+  | `grow` | count of owned ACTIVE entities ≥ threshold | Entity |
+
+  Dynasty scope is ownership, which already propagates through both birth
+  paths (§8). Evaluations run only for players with ≥ 1 owned ACTIVE
+  entity (the eliminated cannot win a *future* crossing — but a stamp
+  already made stands forever).
+- **The stamp.** On a genuine crossing the observer appends to
+  `victory.stamps`: `{epoch, user_id, tick, code, value}`. **First
+  crossing ends the epoch**: `ended_tick` = that tick, `winner_user_id`
+  set. Players crossing at the *same* tick co-stamp as co-winners (a tie
+  is a result, not a dispute). The stamp *is* the win — no intent, vote,
+  or script can write the key (surface absence, above).
+- **Elimination records.** The same round-level scan appends to
+  `epoch.eliminations` when a player who owned entities in the epoch has
+  none ACTIVE: `{epoch, user_id, tick}`. Also append-only, epoch-scoped.
+
+### 14.3 Rejoin after elimination — resolved
+
+An eliminated player may not `join` again until the next epoch: the join
+path checks `epoch.eliminations` for the *running* epoch and refuses
+(409). When the epoch ends, the register becomes historical and the player
+may found again. Elimination means something; the epoch boundary is the
+fresh start. (This is the platform join path — a *player policy decision
+encoded as data + one check*, not an engine birth gate; both birth
+mechanisms are untouched.)
+
+### 14.4 Governance windows — derived state, a clerk, and enactment
+
+- **N is pace, not world-kind** → `ECON_ROUNDS_PER_WINDOW` env (default 5),
+  exactly like `ECON_TICKS_PER_ROUND`. The window is **derived, never
+  stored**: round `r` is a window round iff `r % N == 0`.
+- **Visibility:** `GET /governance/current` — is the current round a
+  window, round number, N, open proposals with live tallies. Public to
+  authenticated players (it is an in-world fact), and MCP-exposed.
+- **Enactment is the clerk's job.** The content pack ships a **clerk**: a
+  server-owned polity entity holding `LEGISLATE` (and
+  `AMEND_CONSTITUTION` for constitutional proposals — operator-granted at
+  content time, capabilities arrive only by grant, §8) whose **POLICY
+  script** reads `round.state` — already a WorldSetting scripts read via
+  `ctx.query.world_setting` — and, on window rounds, enacts every passed
+  proposal via the ordinary `enact` intent. Same mechanism any polity
+  uses; **no new engine surface**. The mechanism/data/policy split stays
+  intact: *when laws pass* is policy; *how laws pass* is mechanism.
+- **Admin convenience:** `POST /admin/governance/enact` force-runs the
+  same enactment through the same intent path (a by-election button, not
+  a second law-making surface).
+- **Out-of-window proposals are legal but dormant** — created by any
+  script at any tick, they wait for a window close. Cadence is a property
+  of *effect*, not of speech.
+
+### 14.5 Leaderboard — publish the round
+
+- **`GET /leaderboard`**: per dynasty, one row — money total, entity count
+  (ACTIVE/total), oldest lineage age, tech unlocks, epoch wins (count of
+  stamps), status (active / eliminated-this-epoch). A pure platform read
+  over engine tables + stamps. Public to authenticated players.
+- **Round publish** (§9.3): `RoundSummary` already aggregates the round's
+  events; the leaderboard stays a separate endpoint — standings are a
+  standing query, not per-round payload.
+- **MCP:** two new public-fact tools, alongside `round_state` and
+  `market_prices`: `epoch_state` (epoch number, condition, winner, your
+  elimination status) and `leaderboard`. Public facts only — no
+  per-dynasty detail beyond the standings row (no omniscience, §13).
+
+### 14.6 Build order
+
+1. **2a — epochs + observer + eliminations:** `epoch.state` /
+   `victory.stamps` / `epoch.eliminations` registers, per-tick observer in
+   round resolution, admin epoch endpoints, join rejoin-check, MCP
+   `epoch_state`. *(platform only)*
+2. **2b — governance windows:** derived window state + endpoints + the
+   clerk script in the content pack + admin enact. *(platform + content)*
+3. **2c — leaderboard:** standings endpoint + MCP `leaderboard`.
+   *(platform read)*
+
+Each independently shippable; 2a first (windows and standings both
+reference epochs).
