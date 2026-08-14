@@ -232,7 +232,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | phase | scope | engine change? |
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
-| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface | autonomy path + onboarding + spawn-privilege check + scheduler **done**; MCP remains (platform) |
+| **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
 | **2** | Governance-window cadence; victory observer + epoch records; leaderboard | none — platform |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
@@ -342,6 +342,11 @@ path to "something tangible" and the substrate Phase 1 needs.
 - **Office model for the `rule` victory condition:** how is "executive
   office" represented? Likely a WorldSetting naming the office-holder entity,
   set by a vote. (Phase 2, only if `rule` is used.)
-- **Observability feed to MCP:** full tick events vs. per-entity digest. A
-  per-entity digest keeps agent context small and fair (no omniscience).
-  (Phase 1.)
+- **Observability feed to MCP:** ~~full tick events vs. per-entity digest.~~
+  **Resolved (Phase 1):** per-entity digest, with a sharper principle — the
+  agent sees **exactly what its own behaviour script sees**. The digest
+  filters events to `entity_id == own`, the same filter the engine applies
+  when feeding BEHAVIOUR scripts each tick (tick.py). No omniscience, and
+  parity: the agent reasons over the same world its script will observe.
+  World-visible facts (round clock, market prices) are public to all
+  authenticated players, as they are in-world.

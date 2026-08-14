@@ -1,0 +1,382 @@
+"""The MCP player tool surface -- the agent's view of the game.
+
+An AI player joins over MCP (Model Context Protocol) instead of REST: same
+bearer auth, same three-tier control model (docs/game.md §4), same
+ownership gates. MCP is *only a wire protocol* here -- every tool is a thin
+wrapper over the same platform functions the REST API serves, so nothing
+reaches the engine through this file that a REST player could not do, and
+vice versa.
+
+**The observability decision (game.md §13), resolved:** an agent sees
+exactly what its own behaviour script sees -- no more. The event digest is
+filtered to ``entity_id == own entity``, the *same* filter the engine
+applies when it feeds events to a BEHAVIOUR script each tick (tick.py).
+That gives two properties for free:
+
+  * **no omniscience** -- no reading other dynasties' affairs, and
+  * **parity** -- the agent reasons over the same world its script will
+    observe, so what it decides on is what its script will see.
+
+World-visible facts (the round clock, market prices) are public to all
+authenticated players, as they are in-world: a market price is a posted
+fact.
+
+Writes go exclusively through the autonomy path: ``set_behaviour`` is the
+ownership-gated script swap (§6). Voting, transfers, production -- all of it
+is done by *writing the script that will do it at tick time*, never by
+acting out-of-band. The engine still owns the tick.
+"""
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from econengine import services, tech
+from econengine.models import (
+    Entity, EntityType, Holding, Market, NeedState, Parcel, Process,
+    ProcessStatus, Script, ScriptType, Tick, User,
+)
+from econengine.services import ServerCapExceededError
+from econ.api.onboarding import get_join_config
+from econ.api.rounds import current_round_state
+
+
+class ToolError(Exception):
+    """A tool-level failure (bad args, not-your-entity, fixed entity...).
+
+    Reported to the agent as a normal MCP tool result with ``isError``
+    (the call itself was well-formed) -- not as a protocol error.
+    """
+
+
+def _own_entity(session: Session, user: User, entity_id: str) -> Entity:
+    """Ownership-gated entity lookup: 404-style refusal for anyone else's
+    entity (info-hiding: 'not found' and 'not yours' are indistinguishable)."""
+    entity = session.get(Entity, str(entity_id))
+    if entity is None or entity.owner_id != user.id:
+        raise ToolError(f"Entity not found: {entity_id!r} (not yours or does not exist)")
+    return entity
+
+
+def _latest_tick_number(session: Session) -> int:
+    row = session.execute(select(Tick.number).order_by(Tick.number.desc()).limit(1)).scalar_one_or_none()
+    return row if row is not None else 0
+
+
+# ===========================================================================
+# Read tools
+# ===========================================================================
+
+def tool_my_entities(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
+    """Your dynasty: every entity you own, with lifecycle state."""
+    entities = (
+        session.query(Entity)
+        .filter_by(owner_id=user.id)
+        .order_by(Entity.name, Entity.id)
+        .all()
+    )
+    latest = _latest_tick_number(session)
+    return [
+        {
+            "id": e.id,
+            "name": e.name,
+            "entity_type": e.entity_type.value,
+            "status": e.status.value,
+            "age": (latest - e.birth_tick) if e.birth_tick is not None else None,
+        }
+        for e in entities
+    ]
+
+
+def tool_entity_state(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """Full state of one of your entities -- the same picture its behaviour
+    script gets each tick: accounts, holdings, needs, processes, parcels,
+    unlocks, and the active behaviour's id + state."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    latest = _latest_tick_number(session)
+    behaviour = session.query(Script).filter_by(
+        entity_id=entity.id, script_type=ScriptType.BEHAVIOUR, is_active=True,
+    ).order_by(Script.created_at.desc()).first()
+
+    return {
+        "entity": {
+            "id": entity.id,
+            "name": entity.name,
+            "entity_type": entity.entity_type.value,
+            "status": entity.status.value,
+            "age": (latest - entity.birth_tick) if entity.birth_tick is not None else None,
+            "capabilities": list(entity.capabilities or []),
+            "is_monetary_authority": entity.is_monetary_authority,
+            "is_fixed": entity.is_fixed,
+        },
+        "accounts": [
+            {"id": a.id, "currency": a.currency, "balance": str(a.balance)}
+            for a in entity.accounts
+        ],
+        "holdings": [
+            {"symbol": h.symbol, "quantity": str(h.quantity)}
+            for h in session.execute(
+                select(Holding)
+                .where(Holding.entity_id == entity.id)
+                .order_by(Holding.symbol)
+            ).scalars()
+        ],
+        "needs": [
+            {"need": s.need.code, "satisfaction": str(s.satisfaction),
+             "updated_tick": s.updated_tick}
+            for s in sorted(
+                session.query(NeedState).filter_by(entity_id=entity.id).all(),
+                key=lambda s: s.need.code,
+            )
+        ],
+        "processes": [
+            {"id": p.id, "recipe": p.recipe.code, "parcel_id": p.parcel_id,
+             "started_tick": p.started_tick, "completes_tick": p.completes_tick}
+            for p in session.execute(
+                select(Process)
+                .where(Process.entity_id == entity.id, Process.status == ProcessStatus.RUNNING)
+                .order_by(Process.created_at)
+            ).scalars()
+        ],
+        "parcels": [
+            {
+                "id": p.id,
+                "parcel_type": p.parcel_type,
+                "region_id": p.region_id,
+                "facilities": [f.facility_type for f in p.facilities],
+                "deposits": {d.symbol: str(d.quantity) for d in p.deposits},
+            }
+            for p in session.execute(
+                select(Parcel)
+                .where(Parcel.owner_id == entity.id)
+                .order_by(Parcel.created_at)
+            ).scalars()
+        ],
+        "unlocks": tech.entity_unlocks(session, entity.id),
+        "behaviour": (
+            {"id": behaviour.id, "description": behaviour.description,
+             "state": dict(behaviour.state or {})}
+            if behaviour else None
+        ),
+    }
+
+
+def tool_entity_events(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The per-entity event digest: events your entity took part in, for the
+    last N ticks -- the same filtered feed its behaviour script receives
+    (no omniscience; game.md §13)."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    try:
+        last_ticks = int(args.get("last_ticks", 3))
+    except (TypeError, ValueError):
+        raise ToolError("last_ticks must be an integer")
+    if last_ticks < 1 or last_ticks > 50:
+        raise ToolError("last_ticks must be between 1 and 50")
+
+    ticks = session.execute(
+        select(Tick).order_by(Tick.number.desc()).limit(last_ticks)
+    ).scalars().all()
+    return {
+        "entity_id": entity.id,
+        "ticks": [
+            {"tick": t.number,
+             "events": [e for e in (t.events or []) if e.get("entity_id") == entity.id]}
+            for t in sorted(ticks, key=lambda t: t.number)
+        ],
+    }
+
+
+def tool_get_behaviour(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The full source (and state) of your entity's active behaviour script."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    script = session.query(Script).filter_by(
+        entity_id=entity.id, script_type=ScriptType.BEHAVIOUR, is_active=True,
+    ).order_by(Script.created_at.desc()).first()
+    if script is None:
+        raise ToolError(f"Entity {entity.id} has no active behaviour script")
+    return {
+        "id": script.id,
+        "description": script.description,
+        "source": script.source,
+        "state": dict(script.state or {}),
+        "timeout_ms": script.timeout_ms,
+    }
+
+
+def tool_round_state(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The round clock: which round is open for submission, how many ticks
+    have run, and how many ticks resolve per round (K)."""
+    return current_round_state(session)
+
+
+def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
+    """Last-trade price for every active market (public, posted facts)."""
+    markets = session.execute(
+        select(Market).where(Market.is_active.is_(True)).order_by(Market.symbol)
+    ).scalars().all()
+    return [
+        {"symbol": m.symbol, "currency": m.currency,
+         "last_price": str(m.last_price) if m.last_price is not None else None}
+        for m in markets
+    ]
+
+
+# ===========================================================================
+# Write tools (both are the same platform paths the REST API serves)
+# ===========================================================================
+
+def tool_set_behaviour(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """Replace your entity's behaviour script (the autonomy path, §6).
+
+    The new source runs as your entity from the next resolved tick. Refused
+    for fixed (immutable-tier) entities."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    source = args.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise ToolError("source is required (the Lua behaviour script)")
+    if entity.is_fixed:
+        raise ToolError("Entity behaviour is fixed (immutable tier; not player-editable)")
+    try:
+        script = services.set_entity_behaviour(
+            session, entity, source, owner_id=user.id,
+            description=str(args.get("description", "")),
+        )
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    session.commit()
+    session.refresh(script)
+    return {
+        "id": script.id,
+        "entity_id": entity.id,
+        "description": script.description,
+        "status": "active",
+        "note": "Runs as this entity from the next resolved tick",
+    }
+
+
+def tool_join(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """Join the game: found a new INDIVIDUAL entity, endowed per the world's
+    join config (account + optional starter behaviour)."""
+    cfg = get_join_config(session)
+    try:
+        services._enforce_server_caps(session, user.id)
+    except ServerCapExceededError as exc:
+        raise ToolError(str(exc))
+
+    entity = services.create_entity(session, "Founder", EntityType.INDIVIDUAL)
+    entity.owner_id = user.id
+    account = services.create_account(session, entity, cfg["currency"], cfg["endowment"])
+
+    starter = cfg["starter_behaviour"]
+    behaviour = None
+    if starter:
+        behaviour = services.set_entity_behaviour(
+            session, entity, starter, owner_id=user.id,
+        )
+
+    session.commit()
+    session.refresh(entity)
+    session.refresh(account)
+    return {
+        "entity": {"id": entity.id, "name": entity.name,
+                   "entity_type": entity.entity_type.value},
+        "account": {"id": account.id, "currency": account.currency,
+                    "balance": str(account.balance)},
+        "behaviour_applied": behaviour is not None,
+        "note": "Edit its behaviour with set_behaviour; it runs on the next round",
+    }
+
+
+# ===========================================================================
+# Registry
+# ===========================================================================
+
+Tool = dict[str, Any]  # {"name", "description", "inputSchema", "handler"}
+
+TOOLS: list[Tool] = [
+    {
+        "name": "join",
+        "description": "Join the game: found a new entity (INDIVIDUAL) endowed "
+                       "per the world's join config (money + optional starter behaviour).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_join,
+    },
+    {
+        "name": "my_entities",
+        "description": "Your dynasty: every entity you own, with status and age.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_my_entities,
+    },
+    {
+        "name": "entity_state",
+        "description": "Full state of one of your entities: accounts, holdings, "
+                       "needs, running processes, parcels, unlocks, and the active "
+                       "behaviour (id + state).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string"}},
+            "required": ["entity_id"],
+        },
+        "handler": tool_entity_state,
+    },
+    {
+        "name": "entity_events",
+        "description": "The per-entity event digest: events your entity took part "
+                       "in over the last N ticks (default 3) -- the same filtered "
+                       "feed its behaviour script receives. No other dynasty's "
+                       "affairs are visible.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "last_ticks": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+            "required": ["entity_id"],
+        },
+        "handler": tool_entity_events,
+    },
+    {
+        "name": "get_behaviour",
+        "description": "The full Lua source (and state) of your entity's active "
+                       "behaviour script.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string"}},
+            "required": ["entity_id"],
+        },
+        "handler": tool_get_behaviour,
+    },
+    {
+        "name": "set_behaviour",
+        "description": "Replace your entity's behaviour script (Lua). It runs as "
+                       "your entity from the next resolved tick. This is the "
+                       "autonomy path: no vote, no capability -- only ownership.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "source": {"type": "string", "description": "Lua behaviour script"},
+                "description": {"type": "string"},
+            },
+            "required": ["entity_id", "source"],
+        },
+        "handler": tool_set_behaviour,
+    },
+    {
+        "name": "round_state",
+        "description": "The round clock: which round is open for submission, how "
+                       "many ticks have run, ticks per round (K).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_round_state,
+    },
+    {
+        "name": "market_prices",
+        "description": "Last-trade price for every active market (public facts).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_market_prices,
+    },
+]
+
+TOOL_HANDLERS: dict[str, Callable] = {t["name"]: t["handler"] for t in TOOLS}

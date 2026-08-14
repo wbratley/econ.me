@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from econ.api.routers import admin, auth, entities, goods, intents, join, markets, needs, parcels, production, proposals, rounds, scripts, tech, ticks, transactions
+from econ.api.routers import admin, auth, entities, goods, intents, join, markets, mcp, needs, parcels, production, proposals, rounds, scripts, tech, ticks, transactions
 
 app = FastAPI(title="econ.me API", version="0.1.0")
 
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(join.router)
 app.include_router(rounds.router)
+app.include_router(mcp.router)
 app.include_router(entities.router)
 app.include_router(transactions.router)
 app.include_router(admin.router)
