@@ -121,7 +121,8 @@ def test_tools_list_exposes_the_player_surface(client):
     tools = {t["name"]: t for t in r["result"]["tools"]}
     assert set(tools) == {
         "join", "my_entities", "entity_state", "entity_events",
-        "get_behaviour", "set_behaviour", "round_state", "market_prices",
+        "get_behaviour", "set_behaviour", "round_state", "epoch_state",
+        "market_prices",
     }
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object"

@@ -39,6 +39,7 @@ from econengine.models import (
     ProcessStatus, Script, ScriptType, Tick, User,
 )
 from econengine.services import ServerCapExceededError
+from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.onboarding import get_join_config
 from econ.api.rounds import current_round_state
 
@@ -211,6 +212,24 @@ def tool_round_state(session: Session, user: User, args: dict[str, Any]) -> dict
     return current_round_state(session)
 
 
+def tool_epoch_state(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The epoch: the declared victory condition, whether it has been won
+    (and by whom), and whether *you* were eliminated this epoch. Absent =
+    no epoch is running; the world plays without a victory condition."""
+    state = get_epoch_state(session)
+    if state is None:
+        return {"running": False, "number": 0, "note": "no epoch has been declared"}
+    return {
+        "running": state.get("ended_tick") is None,
+        "number": state["number"],
+        "condition": state.get("condition"),
+        "started_tick": state.get("started_tick"),
+        "ended_tick": state.get("ended_tick"),
+        "winner_user_ids": list(state.get("winner_user_ids", [])),
+        "you_are_eliminated": player_eliminated_in_running_epoch(session, user.id),
+    }
+
+
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
     """Last-trade price for every active market (public, posted facts)."""
     markets = session.execute(
@@ -260,6 +279,10 @@ def tool_join(session: Session, user: User, args: dict[str, Any]) -> dict:
     """Join the game: found a new INDIVIDUAL entity, endowed per the world's
     join config (account + optional starter behaviour)."""
     cfg = get_join_config(session)
+    if player_eliminated_in_running_epoch(session, user.id):
+        raise ToolError(
+            "Eliminated in the running epoch; wait for the next epoch to rejoin"
+        )
     try:
         services._enforce_server_caps(session, user.id)
     except ServerCapExceededError as exc:
@@ -370,6 +393,15 @@ TOOLS: list[Tool] = [
                        "many ticks have run, ticks per round (K).",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_round_state,
+    },
+    {
+        "name": "epoch_state",
+        "description": "The epoch: the declared victory condition, whether it "
+                       "has been won (and by whom), and whether you were "
+                       "eliminated this epoch. No epoch running = the world plays "
+                       "without a victory condition.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_epoch_state,
     },
     {
         "name": "market_prices",

@@ -31,6 +31,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from econ.api import epochs as epochs_mod
 from econengine.models import Tick, WorldSetting
 from econengine.tick import run_tick
 
@@ -108,7 +109,8 @@ def advance_round(session: Session) -> dict[str, Any]:
     whole round durable (or rolls it all back on failure).
 
     Returns a summary of the round just completed: its number, the tick
-    numbers it ran, and its events broken down by type.
+    numbers it ran, its events broken down by type, and any victory
+    stamps / elimination records the observer made while resolving it.
     """
     k = ticks_per_round()
     rounds_before = _rounds_completed(session)
@@ -116,12 +118,17 @@ def advance_round(session: Session) -> dict[str, Any]:
     tick_numbers: list[int] = []
     events_by_type: Counter[str] = Counter()
     total_events = 0
+    stamps_made: list[dict[str, Any]] = []
     for _ in range(k):
         tick = run_tick(session)
         tick_numbers.append(tick.number)
         for event in tick.events or []:
             total_events += 1
             events_by_type[str(event.get("type", "unknown"))] += 1
+        # The victory observer runs after EACH tick, not once per round
+        # (game.md §14.2): a crossing that dips back below before the batch
+        # ends still counts. It stops itself the moment the epoch ends.
+        stamps_made.extend(epochs_mod.observe_tick(session, tick.number))
 
     # Upsert the round counter. WorldSetting.value is plain JSON (not a
     # mutable wrapper), so reassign the whole dict to persist.
@@ -133,6 +140,9 @@ def advance_round(session: Session) -> dict[str, Any]:
         row.value = value
     session.flush()
 
+    # Dynasty-extinction scan: once per round, after the batch (§14.2).
+    eliminations = epochs_mod.scan_eliminations(session, tick_numbers[-1])
+
     return {
         "round_number": rounds_before + 1,   # the round just completed
         "ticks": tick_numbers,
@@ -140,4 +150,6 @@ def advance_round(session: Session) -> dict[str, Any]:
         "events_by_type": dict(events_by_type),
         "next_round": rounds_before + 2,
         "ticks_per_round": k,
+        "victory_stamps": stamps_made,
+        "eliminations": eliminations,
     }
