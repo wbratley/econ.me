@@ -547,6 +547,31 @@ class JoinResult(BaseModel):
     behaviour: Optional[ScriptRead] = None
 
 
+#: ---------------------------------------------------------------------------
+#: Round scheduler -- the platform's batched-tick clock (game.md §9)
+#: ---------------------------------------------------------------------------
+
+class RoundState(BaseModel):
+    """The round clock's current state (a read). ``current_round`` is the
+    round open for submission; ``round_number`` is how many have resolved."""
+    round_number: int
+    current_round: int
+    status: str
+    ticks_run: int
+    ticks_per_round: int
+    ticks_into_round: int
+
+
+class RoundSummary(BaseModel):
+    """Returned by ``POST /admin/rounds/advance`` -- the round just resolved."""
+    round_number: int          # the round that just completed
+    ticks: list[int]           # tick numbers run this round
+    events: int                # total events this round
+    events_by_type: dict[str, int]
+    next_round: int            # the now-open round
+    ticks_per_round: int
+
+
 class CouncilWrite(BaseModel):
     """Seed a council register. ``members`` may be a list of entity ids
     (an equal-weight council — every member weight 1) or a mapping
