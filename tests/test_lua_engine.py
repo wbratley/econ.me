@@ -303,3 +303,66 @@ def test_sandbox_unchanged_with_libraries():
     )
     assert result.error is None
     assert result.return_value == "nil/ok"
+
+
+# ---------------------------------------------------------------------------
+# strict_globals: the lint half of the install-time gate (docs/scripting.md
+# section 4; Phase 2). Production runs stay permissive-but-loud -- only
+# validation paths (the gate, the dry-run endpoint) turn this on.
+# ---------------------------------------------------------------------------
+
+def test_strict_rejects_undeclared_global_read():
+    # The original zombie-trap, verbatim class: a helper that was never
+    # injected. Permissive mode = nil-call at the player's tick; strict
+    # mode = loud at validation time.
+    result = engine.run("settle_last_orders()", _CTX, strict_globals=True)
+    assert result.error is not None
+    assert "undeclared global 'settle_last_orders'" in result.error
+
+
+def test_strict_rejects_undeclared_global_write():
+    result = engine.run("fctors = {}", _CTX, strict_globals=True)
+    assert result.error is not None
+    assert "assignment to undeclared global 'fctors'" in result.error
+
+
+def test_strict_allows_sandbox_nil_reads():
+    # The blacklisted names are pre-declared nil: reading `require` yields
+    # nil exactly as production, not a lint error.
+    result = engine.run("return tostring(require)", _CTX, strict_globals=True)
+    assert result.error is None
+    assert result.return_value == "nil"
+
+
+def test_strict_rejects_reassigning_injected_names():
+    result = engine.run("std = {}", _CTX, strict_globals=True)
+    assert result.error is not None
+    assert "reassigned injected name 'std'" in result.error
+    result = engine.run("ctx = 5", _CTX, strict_globals=True)
+    assert result.error is not None
+    assert "reassigned injected name 'ctx'" in result.error
+
+
+def test_strict_clean_script_passes_with_all_tiers():
+    lib = "local t = {} function t.f() return 7 end return t"
+    result = engine.run(
+        "ctx.state.v = std.amount_str(world.f())",
+        _CTX, libraries={"world": lib}, strict_globals=True,
+    )
+    assert result.error is None
+    assert result.state_updates["v"] == "7.0000"
+
+
+def test_default_run_stays_permissive():
+    result = engine.run("quietly_typo = 1", _CTX)
+    assert result.error is None
+
+
+def test_stdlib_fingerprint_is_stable_identity():
+    from econengine.lua_engine import stdlib_fingerprint, stdlib_source
+    fp = stdlib_fingerprint()
+    assert len(fp) == 16 and int(fp, 16) >= 0
+    assert stdlib_fingerprint() == fp
+    # The fingerprint tracks the source: the pinned vocabulary IS this text.
+    import hashlib
+    assert fp == hashlib.sha256(stdlib_source().encode()).hexdigest()[:16]

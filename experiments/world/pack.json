@@ -1,0 +1,12 @@
+{
+ "engine_std": "cc1dc59fa94e0db4",
+ "lua": {
+  "clerk.lua": "999bf6c106578846",
+  "miner.lua": "c06520f02c715853",
+  "pack.lua": "0ab7516170255bc1",
+  "smith.lua": "591dfb8c87c3478c",
+  "starter.lua": "0e0c412f74b068b6",
+  "world_lib.lua": "07f75fcd3edae38f"
+ },
+ "name": "demo-world"
+}

@@ -9,6 +9,9 @@
 -- input-short retry: the smelt intent fails first (no ORE in hand -- the buy
 -- hasn't cleared yet), the auction clears the buy, then the smelt is retried
 -- and succeeds. One smelt per tick, same as the farmer's one farm.
+-- Vocabulary arrives injected (docs/scripting.md): std.* (engine),
+-- world.* (this world's idioms), pack.* (this content pack's play
+-- opinions). Source here is only the role's own logic.
 
 local fills   = world.settle_last_orders()
 local account = ctx.accounts[1]
@@ -42,7 +45,7 @@ end
 
 -- 3. Sell iron (no live buyer in the proving cast -- it accumulates; a
 --    toolmaker/steelmaker is a natural Phase 1 addition to close the loop).
-sell_surplus("IRON", 0, 5.0, account.id, fills)
+pack.sell_surplus("IRON", 0, 5.0, account.id, fills)
 
 -- 4. Buy food.
-balance = buy_food(account.id, balance, grain_price, 3)
+balance = pack.buy_food(account.id, balance, grain_price, 3)

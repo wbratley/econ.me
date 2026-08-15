@@ -33,7 +33,8 @@ from typing import Any, Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from econengine import services, tech
+from econengine import scripting, services, tech
+from econengine.lua_engine import stdlib_fingerprint, stdlib_source
 from econengine.models import (
     Entity, EntityType, Holding, Market, NeedState, Parcel, Process,
     ProcessStatus, Script, ScriptType, Tick, User,
@@ -259,6 +260,21 @@ def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> li
     ]
 
 
+def tool_get_script_libraries(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The script vocabulary tiers injected under every behaviour
+    (docs/scripting.md): `std` (engine stdlib -- pure vocabulary, source
+    included), `world` (this world's library, when installed) and `pack`
+    (the content pack's play opinions, when installed). Authoring a
+    behaviour from scratch means reading these -- guessing at a helper
+    that is not injected is the classic nil-call trap."""
+    libs = scripting.get_world_libraries(session) or {}
+    return {
+        "std": {"fingerprint": stdlib_fingerprint(), "source": stdlib_source()},
+        "world": libs.get("world"),
+        "pack": libs.get("pack"),
+    }
+
+
 # ===========================================================================
 # Write tools (both are the same platform paths the REST API serves)
 # ===========================================================================
@@ -387,6 +403,15 @@ TOOLS: list[Tool] = [
             "required": ["entity_id"],
         },
         "handler": tool_get_behaviour,
+    },
+    {
+        "name": "get_script_libraries",
+        "description": "The script vocabulary tiers injected under every behaviour: "
+                       "std (engine stdlib, source included), world (this world's "
+                       "library), pack (the content pack's play opinions). Read "
+                       "these before authoring a behaviour from scratch.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_get_script_libraries,
     },
     {
         "name": "set_behaviour",

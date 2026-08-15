@@ -35,6 +35,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from econengine import goods, markets, needs, parcels, production, scripting, services, tech
+from experiments.world import manifest
 from econengine.models import Entity, EntityType, Script, ScriptType
 from econengine.tech import TechScope
 
@@ -72,17 +73,37 @@ def _read_lua(name: str) -> str:
     return (_LUA_DIR / name).read_text()
 
 
-def _behaviour(name: str) -> str:
-    """Behaviour source is the content pack's helpers + the role script.
+def _pack_libraries() -> dict[str, str]:
+    """The pack's OWN tiers (from the files, not the DB) -- what bootstrap
+    is about to install, and what the gate validates role scripts against.
+    Session-free so any caller (tests included) can gate a pack script
+    without standing the world up first."""
+    return {"world": _read_lua("world_lib.lua"), "pack": _read_lua("pack.lua")}
 
-    The tiers under every script (docs/scripting.md): engine vocabulary
-    arrives as the injected `std` namespace, this world's idioms as the
-    injected `world` namespace (world_lib.lua, seeded into the
-    `scripting.world_lib` WorldSetting by create_content). Only the pack's
-    own play opinions -- pack.lua -- must ride in the script's source,
-    which is why they stay visible in get_behaviour: they are the strategy
-    a player inherits and rewrites."""
-    return _read_lua("pack.lua") + "\n" + _read_lua(name)
+
+def _gate_pack_script(name: str) -> str:
+    """Any pack lua file as a gated script source (POLICY/VALIDATOR too)."""
+    source = _read_lua(name)
+    problems = scripting.validate_script_source(source, _pack_libraries())
+    if problems:
+        raise scripting.LibraryRejected(problems)
+    return source
+
+
+def _behaviour(name: str) -> str:
+    """A role behaviour source: the role script ALONE.
+
+    Vocabulary arrives from the injected tiers (docs/scripting.md): engine
+    `std`, this world's `world`, the pack's own `pack`. Concatenation is
+    gone (migration complete) -- a script's source is only its own logic,
+    get_behaviour shows exactly what a player owns, and error line numbers
+    are honest. Every pack script passes the install-time gate (syntax /
+    strict smoke-run / lint) before it reaches a Script row."""
+    source = _read_lua(name)
+    problems = scripting.validate_script_source(source, _pack_libraries())
+    if problems:
+        raise scripting.LibraryRejected(problems)
+    return source
 
 
 @dataclass
@@ -111,10 +132,17 @@ def create_content(session: Session) -> None:
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
-    # The world's script vocabulary tier: engine idioms every script in this
-    # world shares, injected as `world` (docs/scripting.md section 3).
-    # Operator-authored at world creation -- settled decision #2.
+    # Determinism first (settled decision #1): the pack refuses to install
+    # on drift -- an engine stdlib the manifest wasn't authored against, or
+    # a lua/ file edited without re-pinning. Then the versions this world's
+    # replays depend on are recorded, and the tiers installed THROUGH the
+    # gate (set_world_lib/set_pack_lib validate before writing).
+    manifest.verify_manifest()
+    scripting.pin_std_version(session)
     scripting.set_world_lib(session, _read_lua("world_lib.lua"))
+    # The pack's own tier: the play opinions, injected as `pack`
+    # (docs/scripting.md section 2, tier three).
+    scripting.set_pack_lib(session, _read_lua("pack.lua"))
 
 
 def build_economy(session: Session) -> World:
@@ -176,7 +204,7 @@ def make_clerk(session: Session) -> Entity:
         name=f"clerk-policy-{clerk.id}",
         description="Governance-window clerk: sweep the docket on window close",
         script_type=ScriptType.POLICY,
-        source=_read_lua("clerk.lua"),
+        source=_gate_pack_script("clerk.lua"),
         entity_id=clerk.id,
         timeout_ms=100,
         state={},

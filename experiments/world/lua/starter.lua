@@ -8,10 +8,10 @@
 -- indefinitely (test_world.py::test_starter_template_survives).
 --
 -- Vocabulary arrives from the injected tiers (docs/scripting.md): std.* is
--- the engine stdlib, world.* this world's library; concede/sell_surplus/
--- buy_food are the content pack's helpers, prepended by scenario
--- _behaviour and visible in this source. A player rewriting from scratch
--- keeps whatever they like -- everything non-tier is right here.
+-- the engine stdlib, world.* this world's library, pack.* this content
+-- pack's play opinions. A script's source is only ever its own logic; a
+-- player rewriting from scratch fetches the tiers (get_script_libraries)
+-- and keeps, drops, or replaces the opinions their starter leaned on.
 
 local fills   = world.settle_last_orders()
 local account = ctx.accounts[1]
@@ -28,8 +28,8 @@ end
 
 -- 2. Sell grain beyond a small pantry. (FARM_GRAIN yields 4, you eat 1, so a
 --    steady surplus flows to the food buyers.)
-sell_surplus("GRAIN", 3, 1.0, account.id, fills)
+pack.sell_surplus("GRAIN", 3, 1.0, account.id, fills)
 
 -- 3. Buy food only if the pantry ran low (the fallback a non-farming player
 --    relies on; a working farmer's own output keeps this a no-op).
-balance = buy_food(account.id, balance, grain_price, 3)
+balance = pack.buy_food(account.id, balance, grain_price, 3)
