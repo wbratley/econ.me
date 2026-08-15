@@ -40,6 +40,7 @@ from econengine.models import (
 )
 from econengine.services import ServerCapExceededError
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
+from econ.api.governance import governance_state
 from econ.api.onboarding import get_join_config
 from econ.api.rounds import current_round_state
 
@@ -230,6 +231,14 @@ def tool_epoch_state(session: Session, user: User, args: dict[str, Any]) -> dict
     }
 
 
+def tool_governance_current(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The governance calendar: is the round open for submission a window
+    round (does resolving it close a window and trigger enactment)? When is
+    the next window? Which proposals sit dormant on the docket, with live
+    tallies?"""
+    return governance_state(session)
+
+
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
     """Last-trade price for every active market (public, posted facts)."""
     markets = session.execute(
@@ -402,6 +411,15 @@ TOOLS: list[Tool] = [
                        "without a victory condition.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_epoch_state,
+    },
+    {
+        "name": "governance_current",
+        "description": "The governance calendar: is the current round a window "
+                       "round (does resolving it close a window and trigger the "
+                       "clerk's enactment sweep)? When is the next window? Which "
+                       "proposals sit dormant on the docket, with live tallies?",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_governance_current,
     },
     {
         "name": "market_prices",

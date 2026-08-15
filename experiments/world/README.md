@@ -12,6 +12,18 @@ markets beside a food chain (GRAIN), with needs, deposits, and facilities —
 and a small population of specialists survives, trades, and produces **with
 zero calibration effort**, because survival is robust by construction.
 
+## The clerk (the polity, Phase 2b)
+
+`make_clerk` builds the **Assembly**: a server-owned GOVERNMENT entity
+holding LEGISLATE + AMEND_CONSTITUTION + SET_FISCAL_POLICY (operator fiat
+at content time), running `lua/clerk.lua` as a POLICY script. It reads
+`round.state` each tick, derives the window calendar (`r % N == 0`, with N
+projected into the round counter by each advance), and on a window close
+sweeps the docket — every OPEN proposal decided by the ordinary `enact`
+intent. Out-of-window proposals are legal but dormant; the clerk is the
+only moment they take effect (`docs/game.md` §14.4). In a raw-tick world
+(no round scheduler) `round.state` is absent and the clerk is inert.
+
 ## The cast (three specialist INDIVIDUALs)
 
 | entity | script | produces | buys | proves |
@@ -97,4 +109,5 @@ endowment.
 - **A labourer pool / firm hiring** — LABOR is auto-issued and self-consumed
   by each specialist; the LABOR *market* is proven by a focused two-entity
   test, not by the live economy. Hiring is a Phase 1 firm mechanic.
-- **Governance cadence, victory observer, logistics** — Phases 2–3.
+- **Victory observer, leaderboard, logistics** — Phases 2a/2c and 3. The
+  governance-window *clerk* (above) landed with Phase 2b.

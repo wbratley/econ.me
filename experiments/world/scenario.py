@@ -88,6 +88,7 @@ class World:
     miner_account_id: str
     smith_account_id: str
     individuals: list[Entity] = field(default_factory=list)
+    clerk: Entity | None = None   # the polity (server-owned), Phase 2b
 
 
 def create_content(session: Session) -> None:
@@ -112,6 +113,7 @@ def build_economy(session: Session) -> World:
     farmer = _make_farmer(session)
     miner = _make_miner(session)
     smith = _make_smith(session)
+    clerk = make_clerk(session)
 
     individuals = [farmer, miner, smith]
     _wire_scripts(session, farmer, miner, smith)
@@ -125,7 +127,50 @@ def build_economy(session: Session) -> World:
         miner_account_id=miner.accounts[0].id,
         smith_account_id=smith.accounts[0].id,
         individuals=individuals,
+        clerk=clerk,
     )
+
+
+# ---------------------------------------------------------------------------
+# The clerk -- governance windows land on the content pack (Phase 2b, §14.4)
+# ---------------------------------------------------------------------------
+
+def make_clerk(session: Session) -> Entity:
+    """The server-owned polity: the government proposals target.
+
+    It holds the enactment capability for both tiers (LEGISLATE,
+    AMEND_CONSTITUTION) plus the operating capability its ordinary law
+    exercises (SET_FISCAL_POLICY) -- operator fiat at content time:
+    capabilities arrive only by grant, and the operator is the genesis
+    grantor; from then on they are ordinary grantable data (§8). Its
+    POLICY script (clerk.lua) reads `round.state` and, on window rounds,
+    enacts the docket via the ordinary `enact` intent. Enactment is the
+    clerk's job: *when laws pass* is policy, *how* is mechanism, and no
+    engine surface was added to make either possible.
+
+    Server-owned (owner_id stays None): no player may rewrite the polity
+    by the autonomy path, and it is not `is_fixed` -- the polity's own
+    governed surfaces (set_script via proposal->enact) remain law, as for
+    any government.
+    """
+    from econengine import capabilities as _capabilities
+
+    clerk = services.create_entity(session, "Assembly", EntityType.GOVERNMENT)
+    clerk.capabilities = [
+        _capabilities.LEGISLATE,
+        _capabilities.AMEND_CONSTITUTION,
+        _capabilities.SET_FISCAL_POLICY,
+    ]
+    session.add(Script(
+        name=f"clerk-policy-{clerk.id}",
+        description="Governance-window clerk: sweep the docket on window close",
+        script_type=ScriptType.POLICY,
+        source=_read_lua("clerk.lua"),
+        entity_id=clerk.id,
+        timeout_ms=100,
+        state={},
+    ))
+    return clerk
 
 
 # ---------------------------------------------------------------------------

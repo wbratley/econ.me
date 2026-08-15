@@ -131,8 +131,16 @@ def advance_round(session: Session) -> dict[str, Any]:
         stamps_made.extend(epochs_mod.observe_tick(session, tick.number))
 
     # Upsert the round counter. WorldSetting.value is plain JSON (not a
-    # mutable wrapper), so reassign the whole dict to persist.
-    value = {"round_number": rounds_before + 1, "status": "submit"}
+    # mutable wrapper), so reassign the whole dict to persist. The payload
+    # carries N (rounds per window) so scripts -- the content-pack clerk
+    # (§14.4) -- derive the governance calendar from the same channel they
+    # already read; env stays the single source, re-projected each advance.
+    from econ.api import governance as governance_mod  # deferred: imports this module
+    value = {
+        "round_number": rounds_before + 1,
+        "status": "submit",
+        "rounds_per_window": governance_mod.rounds_per_window(),
+    }
     row = session.get(WorldSetting, ROUND_STATE_KEY)
     if row is None:
         session.add(WorldSetting(key=ROUND_STATE_KEY, value=value))
