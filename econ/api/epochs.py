@@ -212,8 +212,13 @@ def close_epoch(session: Session) -> dict[str, Any]:
 # The observer -- pure reads, called once per resolved tick (§14.2)
 # ---------------------------------------------------------------------------
 
-def _dynasty_money(session: Session, user_id: str) -> Decimal:
-    """Sum of account balances across the dynasty's ACTIVE entities."""
+def dynasty_money(session: Session, user_id: str) -> Decimal:
+    """Sum of account balances across the dynasty's ACTIVE entities.
+
+    Public because the leaderboard (§14.5) must show the *same* money the
+    observer's ``accumulate`` condition judges (§14.2) -- one definition,
+    not two that could drift apart.
+    """
     total = session.execute(
         select(func.coalesce(func.sum(Account.balance), 0))
         .join(Entity, Account.entity_id == Entity.id)
@@ -264,7 +269,7 @@ def _crossing(session: Session, state: dict[str, Any], user_id: str, tick_number
     params = cond["params"]
 
     if code == "accumulate":
-        total = _dynasty_money(session, user_id)
+        total = dynasty_money(session, user_id)
         return total if total >= Decimal(params["threshold"]) else None
 
     if code == "innovate":
