@@ -91,7 +91,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | markets, money, borrowing, insurance | call auction; two-tier money; bank/bond/loan/futures/option/insurance | ✅ done |
 | birth, ageing, death, inheritance | 6a–6d: `birth_tick`, `age`, `lifespan`, estate rule, lineage | ✅ done |
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
-| scripting libraries (std / world / pack) | sandbox has no `require`; world convention is prelude+role concat | 📐 designed — `docs/scripting.md`; Phase 1 next |
+| scripting libraries (std / world / pack) | `std`/`world` injected read-only per run; `world` = `scripting.world_lib` WorldSetting; pack tier = Phase 2 | ✅ Phase 1 — `docs/scripting.md` |
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |

@@ -20,6 +20,23 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
                     passes in ctx["queries"]; missing ones return nil
   ctx.action.*      queue an intent for Python to resolve after all scripts run
 
+Library tiers (docs/scripting.md): alongside ctx, every run injects
+read-only namespace tables --
+
+  std      the engine stdlib, always: pure vocabulary over ctx with zero
+           opinions (holding_qty, market_price, has_unlock, ...)
+  world    the per-world library, when the caller passes `libraries=` --
+           engine idioms shared by this world's scripts
+
+Both are Lua chunks that RETURN their namespace table, executed and frozen
+read-only BEFORE the sandbox is applied (the freeze needs setmetatable,
+which scripts never see). Member writes error loudly; assigning to the
+global name itself only clobbers that run's view. Note pairs() does not
+enumerate a namespace (LuaJIT honours no __pairs) -- the keys are the
+fixed, documented API. Library sources run pre-sandbox and are CALLER-
+trusted (operator content, validated at install time per docs/scripting.md
+section 4); script sources are not trusted and never were.
+
 Scripts run as a top-level chunk; the chunk's return value is captured in
 RunResult.return_value. VALIDATOR scripts use it for their verdict:
   return {allow=false, reason="too large"}   -- deny
@@ -93,15 +110,114 @@ function(deadline_exceeded)
 end
 """ % (_TIMEOUT_SENTINEL, _TIMEOUT_SENTINEL)
 
+# Executed pre-sandbox (it needs setmetatable): wraps a namespace table in a
+# read-only proxy. Scripts lose setmetatable/getmetatable/rawset to the
+# sandbox immediately after, so the freeze cannot be undone from Lua.
+_NAMESPACE_FREEZE = """
+function(name, namespace)
+  return setmetatable({}, {
+    __index = namespace,
+    __newindex = function(_, key)
+      error("attempt to write read-only namespace '" .. name .. "." .. tostring(key) .. "'", 2)
+    end,
+  })
+end
+"""
+
+# The engine stdlib (docs/scripting.md section 2): pure vocabulary over the
+# injected ctx -- zero opinions, no world knowledge, no play policy. Every
+# function works unchanged in any world on this engine. Additions pass the
+# boundary test in review: "does it encode an opinion about how to play?"
+# -- then it belongs in a world lib or a content pack, never here. This
+# chunk RETURNS its namespace table.
+_STDLIB_LUA = """
+local std = {}
+
+function std.holding_qty(symbol)
+  for _, h in ipairs(ctx.holdings) do
+    if h.symbol == symbol then return tonumber(h.quantity) end
+  end
+  return 0
+end
+
+function std.market_price(symbol, fallback)
+  local p = ctx.query.market_price(symbol)
+  if p then
+    p = tonumber(p)
+    if p and p > 0 then return p end
+  end
+  return fallback
+end
+
+function std.has_unlock(code)
+  for _, u in ipairs(ctx.unlocks) do
+    if u == code then return true end
+  end
+  return false
+end
+
+function std.need_by_code(code)
+  for _, n in ipairs(ctx.needs) do
+    if n.code == code then return n end
+  end
+  return nil
+end
+
+-- Is a process of this recipe already RUNNING for this entity? Guards the
+-- "start one per tick" idiom: a duration-1 process started last tick
+-- completes at the top of this tick (before scripts), so by script time it
+-- is no longer RUNNING and a fresh one may start -- steady state.
+function std.running_recipe(code)
+  for _, p in ipairs(ctx.processes) do
+    if p.recipe == code then return true end
+  end
+  return false
+end
+
+-- The first owned parcel carrying `facility_type`, or nil.
+function std.facility_parcel(facility_type)
+  for _, p in ipairs(ctx.parcels) do
+    for _, f in ipairs(p.facilities) do
+      if f == facility_type then return p.id end
+    end
+  end
+  return nil
+end
+
+-- The first owned parcel whose deposits include `symbol` (a mine seam), nil.
+function std.deposit_parcel(symbol)
+  for _, p in ipairs(ctx.parcels) do
+    if p.deposits[symbol] then return p.id end
+  end
+  return nil
+end
+
+function std.amount_str(x) return string.format("%.4f", x) end
+
+return std
+"""
+
 
 class LuaEngine:
-    def run(self, source: str, ctx: dict, timeout_ms: int = 100) -> RunResult:
+    def run(self, source: str, ctx: dict, timeout_ms: int = 100,
+            libraries: dict[str, str] | None = None) -> RunResult:
         """
         Execute Lua source with the given ctx dict. Returns a RunResult.
         Each call gets a fresh LuaRuntime capped at _MAX_MEMORY_BYTES.
         A debug hook aborts execution inside the VM once timeout_ms elapses
         (pcall cannot swallow it); RunResult.error is set on timeout.
+
+        `libraries` maps a namespace name to a Lua chunk returning that
+        namespace's table (e.g. {"world": world_lib_source}); each is
+        injected read-only alongside the always-present engine `std`.
+        "std" and "ctx" are engine-owned names. A library that fails to
+        compile or does not return a table surfaces as RunResult.error --
+        loud, per script, until the install-time gate lands (Phase 2).
         """
+        if libraries:
+            for name in libraries:
+                if name in ("std", "ctx") or not str(name).isidentifier():
+                    raise ValueError(f"invalid library name: {name!r}")
         try:
             from lupa import LuaRuntime
         except ImportError as exc:
@@ -126,6 +242,23 @@ class LuaEngine:
                 deadline = time.monotonic() + timeout_ms / 1000.0
                 install_hook = lua.eval(_HOOK_INSTALLER)
                 install_hook(lambda: time.monotonic() > deadline)
+
+                # Library tiers (docs/scripting.md section 3): engine std
+                # plus any caller namespaces, executed and frozen BEFORE the
+                # sandbox -- the freeze needs setmetatable, which scripts
+                # must never see. Library sources are caller-trusted.
+                from lupa import lua_type
+                freeze = lua.eval(_NAMESPACE_FREEZE)
+                tiers = {"std": _STDLIB_LUA}
+                tiers.update(libraries or {})
+                g = lua.globals()
+                for name, lib_source in tiers.items():
+                    namespace = lua.execute(lib_source)
+                    if lua_type(namespace) != "table":
+                        raise ValueError(
+                            f"library {name!r} did not return a namespace table"
+                        )
+                    g[name] = freeze(name, namespace)
 
                 _apply_sandbox(lua)
 

@@ -2,14 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 import re
 from sqlalchemy.orm import Session
 
-from econengine import conditions, councils, delegations, services, tick
+from econengine import conditions, councils, delegations, scripting, services, tick
 from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
 from econ.api.onboarding import get_join_config, set_join_config
 from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
     CouncilWrite, DelegationRead, DelegationWrite, EntityRead, EntityUpdate,
-    EstateRuleRead, EstateRuleUpdate, JoinConfigRead, JoinConfigWrite, UserRead, UserUpdate,
+    EstateRuleRead, EstateRuleUpdate, JoinConfigRead, JoinConfigWrite,
+    UserRead, UserUpdate, WorldLibRead, WorldLibUpdate,
 )
 from econengine.models import Entity, User
 
@@ -150,6 +151,45 @@ def set_join_config_endpoint(
     cfg = set_join_config(session, **fields)
     session.commit()
     return JoinConfigRead(**cfg)
+
+
+# --- scripting: the per-world script library (docs/scripting.md) ---------
+
+@router.get("/world-lib", response_model=WorldLibRead)
+def get_world_lib_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Read the world's script library (the `world` namespace injected into
+    every script alongside the engine `std`)."""
+    return WorldLibRead(source=scripting.get_world_lib(session))
+
+
+@router.put("/world-lib", response_model=WorldLibRead)
+def set_world_lib_endpoint(
+    body: WorldLibUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Set the world lib -- operator fiat at world creation (docs/
+    scripting.md settled decision #2; whether this becomes votable is
+    deliberately open). The source must be a Lua chunk returning its
+    namespace table; a broken source surfaces per-script as script_error
+    until the install-time validation gate lands (Phase 2)."""
+    scripting.set_world_lib(session, body.source)
+    session.commit()
+    return WorldLibRead(source=scripting.get_world_lib(session))
+
+
+@router.delete("/world-lib", response_model=WorldLibRead)
+def clear_world_lib_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Clear the world lib: scripts keep the engine `std`, lose `world`."""
+    scripting.set_world_lib(session, None)
+    session.commit()
+    return WorldLibRead(source=None)
 
 
 # --- council registers (seeding membership for the council/weighted models) ---

@@ -6,17 +6,23 @@
 -- experiment this exact script is the Farmer (food self-sufficiency + a food
 -- seller); a lone entity endowed with a farm and this script survives
 -- indefinitely (test_world.py::test_starter_template_survives).
+--
+-- Vocabulary arrives from the injected tiers (docs/scripting.md): std.* is
+-- the engine stdlib, world.* this world's library; concede/sell_surplus/
+-- buy_food are the content pack's helpers, prepended by scenario
+-- _behaviour and visible in this source. A player rewriting from scratch
+-- keeps whatever they like -- everything non-tier is right here.
 
-local fills   = settle_last_orders()
+local fills   = world.settle_last_orders()
 local account = ctx.accounts[1]
 local balance = tonumber(account.balance)
-local grain_price = market_price("GRAIN", 1.0)
+local grain_price = std.market_price("GRAIN", 1.0)
 
 -- 1. Farm grain: one FARM_GRAIN per tick (1 LABOR -> 4 GRAIN), if you own a
 --    FARM, hold FARMING, have LABOR, and aren't already running one.
-local farm_id = facility_parcel("FARM")
-if farm_id and has_unlock("FARMING")
-   and holding_qty("LABOR") >= 1 and not running_recipe("FARM_GRAIN") then
+local farm_id = std.facility_parcel("FARM")
+if farm_id and std.has_unlock("FARMING")
+   and std.holding_qty("LABOR") >= 1 and not std.running_recipe("FARM_GRAIN") then
   ctx.action.start_process("FARM_GRAIN", farm_id, 20)
 end
 

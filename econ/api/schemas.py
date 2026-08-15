@@ -538,6 +538,20 @@ class JoinConfigRead(BaseModel):
         return str(v)
 
 
+#: The per-world script library (docs/scripting.md section 3; Phase 1)
+#: ---------------------------------------------------------------------------
+
+class WorldLibUpdate(BaseModel):
+    """Operator-set world lib: a Lua chunk that RETURNS its namespace
+    table, injected read-only as `world` into every script run in this
+    world. Engine idioms only -- play opinions belong in content packs."""
+    source: str
+
+
+class WorldLibRead(BaseModel):
+    source: Optional[str] = None
+
+
 class JoinResult(BaseModel):
     """Returned by ``POST /join`` -- the founder entity, its endowment
     account, and the starter behaviour applied (None if the world has no

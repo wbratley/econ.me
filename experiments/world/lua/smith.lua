@@ -10,22 +10,22 @@
 -- hasn't cleared yet), the auction clears the buy, then the smelt is retried
 -- and succeeds. One smelt per tick, same as the farmer's one farm.
 
-local fills   = settle_last_orders()
+local fills   = world.settle_last_orders()
 local account = ctx.accounts[1]
 local balance = tonumber(account.balance)
-local ore_price   = market_price("ORE", 2.0)
-local grain_price = market_price("GRAIN", 1.0)
+local ore_price   = std.market_price("ORE", 2.0)
+local grain_price = std.market_price("GRAIN", 1.0)
 
 -- 1. Buy ore up to the 2 a smelt needs (each smelt consumes exactly 2).
-local ore = holding_qty("ORE")
+local ore = std.holding_qty("ORE")
 local want_ore = 2 - ore
 if want_ore > 0.01 and balance > 0 then
   local bid = math.min(ore_price * 2, balance / want_ore)
   if bid > 0 then
     local qty = math.min(want_ore, balance / bid)
     if qty > 0.01 then
-      ctx.action.place_order("ORE", "buy", amount_str(qty),
-                              amount_str(bid), account.id, 35)
+      ctx.action.place_order("ORE", "buy", std.amount_str(qty),
+                              std.amount_str(bid), account.id, 35)
       balance = balance - qty * bid
     end
   end
@@ -33,10 +33,10 @@ end
 
 -- 2. Smelt iron: needs a FORGE, SMELTING (a world-scope physics unlock),
 --    >=2 ORE, and 1 LABOR. Queued before the buy clears -> retried after.
-local forge_id = facility_parcel("FORGE")
-if forge_id and has_unlock("SMELTING")
-   and holding_qty("ORE") >= 2 and holding_qty("LABOR") >= 1
-   and not running_recipe("SMELT_IRON") then
+local forge_id = std.facility_parcel("FORGE")
+if forge_id and std.has_unlock("SMELTING")
+   and std.holding_qty("ORE") >= 2 and std.holding_qty("LABOR") >= 1
+   and not std.running_recipe("SMELT_IRON") then
   ctx.action.start_process("SMELT_IRON", forge_id, 20)
 end
 

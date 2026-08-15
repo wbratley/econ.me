@@ -192,3 +192,114 @@ ctx.action.issue_money("acct-1", "100", "issue")
     result = engine.run(src, _CTX)
     assert result.error is None
     assert len(result.intents) == 3
+
+
+# ===========================================================================
+# Library tiers (docs/scripting.md): std injected always, libraries= adds
+# read-only namespaces (the per-world `world` lib in production).
+# ===========================================================================
+
+_LIB_CTX = {
+    "entity": {"id": "ent-1", "name": "T", "entity_type": "individual"},
+    "accounts": [{"id": "acct-1", "currency": "USD", "balance": "100.0000"}],
+    "holdings": [{"symbol": "GRAIN", "quantity": "3.5000"}],
+    "unlocks": ["FARMING"],
+    "needs": [{"code": "FOOD", "satisfaction": 1.0}],
+    "processes": [{"recipe": "FARM_GRAIN"}],
+    "parcels": [{"id": "p1", "facilities": ["FARM"], "deposits": {"ORE": 5}}],
+    "events": [],
+    "state": {},
+    "queries": {"market_price": lambda symbol: "0.75" if symbol == "GRAIN" else None},
+}
+
+
+def test_stdlib_injected_by_default():
+    result = engine.run("return std.holding_qty('GRAIN')", _LIB_CTX)
+    assert result.error is None
+    assert abs(result.return_value - 3.5) < 1e-9
+
+
+def test_stdlib_pure_helpers_work():
+    checks = {
+        "missing_holding": "return std.holding_qty('ORE')",
+        "market_price_query": "return std.market_price('GRAIN', 9.9)",
+        "market_price_fallback": "return std.market_price('NOPE', 1.25)",
+        "has_unlock": "return std.has_unlock('FARMING')",
+        "need_by_code": "return std.need_by_code('FOOD').code",
+        "running_recipe": "return std.running_recipe('FARM_GRAIN')",
+        "facility_parcel": "return std.facility_parcel('FARM')",
+        "deposit_parcel": "return std.deposit_parcel('ORE')",
+        "amount_str": "return std.amount_str(1.5)",
+    }
+    expected = {
+        "missing_holding": 0,
+        "market_price_query": 0.75,
+        "market_price_fallback": 1.25,
+        "has_unlock": True,
+        "need_by_code": "FOOD",
+        "running_recipe": True,
+        "facility_parcel": "p1",
+        "deposit_parcel": "p1",
+        "amount_str": "1.5000",
+    }
+    for name, src in checks.items():
+        result = engine.run(src, _LIB_CTX)
+        assert result.error is None, f"{name}: {result.error}"
+        assert result.return_value == expected[name], name
+
+
+def test_stdlib_namespace_is_read_only():
+    result = engine.run("std.holding_qty = nil", _LIB_CTX)
+    assert result.error is not None
+    assert "read-only namespace" in result.error
+
+
+def test_stdlib_global_shadow_is_local_to_the_run():
+    # Assigning the NAME only clobbers that run's view (fresh runtime per
+    # run; the engine re-injects next time) -- allowed, unlike member writes.
+    result = engine.run("std = {}; return type(std.holding_qty)", _LIB_CTX)
+    assert result.error is None
+    assert result.return_value == "nil"
+
+
+def test_libraries_argument_injects_namespaces():
+    world_lib = "return { tag = 'ok', doubled = function(x) return x * 2 end }"
+    result = engine.run(
+        "return world.tag .. ':' .. world.doubled(21)",
+        _LIB_CTX, libraries={"world": world_lib},
+    )
+    assert result.error is None
+    assert result.return_value == "ok:42"
+
+
+def test_libraries_namespaces_are_read_only():
+    world_lib = "return { tag = 'ok' }"
+    result = engine.run("world.tag = 'nope'", _LIB_CTX, libraries={"world": world_lib})
+    assert result.error is not None
+    assert "read-only namespace 'world" in result.error
+
+
+def test_std_name_cannot_be_overridden_via_libraries():
+    with pytest.raises(ValueError, match="std"):
+        engine.run("return 1", _LIB_CTX, libraries={"std": "return {}"})
+
+
+def test_library_must_return_a_table():
+    result = engine.run("return 1", _LIB_CTX, libraries={"world": "return 42"})
+    assert result.error is not None
+    assert "did not return a namespace table" in result.error
+
+
+def test_library_compile_error_surfaces_on_run_result():
+    result = engine.run("return 1", _LIB_CTX, libraries={"world": "this is not lua ("})
+    assert result.error is not None
+
+
+def test_sandbox_unchanged_with_libraries():
+    world_lib = "return { tag = 'ok' }"
+    result = engine.run(
+        "return tostring(require) .. '/' .. tostring(world.tag)",
+        _LIB_CTX, libraries={"world": world_lib},
+    )
+    assert result.error is None
+    assert result.return_value == "nil/ok"
