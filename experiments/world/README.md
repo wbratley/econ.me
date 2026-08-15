@@ -57,7 +57,10 @@ engine-stdlib fingerprint plus a sha per lua/ file — bootstrap refuses drift
 (regenerate deliberately with `python -m experiments.world.manifest`). A
 player rewriting from scratch reads the tiers (`get_script_libraries`),
 keeps, drops, or replaces the opinions their starter leaned on; the
-vocabulary beneath never goes missing.
+vocabulary beneath never goes missing. Submissions are linted at submit
+time against those same tiers — a script citing vocabulary that is not
+injected is refused with the finding in hand, not zombied at the next
+tick.
 
 ## The content pack (declared)
 

@@ -91,7 +91,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | markets, money, borrowing, insurance | call auction; two-tier money; bank/bond/loan/futures/option/insurance | ✅ done |
 | birth, ageing, death, inheritance | 6a–6d: `birth_tick`, `age`, `lifespan`, estate rule, lineage | ✅ done |
 | safety vs. player scripts | money-scope invariant + capabilities + validators | ✅ done |
-| scripting libraries (std / world / pack) | all three tiers injected read-only per run; install-time gate refuses broken libs; `pack.json` pins versions | ✅ Phases 1–2 — `docs/scripting.md` |
+| scripting libraries (std / world / pack) | all three tiers injected read-only per run; install gate + submit-time lint refuse broken scripts; `pack.json` pins versions | ✅ Phases 1–3 — `docs/scripting.md` |
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
@@ -122,6 +122,13 @@ as `services.set_entity_behaviour` (engine) plus the player-facing
   API / scenario); no governed path may flip it.
 - **Safety:** unchanged — the money-scope invariant still binds, so an
   autonomy script can only spend its own entity's money.
+- **Lint (Phase 3):** the source is checked at submit time against the
+  injected tiers with the install gate's strict standard. Citing
+  vocabulary that is not injected (the nil-call trap that zombied the
+  first live demo's founder) is a 400 with the finding in hand — the
+  entity keeps its current behaviour. Synthetic-ctx errors a healthy,
+  state-dependent script can still produce come back as `warnings` on
+  the accepted script (`lint_warnings` on MCP).
 
 This is the only engine-shaped item in v0, and it is small. Everything else
 is platform or content.

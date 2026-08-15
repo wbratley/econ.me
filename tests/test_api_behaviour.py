@@ -132,15 +132,15 @@ def test_fixed_entity_is_409(client):
 def test_successive_edits_version_and_retire(client):
     alice = _make_entity(client, "u-alice")
     first = client.post(f"/entities/{alice['id']}/behaviour",
-                        json={"source": "v1"}, headers=_auth("u-alice")).json()
+                        json={"source": "-- v1"}, headers=_auth("u-alice")).json()
     second = client.post(f"/entities/{alice['id']}/behaviour",
-                         json={"source": "v2"}, headers=_auth("u-alice")).json()
+                         json={"source": "-- v2"}, headers=_auth("u-alice")).json()
     assert first["name"].endswith("#1")
     assert second["name"].endswith("#2")
     # GET returns the latest active one.
     got = client.get(f"/entities/{alice['id']}/behaviour", headers=_auth("u-alice"))
     assert got.status_code == 200
-    assert got.json()["source"] == "v2"
+    assert got.json()["source"] == "-- v2"
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +159,54 @@ def test_get_behaviour_non_owner_404(client):
                 json={"source": "-- x"}, headers=_auth("u-alice"))
     r = client.get(f"/entities/{alice['id']}/behaviour", headers=_auth("u-bob"))
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: submit-time strictness on the autonomy path
+# ---------------------------------------------------------------------------
+
+def test_nil_call_trap_is_refused_at_submit(client):
+    """The zombie trap (a helper that is not injected) is a 400 with the
+    finding in hand -- and the entity's current behaviour is untouched."""
+    alice = _make_entity(client, "u-alice")
+    client.post(f"/entities/{alice['id']}/behaviour",
+                json={"source": "-- healthy"}, headers=_auth("u-alice"))
+
+    r = client.post(f"/entities/{alice['id']}/behaviour",
+                    json={"source": "local fills = settle_last_orders()"},
+                    headers=_auth("u-alice"))
+    assert r.status_code == 400
+    assert any("settle_last_orders" in p for p in r.json()["detail"])
+
+    got = client.get(f"/entities/{alice['id']}/behaviour", headers=_auth("u-alice"))
+    assert got.json()["source"] == "-- healthy"
+
+
+def test_syntax_error_is_refused_at_submit(client):
+    alice = _make_entity(client, "u-alice")
+    r = client.post(f"/entities/{alice['id']}/behaviour",
+                    json={"source": "local t = {"}, headers=_auth("u-alice"))
+    assert r.status_code == 400
+    assert any(p.startswith("syntax:") for p in r.json()["detail"])
+
+
+def test_state_dependent_script_accepted_with_warnings(client):
+    """A script that errors only on the synthetic ctx is accepted; the
+    warning is on the response for the player to look at."""
+    alice = _make_entity(client, "u-alice")
+    r = client.post(f"/entities/{alice['id']}/behaviour",
+                    json={"source": "ctx.state.hunger = ctx.state.hunger + 1"},
+                    headers=_auth("u-alice"))
+    assert r.status_code == 201
+    body = r.json()
+    assert body["source"].startswith("ctx.state.hunger")
+    assert len(body["warnings"]) == 1 and body["warnings"][0].startswith("smoke-run:")
+
+
+def test_clean_script_has_empty_warnings(client):
+    alice = _make_entity(client, "u-alice")
+    r = client.post(f"/entities/{alice['id']}/behaviour",
+                    json={"source": "ctx.state.set = std.amount_str(1.5)"},
+                    headers=_auth("u-alice"))
+    assert r.status_code == 201
+    assert r.json()["warnings"] == []

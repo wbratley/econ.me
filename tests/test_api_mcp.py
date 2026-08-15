@@ -338,3 +338,30 @@ def test_get_script_libraries_exposes_all_tiers(client):
 
     tiers = call_json(client, "get_script_libraries")
     assert tiers["world"] == lib
+
+
+def test_set_behaviour_lint_refuses_and_warns(client):
+    """Phase 3 on the agent surface: the nil-call trap is an isError with
+    the finding in the text; a state-dependent script is accepted with
+    `lint_warnings` in the result. An agent that reads the error can fix
+    the typo in one round-trip -- the pre-tier era made it a zombie."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+
+    result = call_tool(client, "set_behaviour",
+                       {"entity_id": eid, "source": "local fills = settle_last_orders()"},
+                       user="u-alice")
+    assert result["isError"] is True
+    assert "settle_last_orders" in result["content"][0]["text"]
+
+    ok = call_json(client, "set_behaviour",
+                   {"entity_id": eid,
+                    "source": "ctx.state.hunger = ctx.state.hunger + 1"},
+                   user="u-alice")
+    assert ok["status"] == "active"
+    assert len(ok["lint_warnings"]) == 1 and ok["lint_warnings"][0].startswith("smoke-run:")
+
+    clean = call_json(client, "set_behaviour",
+                      {"entity_id": eid, "source": "ctx.state.set = std.amount_str(1)"},
+                      user="u-alice")
+    assert clean["lint_warnings"] == []

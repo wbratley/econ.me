@@ -154,6 +154,7 @@ class BehaviourScriptWrite(BaseModel):
     timeout_ms: int = 100
 
 
+
 class ScriptRead(BaseModel):
     id: str
     name: str
@@ -170,6 +171,13 @@ class ScriptRead(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
+class BehaviourScriptRead(ScriptRead):
+    """Response for the autonomy path: the active script plus the
+    submit-time lint result. ``warnings`` carries synthetic-ctx findings a
+    healthy script can still produce (accepted, informational); refusals
+    never reach this model -- they are a 400 with the problems."""
+    warnings: list[str] = []
 
 class ScriptUpdate(BaseModel):
     name: Optional[str] = None

@@ -1,12 +1,14 @@
 # Scripting libraries — the three tiers under every script
 
 Status: *design — settled 2026-08-15 after the first live-world demo
-surfaced the seam below. **Phase 1 and Phase 2 are shipped** (§6): the
+surfaced the seam below. **Phases 1–3 are shipped** (§6): the
 injection mechanism, the engine `std`, the `world` namespace +
 `scripting.world_lib` wiring, the admin library surfaces, the demo world
-migrated as the reference implementation — and then the content-pack tier
-(`pack`), the install-time validation gate, manifest version pinning, and
-strictness on the dry-run path. This note is the spec for the tiered
+migrated as the reference implementation — then the content-pack tier
+(`pack`), the install-time validation gate, manifest version pinning,
+and strictness on the dry-run path — and finally the same standard as
+the default at *player submit* time (`set_behaviour` lint, §4) plus the
+votable-world-lib analysis (§8). This note is the spec for the tiered
 library model. It spans engine (the injection mechanism), content (world
 libs and packs), and platform (join composition) — wherever each owns its
 seam. Nothing here changes the mechanism/data/policy doctrine
@@ -139,7 +141,14 @@ does not have, whatever it calls.
   `ctx`/`std`/`world`, reject undeclared globals). Broken or hostile
   content is refused before any player runs on it. Install-time cost is
   irrelevant; per-tick cost stays zero because injection is the same
-  cheap path `ctx` uses.
+  cheap path `ctx` uses. Player-authored behaviours: the same strict
+  standard at *submit* time (Phase 3) -- a script citing vocabulary
+  that is not injected is refused with the finding in hand and the
+  entity keeps its current behaviour; synthetic-ctx errors a healthy,
+  state-dependent script can still produce come back as warnings, not
+  refusals. One vocabulary source throughout (`get_world_libraries`):
+  the install gate, the dry-run, and the player lint cannot drift from
+  what the tick actually runs.
 
 ## 5. Settled decisions
 
@@ -150,10 +159,11 @@ does not have, whatever it calls.
    pack manifests declare the engine + lib versions they target, and a
    world running a pack refuses a mismatch. Replays check all of it.
 2. **World-lib authoring — operator at world creation, for now.**
-   Deliberately open: whether world-lib changes can become votable (they
-   are effectively rules-of-scripting changes mid-game, adjacent to the
-   constitution's validator tier) is deferred, not decided. Nothing in
-   the mechanism forecloses either answer.
+   Deliberately open: whether world-lib changes can become votable is
+   analyzed in §8 (recommendation: additive-only, at the constitutional
+   amendment bar, gated on an enactment-time compatibility sweep) but
+   **not built** — the mechanism ships nothing that forecloses either
+   answer.
 3. **Migration — yes.** `experiments/world` moves from concatenation to
    namespaces as the reference implementation of the model (its three
    strata split into §2's three tiers); concatenation keeps working
@@ -202,10 +212,24 @@ does not have, whatever it calls.
    the gate rejects; the synthetic ctx carries the full no-op query
    surface (a synthetic ctx that lies about `ctx.query` vocabulary is the
    same bug as one that lies about tiers).
-3. **Phase 3 — strictness + the open question**: the strictness lint
-   hardened into the default for player-authored `set_behaviour`
-   (catches nil-call class errors at *submit* time, closing the same
-   trap one level down); the votable-world-lib design note.
+3. **Phase 3 — strictness + the open question — ✅ shipped.** The
+   strictness lint hardened into the default for player-authored
+   `set_behaviour`: `set_entity_behaviour` lints the source against the
+   injected tiers BEFORE anything is retired or stored — a refusal
+   leaves the entity's current behaviour untouched — with the
+   fatal/warning split of §4 (`ScriptRejected` for syntax /
+   undeclared-global reads+writes / tier reassignment; synthetic-ctx
+   findings ride back as warnings on the accepted script: the REST
+   `warnings` field, MCP `lint_warnings`). The join paths lint too (a
+   broken starter fails join loudly rather than handing out zombies;
+   operator content is pre-gated, so this never fires in practice).
+   The votable-world-lib analysis is §8 — analysis only, deliberately:
+   decision #2 stays deferred, and nothing built forecloses it.
+   *Scope boundary:* the legislation path (`set_script`) is not linted
+   — a polity legislating a nil-calling POLICY zombies its own
+   machinery, which is the polity's reviewed choice with the dry-run
+   endpoint at hand; extending the lint there changes governance
+   behavior and is its own decision, taken when a world asks for it.
 
 ## 7. Migration detail (for Phase 1–2)
 
@@ -216,3 +240,84 @@ does not have, whatever it calls.
 - `experiments/world` tests (the `test_world.py` survival proofs) run
   unchanged against the tiered world — they are the acceptance gate for
   the migration.
+
+## 8. The open question: a votable world lib (Phase 3 analysis)
+
+Settled decision #2 deferred this on purpose. This section is the
+analysis that was owed; it recommends, but ships nothing — the mechanism
+forecloses neither answer, and that is a feature until a world actually
+needs to grow its vocabulary mid-game.
+
+**What the world lib is, tier-wise.** The world lib sits *beneath* the
+constitution, not inside it: VALIDATORs — the constitutional tier — are
+written *using* `world.*` helpers. A world-lib edit is therefore an
+implicit edit of every script that cites its helpers, including the
+validators that gate law itself, without touching a single script's
+source. That is the crux the tier question has to answer: an ordinary
+proposal (simple majority, `legislate`) cannot amend a validator — the
+proposal tiers exist precisely to prevent that — yet an ordinary-tier
+world-lib edit would rewrite what the validators *mean*. The tier the
+lib effectively occupies is constitutional, whatever surface edits it.
+
+**Why not leave it at operator fiat forever (status quo).** The lib is
+the world's API surface; play generates vocabulary needs the operator
+cannot foresee (a clearing idiom, a new market's quoting helper).
+Fiat-only means every world's vocabulary is frozen at the imagination of
+one author at t=0. That is survivable and safe — it is the shipped
+state — but it makes the lib the only rule-shaped thing a polity can
+never touch.
+
+**The zombie trap at world scale.** Phase 1–3 exist because a missing
+helper is silent death: `settle_last_orders()` nil-calls, the script
+errors every tick, the entity zombied. A votable *removal or rename*
+reopens that trap for every dependent script at once — and Phase 3's
+submit-time lint cannot catch it, because the submissions were legal
+when made. Whatever the governance answer, one mechanical precondition
+is non-negotiable: **an enactment-time compatibility sweep.** Before a
+lib change can take effect, every active script is run through
+`check_player_script` against the *new* lib; a change that would break
+any dependent script is refused (or quarantines the change until scripts
+migrate). The standard that guards one player's submit guards the
+polity's amendment — same lint, same tiers, same choke point.
+
+**Determinism (settled decision #1).** The lib is replay-input state.
+Today's admin PUT writes it outside the event log — operator fiat is
+replay-invisible, which is tolerable only because it is confined to
+bootstrap. A votable change MUST ride the intent/enactment path like
+every other mutation, and the enactment record must carry the lib's sha
+before/after — a lib change is a new manifest epoch, not an edit in
+place.
+
+**The options, honestly:**
+
+1. **Operator fiat forever.** Safe, static, boring. Vocabulary frozen
+   at world creation.
+2. **Ordinary law.** Rejected on the tier argument above: it lets a
+   simple majority rewrite the meaning of constitutional validators by
+   editing the helpers under them.
+3. **Constitutional amendment, additive-only, sweep-gated.** Additions
+   (new helpers; old signatures untouched) are votable at the amendment
+   bar (`amend_constitution`, the supermajority floor in the
+   `constitution` setting). Removals and renames are not offered as a
+   vote at all — effectively they remain operator-only at world
+   creation, because a removal that nothing depends on is rare and one
+   that something depends on is exactly the mass-zombie case the sweep
+   exists to stop. Additive-only bounds the blast radius mechanically:
+   a new name cannot nil-call anyone.
+4. **Lib changes only between worlds.** The strongest determinism
+   story; the most static. Equivalent to (1) with extra ceremony.
+
+**Recommendation: (3), when a world needs it.** It matches the tier the
+lib occupies, it keeps replay honest, and its safety is mechanical
+rather than procedural — additive-only plus the sweep means the trap
+this whole document exists to close stays closed even when the polity
+holds the pen. Until a real world pressures the seam, (1) ships today
+and nothing above needs to exist as code.
+
+Two adjacent notes. The `std` tier is engine mechanism — un-votable by
+the doctrine table (`design.md` §2), pinned by fingerprint, versioned
+with the engine. The `pack` tier is *content*, not rules: it is the
+starter's inheritance, and players already own the right to keep, drop,
+or replace every opinion in it by rewriting their behaviour — a polity
+voting on the pack would be legislating taste, which autonomy already
+answers script-by-script.

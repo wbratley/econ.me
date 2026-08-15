@@ -17,6 +17,12 @@ And the two cross-tier invariants:
   - the money-scope invariant still binds (an autonomy script spends only
     its own entity's money);
   - both governed paths (autonomy + legislation) refuse a fixed entity.
+
+Phase 3 adds the fourth guard:
+  - lint -- submit-time strictness: the source is checked against the
+    injected tiers with the install gate's standard. Vocabulary that is
+    not there (the nil-call trap that zombied the first live demo's
+    founder) refuses the submission; the entity keeps its behaviour.
 """
 import pytest
 from sqlalchemy import create_engine, select
@@ -26,7 +32,7 @@ from econengine import capabilities, services
 from econengine.models import (
     Base, Entity, EntityType, Script, ScriptType, Tick, User,
 )
-from econengine.scripting import build_queries
+from econengine.scripting import ScriptRejected, build_queries
 from econengine.services import (
     MissingCapabilityError, OwnershipError, create_entity, set_entity_behaviour,
     set_script,
@@ -72,7 +78,7 @@ def test_owner_can_set_their_entity_behaviour(session):
     other = _user(session, "other")
     entity = _owned_entity(session, owner)
 
-    script = set_entity_behaviour(
+    script, _ = set_entity_behaviour(
         session, entity, "ctx.state.tick = ctx.tick", owner_id=owner.id,
     )
     session.commit()
@@ -152,7 +158,7 @@ def test_only_behaviour_is_produced(session):
     VALIDATOR / HOOK are out of scope by signature, not by guard."""
     owner = _user(session)
     entity = _owned_entity(session, owner)
-    script = set_entity_behaviour(session, entity, "-- x", owner_id=owner.id)
+    script, _ = set_entity_behaviour(session, entity, "-- x", owner_id=owner.id)
     assert script.script_type == ScriptType.BEHAVIOUR
 
 
@@ -163,9 +169,9 @@ def test_replace_retires_prior_behaviour_and_versions(session):
     owner = _user(session)
     entity = _owned_entity(session, owner)
 
-    first = set_entity_behaviour(session, entity, "v1", owner_id=owner.id)
-    second = set_entity_behaviour(session, entity, "v2", owner_id=owner.id)
-    third = set_entity_behaviour(session, entity, "v3", owner_id=owner.id)
+    first, _ = set_entity_behaviour(session, entity, "-- v1", owner_id=owner.id)
+    second, _ = set_entity_behaviour(session, entity, "-- v2", owner_id=owner.id)
+    third, _ = set_entity_behaviour(session, entity, "-- v3", owner_id=owner.id)
     session.flush()
 
     assert first.is_active is False
@@ -203,7 +209,7 @@ def test_replace_retires_behaviour_set_by_legislation(session):
     )
     assert imposed.is_active is True
 
-    own = set_entity_behaviour(session, entity, "-- mine", owner_id=owner.id)
+    own, _ = set_entity_behaviour(session, entity, "-- mine", owner_id=owner.id)
     session.flush()
     assert imposed.is_active is False
     assert own.is_active is True
@@ -289,3 +295,66 @@ def test_money_scope_invariant_still_binds(session):
     )
     assert "own source account" in rejection["reason"]
     assert stranger_acct.balance == 100
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: submit-time strictness -- the lint guard
+# ---------------------------------------------------------------------------
+
+def test_lint_refuses_nil_call_trap_before_any_mutation(session):
+    """The zombie trap, refused at submit: the entity KEEPS its current
+    behaviour (nothing retired, nothing stored) and the player gets the
+    finding in hand."""
+    owner = _user(session)
+    entity = _owned_entity(session, owner)
+    good, _ = set_entity_behaviour(session, entity, "-- healthy", owner_id=owner.id)
+    session.flush()
+
+    with pytest.raises(ScriptRejected) as exc:
+        set_entity_behaviour(session, entity,
+                             "local fills = settle_last_orders()",
+                             owner_id=owner.id)
+    assert any("settle_last_orders" in p for p in exc.value.problems)
+
+    # Nothing was mutated by the refusal: same lineage length, the healthy
+    # script still the one active behaviour.
+    scripts = session.query(Script).filter_by(entity_id=entity.id).all()
+    assert len(scripts) == 1 and scripts[0].id == good.id and scripts[0].is_active
+
+
+def test_lint_refuses_syntax_error(session):
+    owner = _user(session)
+    entity = _owned_entity(session, owner)
+    with pytest.raises(ScriptRejected, match="syntax:"):
+        set_entity_behaviour(session, entity, "local t = {", owner_id=owner.id)
+
+
+def test_lint_accepts_state_dependent_script_with_warning(session):
+    """A script that errors only on the synthetic ctx (empty state) is
+    accepted; the warning rides back with it."""
+    owner = _user(session)
+    entity = _owned_entity(session, owner)
+    script, warnings = set_entity_behaviour(
+        session, entity, "ctx.state.hunger = ctx.state.hunger + 1",
+        owner_id=owner.id)
+    assert script.is_active
+    assert len(warnings) == 1 and warnings[0].startswith("smoke-run:")
+
+
+def test_lint_checks_against_installed_tiers(session):
+    """The lint's vocabulary is the tick's vocabulary: with a world lib
+    installed, its helpers are legal; without it, the same source is
+    refused."""
+    from econengine import scripting
+
+    owner = _user(session)
+    entity = _owned_entity(session, owner)
+    src = "local fills = world.settle_last_orders()"
+
+    with pytest.raises(ScriptRejected):
+        set_entity_behaviour(session, entity, src, owner_id=owner.id)
+
+    scripting.set_world_lib(
+        session, "local w = {} function w.settle_last_orders() return {} end return w")
+    script, warnings = set_entity_behaviour(session, entity, src, owner_id=owner.id)
+    assert script.is_active and warnings == []

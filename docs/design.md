@@ -70,8 +70,9 @@ platform.
   sees all events), VALIDATOR (pre-operation veto, fail-closed), HOOK
   (post-operation, non-recursive). Script *vocabulary* arrives from the
   tiered library model — engine `std`, per-world `world` lib, content
-  packs — injected as namespaces alongside `ctx` (Phases 1–2 shipped:
-  `std`, `world`, `pack`, the install-time gate, manifest pinning; see
+  packs — injected as namespaces alongside `ctx` (Phases 1–3 shipped:
+  `std`, `world`, `pack`, the install-time gate, manifest pinning, and
+  submit-time strictness on the player autonomy path; see
   `docs/scripting.md`).
 - **Tick engine** — the simulation heartbeat: run policies, run behaviours,
   resolve intents by priority in savepoints, clear markets, record every
