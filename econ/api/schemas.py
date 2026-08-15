@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, field_serializer, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from econengine.models.entity import EntityStatus, EntityType
 from econengine.models.order import OrderSide, OrderStatus
@@ -602,6 +602,56 @@ class EpochStatusRead(EpochRead):
     elimination status (§14.3) -- the only dynasty-specific bit, and it is
     the caller's own."""
     eliminated_this_epoch: bool = False
+
+
+#: ---------------------------------------------------------------------------
+#: Governance windows (game.md §14.4; Phase 2b)
+#: ---------------------------------------------------------------------------
+
+class GovernanceProposal(BaseModel):
+    """One dormant proposal on the docket, with its live tally."""
+    id: str
+    title: str
+    proposal_type: str
+    proposer_id: str
+    target_id: str
+    weight_model: str
+    threshold: str
+    quorum: str
+    tally: dict
+
+
+class GovernanceState(BaseModel):
+    """The governance calendar: derived, never stored. ``is_window_round``
+    means resolving the round open for submission CLOSES a window -- the
+    clerk's enactment sweep fires then (and only then)."""
+    round_number: int
+    current_round: int
+    rounds_per_window: int
+    is_window_round: bool
+    next_window_round: int
+    rounds_until_window: int
+    open_proposals: list[GovernanceProposal]
+
+
+class GovernanceEnactBody(BaseModel):
+    """Optional scoping for the admin by-election button: absent proposal_id
+    sweeps every open proposal (the clerk's window-close behaviour)."""
+    proposal_id: Optional[str] = None
+
+
+class EnactmentOutcome(BaseModel):
+    """One enactment attempt's intent event: applied (with the tally and
+    resulting proposal status riding along as extra keys) or rejected (with
+    reason). The ledger of what the by-election button tried."""
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    entity_id: str
+    params: dict
+    status: str
+    reason: Optional[str] = None
+    idempotency_key: str
 
 
 class CouncilWrite(BaseModel):

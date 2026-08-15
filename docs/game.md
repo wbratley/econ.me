@@ -84,7 +84,8 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | owner→dynasty linkage | `Entity.owner_id` → User; **`spawn_entity` already propagates `caller.owner_id`** | ✅ done |
 | spawn caps / fairness | `ECON_MAX_ENTITIES_PER_OWNER` + caps; `entity_tick_compute_budget_ms` (votable) | ✅ done |
 | batched ticks | `run_tick()` is an independent step; `POST /admin/rounds/advance` resolves K per round | ✅ mechanism + scheduler |
-| propose / vote / enact on a slower cycle | full governance stack (`actors.md` 4) | ✅ done; needs **cadence** (platform) |
+| propose / vote / enact on a slower cycle | full governance stack (`actors.md` 4) | ✅ done; cadence landed in Phase 2b (§14.4) |
+| governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 | tech / skills / production | `Technology` (ENTITY/WORLD scope, DAG), `Recipe` (inputs/outputs/per_tick/deposit/facility/branches/unlocks) | ✅ rich; needs **content** |
 | land, resources, improvements | `Parcel` (`region_id`, opaque `extent_ref`), `Facility`, `Deposit` (depleting+regen) | ✅ model; needs content |
 | markets, money, borrowing, insurance | call auction; two-tier money; bank/bond/loan/futures/option/insurance | ✅ done |
@@ -94,7 +95,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
 | leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ⚠️ **platform read** (Phase 2 — §14) |
-| governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ⚠️ **platform + content clerk** (Phase 2 — §14) |
+| governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 
 ## 6. The control model and the one engine gap
 
@@ -235,7 +236,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
-| **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4); leaderboard + publish (§14.5) | none — platform (+ one content-pack clerk script); design in §14 |
+| **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
@@ -459,6 +460,23 @@ mechanisms are untouched.)
 - **Out-of-window proposals are legal but dormant** — created by any
   script at any tick, they wait for a window close. Cadence is a property
   of *effect*, not of speech.
+- **How the clerk learns N (built note).** Scripts cannot read env, so
+  each advance re-projects N into `round.state` as
+  `rounds_per_window` — the same channel the clerk already reads. Env
+  stays the single source; the window stays derived, never stored.
+- **Sweep timing (built note).** An advance writes the round counter
+  *after* its batch, so the clerk first sees "round r resolved" on round
+  r+1's ticks: a window closing at round r lands its decision as round
+  r+1 opens. `ctx.state.last_window_swept` makes the sweep fire once per
+  close, not once per tick. The sweep *decides the whole docket* — a
+  failed tally closes a proposal FAILED (election-day semantics), leaving
+  no zombie OPEN rows.
+- **Clerk capabilities (built note).** The enact gate needs LEGISLATE /
+  AMEND_CONSTITUTION; the laws it applies exercise *operating*
+  capabilities too (a fiscal proposal runs `set_fiscal_policy` as the
+  polity), so the content-pack clerk is granted SET_FISCAL_POLICY at
+  content time. Capabilities arrive only by grant — the operator is the
+  genesis grantor.
 
 ### 14.5 Leaderboard — publish the round
 
