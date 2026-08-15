@@ -10,7 +10,7 @@ from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
     CouncilWrite, DelegationRead, DelegationWrite, EntityRead, EntityUpdate,
     EstateRuleRead, EstateRuleUpdate, JoinConfigRead, JoinConfigWrite,
-    UserRead, UserUpdate, WorldLibRead, WorldLibUpdate,
+    ScriptingTiersRead, UserRead, UserUpdate, WorldLibRead, WorldLibUpdate,
 )
 from econengine.models import Entity, User
 
@@ -174,9 +174,13 @@ def set_world_lib_endpoint(
     """Set the world lib -- operator fiat at world creation (docs/
     scripting.md settled decision #2; whether this becomes votable is
     deliberately open). The source must be a Lua chunk returning its
-    namespace table; a broken source surfaces per-script as script_error
-    until the install-time validation gate lands (Phase 2)."""
-    scripting.set_world_lib(session, body.source)
+    namespace table and passes the install-time gate first: syntax,
+    strict smoke-run, purity (a broken source is refused with 400, never
+    silently tolerated as per-script errors)."""
+    try:
+        scripting.set_world_lib(session, body.source)
+    except scripting.LibraryRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.problems)
     session.commit()
     return WorldLibRead(source=scripting.get_world_lib(session))
 
@@ -190,6 +194,62 @@ def clear_world_lib_endpoint(
     scripting.set_world_lib(session, None)
     session.commit()
     return WorldLibRead(source=None)
+
+
+# --- scripting: the content-pack lib (docs/scripting.md, tier three) ----
+
+@router.get("/pack-lib", response_model=WorldLibRead)
+def get_pack_lib_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Read the content-pack lib (the `pack` namespace: the play opinions
+    this world's starter inherits -- pricing adaptation, pantry policy)."""
+    return WorldLibRead(source=scripting.get_pack_lib(session))
+
+
+@router.put("/pack-lib", response_model=WorldLibRead)
+def set_pack_lib_endpoint(
+    body: WorldLibUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Set the pack lib. Same gate as the world lib: syntax, strict
+    smoke-run, purity -- and remember the content-pack manifest pins the
+    sha it was authored against (drift shows in /admin/scripting-tiers)."""
+    try:
+        scripting.set_pack_lib(session, body.source)
+    except scripting.LibraryRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.problems)
+    session.commit()
+    return WorldLibRead(source=scripting.get_pack_lib(session))
+
+
+@router.delete("/pack-lib", response_model=WorldLibRead)
+def clear_pack_lib_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Clear the pack lib: scripts lose `pack` (starter behaviours written
+    against it will nil-call -- the tier is part of the pack contract)."""
+    scripting.set_pack_lib(session, None)
+    session.commit()
+    return WorldLibRead(source=None)
+
+
+# --- scripting: tier identity + gate status (determinism pinning) --------
+
+@router.get("/scripting-tiers", response_model=ScriptingTiersRead)
+def scripting_tiers_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """The identity of every script tier in this world (settled decision
+    #1: determinism pinning): the engine-stdlib fingerprint and whether it
+    matches the pinned baseline, lib shas, and the current gate verdicts.
+    `matches_pinned: false` means the engine's stdlib changed under a
+    running world -- replay inputs are suspect until the world re-pins."""
+    return ScriptingTiersRead(**scripting.scripting_report(session))
 
 
 # --- council registers (seeding membership for the council/weighted models) ---

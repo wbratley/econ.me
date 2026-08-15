@@ -1,15 +1,16 @@
 # Scripting libraries — the three tiers under every script
 
 Status: *design — settled 2026-08-15 after the first live-world demo
-surfaced the seam below. **Phase 1 is shipped** (§6): the injection
-mechanism, the engine `std`, the `world` namespace + `scripting.world_lib`
-wiring (tick, VALIDATOR/HOOK dispatch, and the dry-run endpoint all inject
-through one accessor), the admin `GET/PUT/DELETE /admin/world-lib` surface,
-and the demo world migrated as the reference implementation. This note is
-the spec for the tiered library model. It spans engine (the injection
-mechanism), content (world libs and packs), and platform (join composition)
-— wherever each owns its seam. Nothing here changes the mechanism/data/
-policy doctrine (`design.md` §2); it applies it to script vocabulary.*
+surfaced the seam below. **Phase 1 and Phase 2 are shipped** (§6): the
+injection mechanism, the engine `std`, the `world` namespace +
+`scripting.world_lib` wiring, the admin library surfaces, the demo world
+migrated as the reference implementation — and then the content-pack tier
+(`pack`), the install-time validation gate, manifest version pinning, and
+strictness on the dry-run path. This note is the spec for the tiered
+library model. It spans engine (the injection mechanism), content (world
+libs and packs), and platform (join composition) — wherever each owns its
+seam. Nothing here changes the mechanism/data/policy doctrine
+(`design.md` §2); it applies it to script vocabulary.*
 
 ## 1. The seam this closes
 
@@ -176,10 +177,31 @@ does not have, whatever it calls.
    (`concede`/`sell_surplus`/`buy_food`) still rides in script source,
    concatenated by the scenario — deliberately, since the pack namespace
    is Phase 2's; the helpers being visible in `get_behaviour` is the point.
-2. **Phase 2 — the world tier + the gate**: `world` namespace populated
-   from `scripting.world_lib`; install-time validation (syntax,
-   smoke-run, lint) for world lib and pack scripts; pack manifest
-   version pinning.
+2. **Phase 2 — the world tier + the gate — ✅ shipped.** The `pack`
+   namespace (`scripting.pack_lib` WorldSetting; the play opinions left
+   concatenation and are now an injected tier, so a starter's source is
+   only its own logic); the install-time gate — `validate_library_source`
+   (syntax / strict smoke-run / purity: members are functions or nested
+   tables only, per the pure-Lua rule / a member sweep that calls each
+   function under strict globals, best-effort by construction) and
+   `validate_script_source` (strict smoke-run; used by the reference
+   world's `_behaviour`, so NO pack script reaches a Script row ungated);
+   the setters (`set_world_lib`/`set_pack_lib`) and the admin endpoints
+   refuse broken sources with 400 (`LibraryRejected`); manifest version
+   pinning — `experiments/world/pack.json` records the engine-stdlib
+   fingerprint + a sha per lua/ file, `create_content` refuses drift
+   (`PackManifestMismatch`), regeneration is the deliberate
+   `python -m experiments.world.manifest`; the `/admin/scripting-tiers`
+   report (fingerprints, shas, gate verdicts, `matches_pinned`); and the
+   MCP `get_script_libraries` tool (authoring from scratch requires
+   reading the tiers, not guessing). *As-built deviations from the note:*
+   the lint is enforced by a strict-globals run (`run(strict_globals=...)`
+   in the engine: undeclared-global reads/writes error, a post-run probe
+   rejects reassigning injected names) rather than a separate linter; the
+   platform dry-run endpoint now runs strict too, so it cannot bless what
+   the gate rejects; the synthetic ctx carries the full no-op query
+   surface (a synthetic ctx that lies about `ctx.query` vocabulary is the
+   same bug as one that lies about tiers).
 3. **Phase 3 — strictness + the open question**: the strictness lint
    hardened into the default for player-authored `set_behaviour`
    (catches nil-call class errors at *submit* time, closing the same

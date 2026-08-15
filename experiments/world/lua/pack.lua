@@ -1,18 +1,24 @@
--- Content-pack helpers (docs/scripting.md section 2): the play OPINIONS
--- this pack ships -- bounded sell-side price adaptation and the pantry/bid
--- food policy. Concatenated ahead of each role script by scenario
--- _behaviour: the sandbox has no `require`, and the engine `std` / `world`
--- namespaces arrive injected, so this is the only library text a script
--- must carry in its own source. That a player's get_behaviour shows these
--- helpers is the point -- they are the strategy the starter inherits, to
--- keep, drop, or rewrite.
+-- Content-pack lib (docs/scripting.md section 2, tier three): the play
+-- OPINIONS this pack ships -- bounded sell-side price adaptation and the
+-- pantry/bid food policy. A Lua chunk that RETURNS its namespace table,
+-- injected as `pack` alongside `std` (engine) and `world` (this world's
+-- idioms). Stored as the `scripting.pack_lib` WorldSetting, seeded at
+-- bootstrap by scenario.create_content and pinned by pack.json.
+--
+-- Unlike the tiers beneath it, these helpers encode opinions about how to
+-- play -- clamps, bid caps, priorities are strategy, not vocabulary. A
+-- player who wants different strategy writes it in their own source; the
+-- pack's opinions are the starting point they inherit, visible here and
+-- via the get_script_libraries surface.
+
+local pack = {}
 
 -- Bounded sell-side adaptation: concede toward cost when stock went unsold,
 -- firm up when it all moved. Clamped so it searches but never spirals. SELL
 -- side only -- buyers quote true reservation prices and do not adapt (an
 -- unfilled low-value buy is the auction working as intended).
 local ADAPT_LO, ADAPT_HI = 0.3, 3.0
-local function concede(fills, symbol)
+function pack.concede(fills, symbol)
   local factors = ctx.state.factors or {}
   local key = symbol .. "|sell"
   local factor = tonumber(factors[key]) or 1.0
@@ -27,10 +33,10 @@ local function concede(fills, symbol)
 end
 
 -- Sell surplus of `symbol` (everything above `keep`) at `anchor * concede`.
-local function sell_surplus(symbol, keep, anchor, account_id, fills)
+function pack.sell_surplus(symbol, keep, anchor, account_id, fills)
   local qty = std.holding_qty(symbol) - keep
   if qty <= 0.01 then return end
-  local ask = concede(fills, symbol) * anchor
+  local ask = pack.concede(fills, symbol) * anchor
   ctx.action.place_order(symbol, "sell", std.amount_str(qty),
                           std.amount_str(ask), account_id, 40)
 end
@@ -40,7 +46,7 @@ end
 -- the pantry). Bids up to 3x the going price -- a hungry specialist will
 -- pay, but the auction is uniform-price so the limit decides WHETHER, not
 -- HOW MUCH. Returns the budget left after reserving the purchase.
-local function buy_food(account_id, balance, grain_price, pantry)
+function pack.buy_food(account_id, balance, grain_price, pantry)
   local want = pantry - std.holding_qty("GRAIN")
   if want <= 0.01 or balance <= 0 then return balance end
   local ref = (grain_price and grain_price > 0) and grain_price or 1.0
@@ -54,3 +60,5 @@ local function buy_food(account_id, balance, grain_price, pantry)
   end
   return balance
 end
+
+return pack

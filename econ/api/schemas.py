@@ -542,14 +542,30 @@ class JoinConfigRead(BaseModel):
 #: ---------------------------------------------------------------------------
 
 class WorldLibUpdate(BaseModel):
-    """Operator-set world lib: a Lua chunk that RETURNS its namespace
-    table, injected read-only as `world` into every script run in this
-    world. Engine idioms only -- play opinions belong in content packs."""
+    """Operator-set library source (world lib or pack lib): a Lua chunk
+    that RETURNS its namespace table, injected read-only alongside the
+    engine `std`. The world lib carries engine idioms only; the pack lib
+    carries the content pack's play opinions."""
     source: str
 
 
 class WorldLibRead(BaseModel):
     source: Optional[str] = None
+
+
+class StdTierRead(BaseModel):
+    fingerprint: str
+    pinned: Optional[str] = None
+    matches_pinned: bool
+
+
+class ScriptingTiersRead(BaseModel):
+    """Tier identity + gate status for the operator (docs/scripting.md
+    settled decision #1: determinism pinning)."""
+    std: StdTierRead
+    world_lib_sha: Optional[str] = None
+    pack_lib_sha: Optional[str] = None
+    gate: dict
 
 
 class JoinResult(BaseModel):

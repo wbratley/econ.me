@@ -121,8 +121,9 @@ def test_tools_list_exposes_the_player_surface(client):
     tools = {t["name"]: t for t in r["result"]["tools"]}
     assert set(tools) == {
         "join", "my_entities", "entity_state", "entity_events",
-        "get_behaviour", "set_behaviour", "round_state", "epoch_state",
-        "governance_current", "market_prices", "leaderboard",
+        "get_behaviour", "get_script_libraries", "set_behaviour",
+        "round_state", "epoch_state", "governance_current",
+        "market_prices", "leaderboard",
     }
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object"
@@ -313,3 +314,27 @@ def test_market_prices_reports_last_trade(client):
     assert prices["WHEAT"]["last_price"] == "2.5000"
     assert prices["IRON"]["last_price"] is None
     assert prices["WHEAT"]["currency"] == "USD"
+
+
+# ===========================================================================
+# §6: the script vocabulary tiers -- agent-authorable behaviours
+# ===========================================================================
+
+def test_get_script_libraries_exposes_all_tiers(client):
+    """The tiers under every behaviour: engine std (source + fingerprint,
+    always), world/pack libs when installed. Authoring from scratch means
+    reading these; guessing is the nil-call trap."""
+    tiers = call_json(client, "get_script_libraries")
+    assert "amount_str" in tiers["std"]["source"]
+    assert len(tiers["std"]["fingerprint"]) == 16
+    assert tiers["world"] is None and tiers["pack"] is None
+
+    from econengine import scripting
+    engine = app.state._test_engine
+    lib = "local t = {} function t.tag() return 'demo' end return t"
+    with Session(engine) as session:
+        scripting.set_world_lib(session, lib)
+        session.commit()
+
+    tiers = call_json(client, "get_script_libraries")
+    assert tiers["world"] == lib

@@ -48,13 +48,16 @@ lone entity endowed with a farm and this script survives indefinitely
 it.
 
 Scripts are written against the tiered library model (`docs/scripting.md`):
-`std.*` is the engine stdlib and `world.*` this world's library
-(`lua/world_lib.lua`, seeded into the `scripting.world_lib` WorldSetting at
-bootstrap) — both injected read-only at run time, so a script's own source
-carries only its logic plus the pack's play opinions (`lua/pack.lua`,
-prepended by `scenario._behaviour` and visible in `get_behaviour`). A
-player rewriting from scratch keeps, drops, or replaces those opinions;
-the vocabulary beneath never goes missing.
+`std.*` (engine stdlib), `world.*` (this world's idioms — `lua/world_lib.lua`)
+and `pack.*` (this content pack's play opinions — `lua/pack.lua`) are all
+injected read-only at run time, so a script's own source carries only its
+own logic. Every pack script passes the install-time gate (syntax / strict
+smoke-run / lint) before it reaches a Script row, and `pack.json` pins the
+engine-stdlib fingerprint plus a sha per lua/ file — bootstrap refuses drift
+(regenerate deliberately with `python -m experiments.world.manifest`). A
+player rewriting from scratch reads the tiers (`get_script_libraries`),
+keeps, drops, or replaces the opinions their starter leaned on; the
+vocabulary beneath never goes missing.
 
 ## The content pack (declared)
 

@@ -8,7 +8,7 @@ from econ.api.schemas import ScriptCreate, ScriptRead, ScriptUpdate, ScriptValid
 from econengine.lua_engine import LuaEngine
 from econengine.models import Entity, Script, User
 from econengine.models.script import ScriptType
-from econengine.scripting import get_world_libraries
+from econengine.scripting import get_world_libraries, synthetic_ctx
 
 router = APIRouter(prefix="/admin/scripts", tags=["scripts"])
 
@@ -136,18 +136,20 @@ def validate_script(
     _: User = Depends(require_admin),
 ):
     """
-    Dry-run the script against a mock ctx. Returns any syntax/runtime errors
-    and the intents the script would have submitted (without executing them).
-    Runs with the same library tiers production injects (`std` always, the
-    world lib when set) -- a dry-run that lies about vocabulary is worse
-    than none.
+    Dry-run the script against a synthetic ctx. Returns any syntax/runtime
+    errors and the intents the script would have submitted (without
+    executing them). Runs with the same library tiers production injects
+    (`std` always, plus `world`/`pack` when set) and the same strictness
+    the install-time gate applies -- a dry-run that lies about vocabulary
+    or tolerated what the gate rejects would be worse than none.
     """
     script = session.get(Script, script_id)
     if script is None:
         raise HTTPException(status_code=404, detail="Script not found")
 
-    result = _engine.run(script.source, _MOCK_CTX, timeout_ms=script.timeout_ms,
-                         libraries=get_world_libraries(session))
+    result = _engine.run(script.source, synthetic_ctx(), timeout_ms=script.timeout_ms,
+                         libraries=get_world_libraries(session),
+                         strict_globals=True)
 
     return ScriptValidateResult(
         ok=result.error is None,

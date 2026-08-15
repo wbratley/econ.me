@@ -44,6 +44,7 @@ RunResult.return_value. VALIDATOR scripts use it for their verdict:
   return {allow=true}  /  no return          -- allow
 """
 
+import hashlib
 import threading
 import time
 import uuid
@@ -130,6 +131,23 @@ end
 # boundary test in review: "does it encode an opinion about how to play?"
 # -- then it belongs in a world lib or a content pack, never here. This
 # chunk RETURNS its namespace table.
+
+
+def stdlib_fingerprint() -> str:
+    """Stable identity of the engine stdlib (settled decision #1,
+    docs/scripting.md section 5): script output feeds events_hash, so a
+    world must be able to pin -- and detect drift in -- the vocabulary its
+    scripts ran against. Content-pack manifests record this fingerprint;
+    replays (when they exist) check it."""
+    return hashlib.sha256(_STDLIB_LUA.encode("utf-8")).hexdigest()[:16]
+
+
+def stdlib_source() -> str:
+    """The stdlib source (read-only accessor; player-facing surfaces show
+    it so scripts can be authored from scratch against documented
+    vocabulary, not by guessing)."""
+    return _STDLIB_LUA
+
 _STDLIB_LUA = """
 local std = {}
 
@@ -197,10 +215,58 @@ function std.amount_str(x) return string.format("%.4f", x) end
 return std
 """
 
+# Strict-globals installer (docs/scripting.md section 4, the lint half of
+# the install-time gate). Evaluated PRE-sandbox like _NAMESPACE_FREEZE (it
+# needs setmetatable, which the sandbox nils) but CALLED only after every
+# Python-side global write is done (tiers, sandbox, ctx): a Python `g[k]=v`
+# on an absent key trips __newindex from unprotected C, which PANICS the
+# process rather than raising. Ordering is load-bearing.
+#
+# __index on a missing key catches the nil-call class (reading a helper
+# that was never injected) at validation time -- the original zombie-trap.
+# __newindex catches undeclared global writes (typos like `fctors = {}`).
+# The sandbox-blacklisted names are PRE-DECLARED as nil: reading them must
+# yield nil exactly as production does (and lupa's error machinery reads
+# some of them from unprotected C -- erroring there would panic).
+# Assignment to a PRESENT global (std = {}, ctx = {}) bypasses __newindex
+# by Lua semantics; the post-run shadow probe below catches those.
+_STRICT_GLOBALS_LUA = """
+function()
+  local setmetatable_ = setmetatable  -- captured NOW, pre-sandbox
+  local nil_ok = { %s }
+  return function(t)
+    return setmetatable_(t, {
+      __index = function(_, n)
+        if nil_ok[n] then return nil end
+        error("read of undeclared global '" .. tostring(n) .. "'", 2)
+      end,
+      __newindex = function(_, n)
+        error("assignment to undeclared global '" .. tostring(n) .. "'", 2)
+      end,
+    })
+  end
+end
+""" % (", ".join(f"{n} = true" for n in _SANDBOX_BLACKLIST))
+
+# Post-run tier-shadow probe (strict mode only): identity check. `seen`
+# holds the exact objects injected (ctx table + frozen tier proxies);
+# any reassignment (std = {}, ctx = 5, even std = nil) makes _G[name]
+# reference-compare unequal and the name is reported. Identity is the only
+# sound test: ctx is deliberately mutable, so writability proves nothing.
+_SHADOW_PROBE_LUA = """
+function(seen)
+  for n, v in pairs(seen) do
+    if _G[n] ~= v then return n end
+  end
+  return nil
+end
+"""
+
 
 class LuaEngine:
     def run(self, source: str, ctx: dict, timeout_ms: int = 100,
-            libraries: dict[str, str] | None = None) -> RunResult:
+            libraries: dict[str, str] | None = None,
+            strict_globals: bool = False) -> RunResult:
         """
         Execute Lua source with the given ctx dict. Returns a RunResult.
         Each call gets a fresh LuaRuntime capped at _MAX_MEMORY_BYTES.
@@ -212,7 +278,15 @@ class LuaEngine:
         injected read-only alongside the always-present engine `std`.
         "std" and "ctx" are engine-owned names. A library that fails to
         compile or does not return a table surfaces as RunResult.error --
-        loud, per script, until the install-time gate lands (Phase 2).
+        loud, per script.
+
+        `strict_globals=True` is the lint half of the install-time gate
+        (docs/scripting.md section 4): a strict metatable on the globals
+        table errors on reads of undeclared globals (the nil-call class)
+        and on undeclared global writes, and a post-run probe rejects
+        reassignment of the injected names (ctx/std/world/...). Production
+        tick runs stay permissive-but-loud; only validation paths turn
+        this on.
         """
         if libraries:
             for name in libraries:
@@ -249,6 +323,8 @@ class LuaEngine:
                 # must never see. Library sources are caller-trusted.
                 from lupa import lua_type
                 freeze = lua.eval(_NAMESPACE_FREEZE)
+                install_strict = (lua.eval(_STRICT_GLOBALS_LUA)() if strict_globals
+                                   else None)
                 tiers = {"std": _STDLIB_LUA}
                 tiers.update(libraries or {})
                 g = lua.globals()
@@ -265,7 +341,27 @@ class LuaEngine:
                 entity_id = ctx.get("entity", {}).get("id", "")
                 state_tbl = _build_ctx(lua, ctx, entity_id, intents, queries)
 
+                # Strict globals go on LAST: every Python-side global write
+                # is done, and a C-level write to an absent key under this
+                # metatable would panic the process (see _STRICT_GLOBALS_LUA).
+                seen = None
+                if install_strict is not None:
+                    g_ = lua.globals()
+                    seen = lua.table()
+                    for n in ["ctx"] + list(tiers.keys()):
+                        seen[n] = g_[n]
+                    install_strict(g_)
+
                 result["return_value"] = _lua_to_python(lua.execute(source))
+
+                if seen is not None:
+                    shadowed = lua.eval(_SHADOW_PROBE_LUA)(seen)
+                    if shadowed:
+                        raise ValueError(
+                            f"strict: script reassigned injected name "
+                            f"{shadowed!r} (assignment to ctx/std/world/... "
+                            f"is rejected at validation time)"
+                        )
 
                 # Capture any mutations the script made to ctx.state
                 result["state_updates"] = _read_lua_table(state_tbl)

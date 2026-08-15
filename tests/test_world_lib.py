@@ -47,14 +47,14 @@ def test_blank_source_is_treated_as_unset(session):
 
 
 def test_run_tick_injects_world_lib_into_behaviour_scripts(session):
-    scripting.set_world_lib(session, "return { tag = 'injected' }")
+    scripting.set_world_lib(session, "local t = {} function t.tag() return 'injected' end return t")
     entity = Entity(name="E", entity_type=EntityType.INDIVIDUAL)
     session.add(entity)
     session.flush()
     session.add(Script(
         name="e-behaviour",
         script_type=ScriptType.BEHAVIOUR,
-        source="ctx.state.seen = world.tag; ctx.state.std_ok = std.amount_str(1.5)",
+        source="ctx.state.seen = world.tag(); ctx.state.std_ok = std.amount_str(1.5)",
         entity_id=entity.id,
         timeout_ms=200,
         state={},
@@ -76,7 +76,7 @@ def test_validator_sees_world_lib(session):
 
     from econengine import services
 
-    scripting.set_world_lib(session, "return { ceiling = 10000 }")
+    scripting.set_world_lib(session, "local t = {} function t.ceiling() return 10000 end return t")
     alice = services.create_entity(session, "Alice", EntityType.INDIVIDUAL)
     bob = services.create_entity(session, "Bob", EntityType.INDIVIDUAL)
     a = services.create_account(session, alice, "USD", initial_balance=Decimal("100000"))
@@ -86,7 +86,7 @@ def test_validator_sees_world_lib(session):
         script_type=ScriptType.VALIDATOR,
         source=(
             "if ctx.op.type == 'transfer' and tonumber(ctx.op.amount) "
-            "> world.ceiling then return {allow=false, reason='over cap'} end"
+            "> world.ceiling() then return {allow=false, reason='over cap'} end"
         ),
         timeout_ms=200,
         state={},

@@ -2,6 +2,11 @@
 Script dispatch — wires HOOK and VALIDATOR scripts into the service layer,
 and holds the intent resolver shared with the tick engine.
 
+Also owns the tiered script libraries (docs/scripting.md): the per-world
+`world` lib and the content-pack `pack` lib (WorldSettings), the install-
+time validation gate every library and pack script passes, and the stdlib
+version pinning behind manifest checks.
+
 VALIDATOR  runs before every money operation with the operation as ctx.op;
            the chunk's return value is the verdict ({allow=false, reason=...}
            or a bare `false` denies; nil or {allow=true} allows). Fail-closed:
@@ -20,6 +25,7 @@ entity_id set it only fires for operations acted by that entity.
 
 
 
+import hashlib
 import json
 import threading
 from contextlib import contextmanager
@@ -28,7 +34,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .lua_engine import Intent, LuaEngine
+from .lua_engine import Intent, LuaEngine, stdlib_fingerprint
 from . import capabilities as _capabilities
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
 from .models.entity import EntityType
@@ -36,6 +42,17 @@ from .models.entity import EntityType
 
 class OperationVetoedError(ValueError):
     pass
+
+
+class LibraryRejected(ValueError):
+    """A library or pack script failed the install-time gate
+    (docs/scripting.md section 4): syntax check, strict smoke-run against
+    a synthetic ctx, purity. `.problems` lists the findings; broken or
+    hostile content is refused BEFORE any player runs on it."""
+
+    def __init__(self, problems: list[str]):
+        self.problems = problems
+        super().__init__("; ".join(problems))
 
 
 _engine = LuaEngine()
@@ -57,30 +74,42 @@ _local = threading.local()
 #: is pinned by the engine version.
 WORLD_LIB_KEY = "scripting.world_lib"
 
+#: WorldSetting key holding the content-pack lib: the play OPINIONS the
+#: pack ships (pricing policies, pantry rules) as a Lua chunk returning its
+#: namespace table, injected as `pack`. Tier three of docs/scripting.md
+#: section 2 -- unlike std/world it encodes opinions about how to play, so
+#: it travels with the content pack and its manifest, not the engine.
+PACK_LIB_KEY = "scripting.pack_lib"
+
+#: WorldSetting key recording the engine-stdlib fingerprint this world's
+#: scripts were installed against (settled decision #1: determinism
+#: pinning). Written once at world bootstrap; drift -- an engine upgrade
+#: changing `std` under a running world -- is visible in scripting_report
+#: and refuses pack re-installs until the manifest is re-pinned.
+STD_PIN_KEY = "scripting.std_version"
+
 
 def get_world_lib(session: Session) -> str | None:
     """The world lib source, or None if unset/blank."""
-    row = session.get(WorldSetting, WORLD_LIB_KEY)
-    source = row.value if row else None
-    return source if isinstance(source, str) and source.strip() else None
+    return _get_lib(session, WORLD_LIB_KEY)
 
 
 def set_world_lib(session: Session, source: str | None) -> str | None:
-    """Set (non-blank str) or clear (None/blank) the world lib."""
-    if source is not None and not source.strip():
-        source = None
-    row = session.get(WorldSetting, WORLD_LIB_KEY)
-    if source is None:
-        if row is not None:
-            session.delete(row)
-            session.flush()
-        return None
-    if row is None:
-        session.add(WorldSetting(key=WORLD_LIB_KEY, value=source))
-    else:
-        row.value = source
-    session.flush()
-    return source
+    """Set (non-blank str) or clear (None/blank) the world lib.
+
+    Gated: a non-blank source must pass the install-time validation gate
+    (LibraryRejected on failure) -- nothing broken reaches a tick."""
+    return _set_lib(session, WORLD_LIB_KEY, source)
+
+
+def get_pack_lib(session: Session) -> str | None:
+    """The content-pack lib source, or None if unset/blank."""
+    return _get_lib(session, PACK_LIB_KEY)
+
+
+def set_pack_lib(session: Session, source: str | None) -> str | None:
+    """Set or clear the pack lib (same gate as the world lib)."""
+    return _set_lib(session, PACK_LIB_KEY, source)
 
 
 def get_world_libraries(session: Session) -> dict[str, str] | None:
@@ -88,9 +117,276 @@ def get_world_libraries(session: Session) -> dict[str, str] | None:
 
     One accessor so the tick path, the VALIDATOR/HOOK dispatch below, and
     the platform's dry-run endpoint all inject exactly the same tiers --
-    the one-choke-point rule (docs/scripting.md section 4)."""
+    the one-choke-point rule (docs/scripting.md section 4). Currently the
+    per-world tiers: `world` and `pack`, whichever are set."""
+    libs: dict[str, str] = {}
     world_lib = get_world_lib(session)
-    return {"world": world_lib} if world_lib else None
+    if world_lib:
+        libs["world"] = world_lib
+    pack_lib = get_pack_lib(session)
+    if pack_lib:
+        libs["pack"] = pack_lib
+    return libs or None
+
+
+# ---------------------------------------------------------------------------
+# The install-time gate (docs/scripting.md section 4: provenance gradient)
+# ---------------------------------------------------------------------------
+
+#: Synthetic ctx for gate smoke-runs: the shape _build_ctx expects, with no
+#: session behind it. Pure-Lua library members can only touch what is
+#: injected, so running them here is safe by construction -- and catches
+#: the nil-call class at install time instead of at a player's tick.
+_GATE_TIMEOUT_MS = 1000  # install-time cost is irrelevant (docs/scripting.md)
+
+#: No-op stand-ins for the full production query surface (scripting.py
+#: build_queries). Collection queries return empty lists (converted to Lua
+#: tables by _build_ctx) so ipairs-based scripts smoke-run cleanly; scalar
+#: queries return None. Without these, a synthetic ctx LIES about vocabulary
+#: -- ctx.query.world_setting would be a nil field and every POLICY script
+#: using it would fail validation for a reason that cannot occur in
+#: production. The platform dry-run uses the same dict.
+def synthetic_queries() -> dict:
+    return {
+        "balance": lambda account_id: None,
+        "total_supply": lambda currency: None,
+        "market_price": lambda symbol: None,
+        "holding": lambda entity_id, symbol: None,
+        "has_unlock": lambda entity_id, code: False,
+        "holders": lambda symbol: [],
+        "world_setting": lambda key: None,
+        "fiscal_policy": lambda: None,
+        "constitution": lambda: None,
+        "active_script": lambda lineage_id: None,
+        "script_history": lambda lineage_id: [],
+        "proposal": lambda proposal_id: None,
+        "proposals": lambda status=None: [],
+        "tally": lambda proposal_id: None,
+        "age": lambda entity_id: None,
+        "lifespan": lambda entity_id: None,
+        "population": lambda: [],
+        "parents": lambda entity_id: [],
+        "children": lambda entity_id: [],
+    }
+
+
+#: The synthetic ctx itself: the shape _build_ctx expects, with no session
+#: behind it. Pure-Lua library members can only touch what is injected, so
+#: running them here is safe by construction -- and catches the nil-call
+#: class at install time instead of at a player's tick.
+SYNTHETIC_CTX = {
+    "entity": {"id": "gate-entity", "name": "Gate", "entity_type": "individual",
+               "is_monetary_authority": False},
+    "accounts": [{"id": "gate-account", "currency": "USD", "balance": "1000.0000"}],
+    "holdings": [], "processes": [], "parcels": [], "needs": [],
+    "unlocks": [], "events": [], "state": {},
+    # POLICY/VALIDATOR/HOOK scripts read ctx.op
+    "op": {
+        "type": "transfer", "entity_id": "gate-entity",
+        "from_account_id": "gate-account", "to_account_id": "gate-account-2",
+        "amount": "100.0000", "currency": "USD", "reference": "gate",
+        "transaction_ids": ["gate-tx-1"],
+    },
+    "queries": None,  # filled per-call: synthetic_queries() (fresh callables)
+}
+
+
+def synthetic_ctx() -> dict:
+    """A fresh synthetic ctx (fresh query callables -- they are inert
+    closures, but never share mutable state across gate runs)."""
+    ctx = dict(SYNTHETIC_CTX)
+    ctx["queries"] = synthetic_queries()
+    return ctx
+
+
+# Gate runs use synthetic_ctx() (fresh per call).
+
+
+def validate_library_source(source: str, libraries: dict[str, str] | None = None) -> list[str]:
+    """Gate a library-tier source (world lib, pack lib). Returns problems.
+
+    1. syntax  -- compile, don't execute;
+    2. smoke   -- strict-run the chunk against the synthetic ctx (the lint:
+                  undeclared-global reads/writes, tier shadowing);
+    3. purity  -- the chunk must RETURN a namespace table whose members are
+                  functions or nested tables only: vocabulary, never
+                  strategy constants or anything Python-backed (the
+                  pure-Lua rule -- a Python callable here would be a hole
+                  the sandbox cannot see);
+    4. sweep   -- each member is CALLED (zero-arg, pcall'd) under strict
+                  globals and only `undeclared global` findings count: the
+                  nil-call class inside member bodies surfaces here at
+                  install time. Best-effort by construction (members whose
+                  bad read hides behind an argument-dependent branch with
+                  nil test args are not reached); top-level source and --
+                  in Phase 3 -- player submissions are checked
+                  exhaustively instead.
+    """
+    try:
+        from lupa import LuaRuntime
+        LuaRuntime().compile(source)
+    except Exception as exc:
+        return [f"syntax: {exc}"]
+
+    result = _engine.run(source, synthetic_ctx(), timeout_ms=_GATE_TIMEOUT_MS,
+                         libraries=libraries, strict_globals=True)
+    if result.error:
+        return [f"smoke-run: {result.error}"]
+    if not isinstance(result.return_value, dict):
+        return [f"must return a namespace table, got {type(result.return_value).__name__}"]
+
+    problems: list[str] = []
+
+    def _walk(prefix: str, table: dict) -> None:
+        for key, member in table.items():
+            name = f"{prefix}{key}"
+            if callable(member):
+                continue
+            if isinstance(member, dict):
+                _walk(f"{name}.", member)
+                continue
+            problems.append(
+                f"member {name!r}: a namespace exposes functions (or nested "
+                f"tables), got {type(member).__name__} -- constants live in "
+                f"script source or ctx.state, not library tiers"
+            )
+
+    _walk("", result.return_value)
+    if problems:
+        return problems
+
+    sweep = _engine.run(_member_sweep_source(source), synthetic_ctx(),
+                        timeout_ms=_GATE_TIMEOUT_MS,
+                        libraries=libraries, strict_globals=True)
+    if sweep.error:
+        return [f"member sweep: {sweep.error}"]
+    findings = sweep.return_value
+    if isinstance(findings, dict):
+        findings = list(findings.values())
+    return [f"member sweep: {f}" for f in (findings or [])]
+
+
+def validate_script_source(source: str,
+                           libraries: dict[str, str] | None = None) -> list[str]:
+    """Gate a script source (pack role scripts, and in Phase 3 player
+    submissions): a strict smoke-run against the synthetic ctx with the
+    given tiers injected. The lint catches the nil-call class -- reads of
+    helpers that were never injected -- at submit time instead of at the
+    player's next tick."""
+    result = _engine.run(source, synthetic_ctx(), timeout_ms=_GATE_TIMEOUT_MS,
+                         libraries=libraries, strict_globals=True)
+    if result.error:
+        return [f"smoke-run: {result.error}"]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Version pinning (settled decision #1: determinism)
+# ---------------------------------------------------------------------------
+
+def pin_std_version(session: Session) -> str:
+    """Record the current engine-stdlib fingerprint as a WorldSetting.
+    Called at world bootstrap; content-pack manifests declare the
+    fingerprint they target, and a pack refuses to install on drift."""
+    fingerprint = stdlib_fingerprint()
+    row = session.get(WorldSetting, STD_PIN_KEY)
+    if row is None:
+        session.add(WorldSetting(key=STD_PIN_KEY, value=fingerprint))
+    else:
+        row.value = fingerprint
+    session.flush()
+    return fingerprint
+
+
+def scripting_report(session: Session) -> dict:
+    """Operator diagnostic: the identity of every script tier in this world
+    and whether anything has drifted. `std.matches_pinned` false means the
+    engine's stdlib changed under a running world (an engine upgrade) --
+    replay inputs are suspect until the world re-pins and its pack
+    manifests catch up."""
+    row = session.get(WorldSetting, STD_PIN_KEY)
+    pinned = row.value if row else None
+    fingerprint = stdlib_fingerprint()
+    world_lib = get_world_lib(session)
+    pack_lib = get_pack_lib(session)
+    report = {
+        "std": {
+            "fingerprint": fingerprint,
+            "pinned": pinned,
+            "matches_pinned": pinned in (None, fingerprint),
+        },
+        "world_lib_sha": _lib_sha(world_lib),
+        "pack_lib_sha": _lib_sha(pack_lib),
+        "gate": {
+            "world_lib": validate_library_source(world_lib) if world_lib else [],
+            "pack_lib": validate_library_source(pack_lib) if pack_lib else [],
+        },
+    }
+    return report
+
+
+def _lib_sha(source: str | None) -> str | None:
+    if not source:
+        return None
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+
+
+def _member_sweep_source(source: str) -> str:
+    """Wrap a library source so each member runs once (zero-arg, pcall'd)
+    under strict globals; only `undeclared global` findings are reported --
+    the sweep is fishing for the nil-call class, not for arity noise. Pure
+    Lua over the synthetic ctx makes calling members safe by construction."""
+    return (
+        "local __ns = (function()\n" + source + "\nend)()\n"
+        "local __bad = {}\n"
+        "local function __check(prefix, t)\n"
+        "  for k, v in pairs(t) do\n"
+        "    local name = prefix .. tostring(k)\n"
+        "    if type(v) == 'function' then\n"
+        "      local ok, err = pcall(v)\n"
+        "      if not ok and type(err) == 'string'\n"
+        "         and err:find('undeclared global', 1, true) then\n"
+        "        table.insert(__bad, name .. ': ' .. err)\n"
+        "      end\n"
+        "    elseif type(v) == 'table' then\n"
+        "      __check(name .. '.', v)\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+        "__check('', __ns)\n"
+        "return __bad\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _get_lib(session: Session, key: str) -> str | None:
+    row = session.get(WorldSetting, key)
+    source = row.value if row else None
+    return source if isinstance(source, str) and source.strip() else None
+
+
+def _set_lib(session: Session, key: str, source: str | None) -> str | None:
+    if source is not None and not source.strip():
+        source = None
+    if source is not None:
+        problems = validate_library_source(source)
+        if problems:
+            raise LibraryRejected(problems)
+    row = session.get(WorldSetting, key)
+    if source is None:
+        if row is not None:
+            session.delete(row)
+            session.flush()
+        return None
+    if row is None:
+        session.add(WorldSetting(key=key, value=source))
+    else:
+        row.value = source
+    session.flush()
+    return source
 
 
 def _depth() -> int:

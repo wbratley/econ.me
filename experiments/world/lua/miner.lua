@@ -4,6 +4,9 @@
 -- to the Smith. Food is bought, not grown -- this entity is the demand side
 -- of the food market and the supply side of the ore market. The deposit on
 -- its parcel depletes only through MINE_ORE and regenerates toward capacity.
+-- Vocabulary arrives injected (docs/scripting.md): std.* (engine),
+-- world.* (this world's idioms), pack.* (this content pack's play
+-- opinions). Source here is only the role's own logic.
 
 local fills   = world.settle_last_orders()
 local account = ctx.accounts[1]
@@ -19,7 +22,7 @@ end
 
 -- 2. Sell all ore (labour is free, so the anchor is a nominal price; concede
 --    drops it until the Smith bites).
-sell_surplus("ORE", 0, 2.0, account.id, fills)
+pack.sell_surplus("ORE", 0, 2.0, account.id, fills)
 
 -- 3. Buy food.
-balance = buy_food(account.id, balance, grain_price, 3)
+balance = pack.buy_food(account.id, balance, grain_price, 3)
