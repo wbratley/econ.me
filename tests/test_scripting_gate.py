@@ -125,3 +125,48 @@ class TestVersionPinning:
         report = scripting.scripting_report(session)
         assert report["gate"]["world_lib"] == []
         assert report["world_lib_sha"] is not None
+
+
+class TestCheckPlayerScript:
+    """Phase 3: the submit-time lint for player-authored behaviours --
+    (problems, warnings): problems refuse, warnings ride along."""
+
+    _LIBS = {"world": "local w = {} function w.settle_last_orders() return {} end return w"}
+
+    def test_nil_call_trap_is_a_problem(self):
+        # The first live demo's zombie, verbatim: a helper from a prelude
+        # that no longer exists. Refused at submit, not at the founder's
+        # next tick.
+        problems, warnings = scripting.check_player_script(
+            "local fills = settle_last_orders()", libraries=self._LIBS)
+        assert any("undeclared global 'settle_last_orders'" in p for p in problems)
+        assert warnings == []
+
+    def test_syntax_error_is_a_problem(self):
+        problems, _ = scripting.check_player_script("local t = {")
+        assert problems and problems[0].startswith("syntax:")
+
+    def test_undeclared_write_is_a_problem(self):
+        # One standard with the install gate: global scratch dies with the
+        # per-run runtime; `local` is the fix.
+        problems, _ = scripting.check_player_script("pending = {}", libraries=self._LIBS)
+        assert any("assignment to undeclared global 'pending'" in p for p in problems)
+
+    def test_tier_reassignment_is_a_problem(self):
+        problems, _ = scripting.check_player_script("std = {}", libraries=self._LIBS)
+        assert any("reassigned injected name" in p for p in problems)
+
+    def test_state_dependent_error_is_only_a_warning(self):
+        # A healthy script CAN error on the synthetic ctx (it has empty
+        # state/events): nil arithmetic here, working behaviour at tick.
+        # Accepted -- with the finding surfaced for the player to look at.
+        problems, warnings = scripting.check_player_script(
+            "ctx.state.hunger = ctx.state.hunger + 1", libraries=self._LIBS)
+        assert problems == []
+        assert len(warnings) == 1 and warnings[0].startswith("smoke-run:")
+
+    def test_clean_tiered_script_passes_clean(self):
+        problems, warnings = scripting.check_player_script(
+            "local f = world.settle_last_orders() ctx.state.f = std.amount_str(1)",
+            libraries=self._LIBS)
+        assert (problems, warnings) == ([], [])

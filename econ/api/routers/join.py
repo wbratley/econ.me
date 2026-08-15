@@ -76,7 +76,10 @@ def join_world(
     behaviour = None
     starter = cfg["starter_behaviour"]
     if starter:
-        behaviour = services.set_entity_behaviour(
+        # The starter is operator content, pre-gated at pack build, so the
+        # submit-time lint passes by construction; it still runs (fail
+        # loudly rather than hand every new player a zombie).
+        behaviour, _ = services.set_entity_behaviour(
             session, entity, starter, owner_id=current_user.id,
         )
 

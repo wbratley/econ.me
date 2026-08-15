@@ -766,7 +766,7 @@ def set_entity_behaviour(
     description: str = "",
     timeout_ms: int = 100,
     reference: str = "",
-) -> Script:
+) -> tuple[Script, list[str]]:
     """Ownership-gated autonomy path -- a player rewrites the BEHAVIOUR
     script of an entity they own (docs/game.md §6).
 
@@ -787,6 +787,18 @@ def set_entity_behaviour(
       * Safety -- unchanged. The money-scope invariant still binds, so an
         autonomy script can spend only its own entity's money; capabilities
         (issue/seize/levy) still gate privileged action.
+      * Lint -- submit-time strictness (docs/scripting.md section 4,
+        Phase 3): the source is checked against the SAME injected tiers
+        and the SAME strict standard the install gate applies to operator
+        content, BEFORE anything is retired or stored. A script that
+        cannot run (syntax error, or vocabulary that is not injected --
+        the nil-call trap that zombied the first live demo's founder) is
+        refused with ``ScriptRejected`` and the entity keeps its current
+        behaviour. Warnings (synthetic-ctx errors a healthy script can
+        still produce) ride back to the caller with the new script.
+
+    Returns ``(script, lint_warnings)`` -- the warnings are informational;
+    the script is active either way.
 
     Semantics match ``set_script``: retire-old + activate-new within an
     entity-scoped lineage (``behaviour:{entity.id}``). Because "my entity's
@@ -804,6 +816,14 @@ def set_entity_behaviour(
         )
     if not source.strip():
         raise ValueError("source is required")
+
+    # Submit-time lint, BEFORE any mutation: a refusal must leave the
+    # entity's current behaviour untouched. One vocabulary source with
+    # the tick loop -- the lint cannot drift from what runs.
+    problems, warnings = scripting.check_player_script(
+        source, scripting.get_world_libraries(session))
+    if problems:
+        raise scripting.ScriptRejected(problems)
 
     lineage_id = f"behaviour:{entity.id}"
 
@@ -850,7 +870,7 @@ def set_entity_behaviour(
         "reference": reference,
     }
     scripting.fire_hooks(session, op)
-    return new_script
+    return new_script, warnings
 
 
 #: Mutation types allowed in each proposal tier. The split is ASYMMETRIC

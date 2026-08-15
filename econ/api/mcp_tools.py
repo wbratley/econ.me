@@ -291,10 +291,12 @@ def tool_set_behaviour(session: Session, user: User, args: dict[str, Any]) -> di
     if entity.is_fixed:
         raise ToolError("Entity behaviour is fixed (immutable tier; not player-editable)")
     try:
-        script = services.set_entity_behaviour(
+        script, warnings = services.set_entity_behaviour(
             session, entity, source, owner_id=user.id,
             description=str(args.get("description", "")),
         )
+    except scripting.ScriptRejected as exc:
+        raise ToolError("; ".join(exc.problems))
     except ValueError as exc:
         raise ToolError(str(exc))
     session.commit()
@@ -304,6 +306,7 @@ def tool_set_behaviour(session: Session, user: User, args: dict[str, Any]) -> di
         "entity_id": entity.id,
         "description": script.description,
         "status": "active",
+        "lint_warnings": warnings,
         "note": "Runs as this entity from the next resolved tick",
     }
 
@@ -328,7 +331,11 @@ def tool_join(session: Session, user: User, args: dict[str, Any]) -> dict:
     starter = cfg["starter_behaviour"]
     behaviour = None
     if starter:
-        behaviour = services.set_entity_behaviour(
+        # Lint applies here too: a broken starter must fail join loudly
+        # (operator content is pre-gated at pack build, so this never
+        # fires in practice -- but if it ever does, handing every new
+        # player a zombie is the wrong default).
+        behaviour, _ = services.set_entity_behaviour(
             session, entity, starter, owner_id=user.id,
         )
 

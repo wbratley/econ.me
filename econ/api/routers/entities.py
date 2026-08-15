@@ -3,11 +3,11 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from econengine import services
+from econengine import scripting, services
 from econ.api.deps import get_current_user, get_session
 from econ.api.schemas import (
     AccountCreate, AccountRead, BehaviourScriptWrite, EntityCreate, EntityRead,
-    HoldingRead, NeedStateRead, ScriptRead, TransactionRead,
+    BehaviourScriptRead, HoldingRead, NeedStateRead, ScriptRead, TransactionRead,
 )
 from econengine.models import Account, Entity, Holding, NeedState, Script, ScriptType, User
 
@@ -134,7 +134,7 @@ def get_behaviour(
     return script
 
 
-@router.post("/{entity_id}/behaviour", response_model=ScriptRead, status_code=201)
+@router.post("/{entity_id}/behaviour", response_model=BehaviourScriptRead, status_code=201)
 def set_behaviour(
     entity_id: str,
     body: BehaviourScriptWrite,
@@ -146,6 +146,13 @@ def set_behaviour(
     The authenticated owner replaces their entity's BEHAVIOUR script. This
     is autonomy, not legislation: no vote, no capability, only ownership.
     Server-owned / fixed (immutable-tier) entities are refused.
+
+    Submit-time lint (docs/scripting.md §4, Phase 3): the source is
+    checked against the injected tiers with the same strict standard the
+    install gate applies. A script referencing vocabulary that is not
+    injected (the nil-call trap) is refused with 400 and the entity keeps
+    its current behaviour; synthetic-ctx findings a healthy script can
+    still produce come back as `warnings` on an accepted script.
     """
     entity = _own_entity(entity_id, current_user, session)
     if entity.is_fixed:
@@ -154,14 +161,18 @@ def set_behaviour(
             detail="Entity behaviour is fixed (immutable tier; not player-editable)",
         )
     try:
-        script = services.set_entity_behaviour(
+        script, warnings = services.set_entity_behaviour(
             session, entity, body.source,
             owner_id=current_user.id,
             description=body.description,
             timeout_ms=body.timeout_ms,
         )
+    except scripting.ScriptRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.problems)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     session.commit()
     session.refresh(script)
-    return script
+    read = BehaviourScriptRead.model_validate(script, from_attributes=True)
+    read.warnings = warnings
+    return read

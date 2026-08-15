@@ -55,6 +55,26 @@ class LibraryRejected(ValueError):
         super().__init__("; ".join(problems))
 
 
+class ScriptRejected(ValueError):
+    """A player-authored behaviour failed the submit-time lint
+    (docs/scripting.md section 4, Phase 3): the same strict standard the
+    install gate applies to operator content, wired into the autonomy
+    path (`set_entity_behaviour`). `.problems` lists the findings.
+
+    Refusal class = vocabulary the script cannot have: syntax errors,
+    undeclared-global reads (the nil-call trap: a helper that was never
+    injected, which would silently zombie the entity every tick),
+    undeclared-global writes, and reassigning injected names. Everything
+    else the smoke-run hits (generic errors on the synthetic ctx -- a
+    script may legitimately depend on real ctx.state, which the synthetic
+    ctx does not provide) is a WARNING, not a refusal: the script is
+    accepted and the finding is returned alongside it."""
+
+    def __init__(self, problems: list[str]):
+        self.problems = problems
+        super().__init__("; ".join(problems))
+
+
 _engine = LuaEngine()
 _local = threading.local()
 
@@ -278,6 +298,54 @@ def validate_script_source(source: str,
     if result.error:
         return [f"smoke-run: {result.error}"]
     return []
+
+
+# Submit-time classification (Phase 3). The strict run reports ONE error --
+# the first hit -- so findings are classified one at a time; fixing the
+# reported problem and resubmitting surfaces the next, if any. Iterative
+# linting, like every compiler.
+_FATAL_MARKERS = (
+    "read of undeclared global",
+    "assignment to undeclared global",
+    "reassigned injected name",
+)
+
+
+def check_player_script(source: str,
+                        libraries: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Lint a player-authored behaviour at submit time. Returns
+    ``(problems, warnings)``.
+
+    * problems -- REFUSE. The script cannot behave as written under any
+      ctx: it does not compile, or it references vocabulary that is not
+      injected (the nil-call trap: `setle_last_orders()` where the world
+      provides `world.settle_last_orders`). The entity keeps its current
+      behaviour; the player gets the finding in hand to fix now, not a
+      zombie next tick.
+    * warnings -- ACCEPT. The smoke-run errored on the synthetic ctx for
+      some other reason (nil arithmetic on ctx.state the synthetic ctx
+      does not populate, a timeout). A state-dependent script can be
+      perfectly healthy; the dry-run endpoint is the voluntary deeper
+      check. The finding is surfaced so the player can look.
+
+    Writes are refused alongside reads, matching the install gate's one
+    standard for operator content and player content alike: a global write
+    is at best a scratch variable that dies with the per-run runtime --
+    `local` is the fix, always trivial, strictly safer.
+    """
+    try:
+        from lupa import LuaRuntime
+        LuaRuntime().compile(source)
+    except Exception as exc:
+        return ([f"syntax: {exc}"], [])
+
+    result = _engine.run(source, synthetic_ctx(), timeout_ms=_GATE_TIMEOUT_MS,
+                         libraries=libraries, strict_globals=True)
+    if result.error:
+        if any(marker in result.error for marker in _FATAL_MARKERS):
+            return ([f"lint: {result.error}"], [])
+        return ([], [f"smoke-run: {result.error}"])
+    return ([], [])
 
 
 # ---------------------------------------------------------------------------
