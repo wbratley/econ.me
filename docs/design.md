@@ -68,7 +68,9 @@ platform.
   `ctx.action.*` (queues intents resolved centrally after all scripts run).
   Four script roles: BEHAVIOUR (per-entity, per-tick), POLICY (per-tick,
   sees all events), VALIDATOR (pre-operation veto, fail-closed), HOOK
-  (post-operation, non-recursive).
+  (post-operation, non-recursive). Script *vocabulary* arrives from the
+  tiered library model — engine `std`, per-world `world` lib, content
+  packs — injected as namespaces alongside `ctx` (see `docs/scripting.md`).
 - **Tick engine** — the simulation heartbeat: run policies, run behaviours,
   resolve intents by priority in savepoints, clear markets, record every
   outcome as events that feed the next tick's `ctx.events`.
