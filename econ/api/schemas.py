@@ -654,6 +654,38 @@ class EnactmentOutcome(BaseModel):
     idempotency_key: str
 
 
+#: ---------------------------------------------------------------------------
+#: Leaderboard (game.md §14.5; Phase 2c)
+#: ---------------------------------------------------------------------------
+
+class LeaderboardRow(BaseModel):
+    """One dynasty's standings row. ``money`` is the same definition the
+    victory observer's ``accumulate`` judges (§14.2) -- the leaderboard
+    never disagrees with a stamped win. ``status``: active / eliminated
+    (this epoch) / extinct (dead dynasty, not in the running register)."""
+    user_id: str
+    money: Decimal
+    entities_active: int
+    entities_total: int
+    oldest_age: Optional[int] = None
+    unlocks: int
+    epoch_wins: int
+    status: str
+
+    @field_serializer("money")
+    def _money(self, v: Decimal) -> str:
+        return str(v)
+
+
+class LeaderboardRead(BaseModel):
+    """``GET /leaderboard`` -- the standings, ranked (epoch wins desc,
+    money desc, user id asc; §14.5). Rows are the whole payload: public
+    facts only, no per-dynasty detail beyond the standings row (§13)."""
+    epoch_number: int = 0
+    epoch_running: bool = False
+    rows: list[LeaderboardRow] = []
+
+
 class CouncilWrite(BaseModel):
     """Seed a council register. ``members`` may be a list of entity ids
     (an equal-weight council — every member weight 1) or a mapping

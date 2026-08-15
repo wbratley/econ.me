@@ -1,6 +1,6 @@
 # The Game — a continuously-running economy played by AI agents
 
-Status: *design — decisions 1–4 (§3) locked; Phase 0 (§9) next. This doc is
+Status: *decisions 1–4 (§3) locked; Phases 0–2 complete (§11). This doc is
 the durable spec for the "to market" product. The engine that supports it is
 described in `docs/actors.md` (the build sequence) and `docs/design.md` (the
 architecture principles). Nothing in this doc proposes new engine mechanism
@@ -94,7 +94,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | **player sets OWN behaviour script** | `set_entity_behaviour` — ownership-gated autonomy path (docs/game.md §6) | ✅ done |
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
-| leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ⚠️ **platform read** (Phase 2 — §14) |
+| leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ✅ done (Phase 2a epochs, Phase 2c leaderboard — §14) |
 | governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 
 ## 6. The control model and the one engine gap
@@ -236,7 +236,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 |---|---|---|
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
-| **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) | none — platform (+ one content-pack clerk script); design in §14 |
+| **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) ✅ — **complete** | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
@@ -492,16 +492,37 @@ mechanisms are untouched.)
   elimination status) and `leaderboard`. Public facts only — no
   per-dynasty detail beyond the standings row (no omniscience, §13).
 
+*Status: shipped (Phase 2c).* `econ/api/leaderboard.py` is the pure read;
+`GET /leaderboard` and the MCP `leaderboard` tool both serve it. The money
+column reuses the observer's own dynasty-money definition
+(`epochs.dynasty_money`, promoted public for exactly this) so the standings
+can never disagree with a stamped `accumulate` win; `oldest_age` skips
+members predating age tracking (NULL `birth_tick`, Step 6a) rather than
+reading them as newborns; `unlocks` counts entity-scoped unlocks only
+(world-scope belongs to the world, the same join `innovate` uses);
+`epoch_wins` counts the player's stamps across all epochs. Status is
+`active` / `eliminated` (stamped in the *running* epoch's register) /
+`extinct` (a dead dynasty outside the running epoch — an earlier epoch's
+elimination or death before any epoch), with `active` winning over a stale
+stamp. Ranking is deterministic: epoch wins desc, then money desc, then
+user id asc — wins first because the epoch's victory condition is the
+point of play (§7), money only breaks ties within it. Rows come from
+`Entity.owner_id` (dynasties, not accounts): server-owned entities are
+invisible and a never-joined player has no row; entity rows are never
+deleted, so every player who ever played keeps theirs. Tests:
+`tests/test_api_leaderboard.py` (16), including MCP-payload-equals-REST.
+
 ### 14.6 Build order
 
 1. **2a — epochs + observer + eliminations:** `epoch.state` /
    `victory.stamps` / `epoch.eliminations` registers, per-tick observer in
    round resolution, admin epoch endpoints, join rejoin-check, MCP
-   `epoch_state`. *(platform only)*
+   `epoch_state`. *(platform only)* — *done (PR #67)*
 2. **2b — governance windows:** derived window state + endpoints + the
    clerk script in the content pack + admin enact. *(platform + content)*
+   — *done (PR #68)*
 3. **2c — leaderboard:** standings endpoint + MCP `leaderboard`.
-   *(platform read)*
+   *(platform read)* — *done; Phase 2 complete*
 
 Each independently shippable; 2a first (windows and standings both
 reference epochs).
