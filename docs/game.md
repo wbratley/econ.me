@@ -366,6 +366,14 @@ path to "something tangible" and the substrate Phase 1 needs.
   World-visible facts (round clock, market prices) are public to all
   authenticated players, as they are in-world.
 
+**A real agent client exists** (`experiments/agent/`): an LLM-driven loop
+that plays exactly this surface — observe (the parity set above), think
+(system prompt carries the tier vocabulary from `get_script_libraries`),
+submit (`set_behaviour`), with Phase 3's lint refusals and warnings fed
+back into the next prompt. The first live run of it proved the arc end
+to end: a hallucinated helper refused with the finding in hand, fixed in
+one round-trip, zero script errors while the rewrite played.
+
 ---
 
 ## 14. Phase 2 detail — epochs, victory, windows, leaderboard
