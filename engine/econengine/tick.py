@@ -74,7 +74,9 @@ from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
     ProcessStatus, Script, ScriptType, Tick, WorldSetting,
 )
-from .scripting import build_queries, resolve_intent, set_executing_tick
+from .scripting import (
+    build_queries, get_world_libraries, resolve_intent, set_executing_tick,
+)
 
 # Votable data (world_settings): max total ms of Lua execution an entity's
 # tick-scripts (POLICY + BEHAVIOUR) may consume in a single tick. Missing/None
@@ -123,6 +125,10 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     budget_ms = get_compute_budget_ms(session)
     used_ms: dict[str, float] = {}
 
+    # Library tiers (docs/scripting.md): `std` always; the per-world `world`
+    # lib when the world set one. Read once per tick; read-only for scripts.
+    libraries = get_world_libraries(session)
+
     # POLICY scripts run first and see every event from the previous tick;
     # BEHAVIOUR scripts see only their own entity's events.
     for script_type in (ScriptType.POLICY, ScriptType.BEHAVIOUR):
@@ -142,7 +148,8 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
                 else [e for e in prev_events if e.get("entity_id") == entity.id]
             )
             ctx = _build_script_ctx(session, entity, script, entity_events, number)
-            result = lua_engine.run(script.source, ctx, timeout_ms=script.timeout_ms)
+            result = lua_engine.run(script.source, ctx, timeout_ms=script.timeout_ms,
+                                    libraries=libraries)
             used_ms[entity.id] = used_ms.get(entity.id, 0.0) + result.elapsed_ms
             if result.error:
                 events.append({

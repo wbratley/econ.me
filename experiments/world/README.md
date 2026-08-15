@@ -47,6 +47,15 @@ lone entity endowed with a farm and this script survives indefinitely
 (`test_starter_template_survives`). A player's edge comes from *rewriting*
 it.
 
+Scripts are written against the tiered library model (`docs/scripting.md`):
+`std.*` is the engine stdlib and `world.*` this world's library
+(`lua/world_lib.lua`, seeded into the `scripting.world_lib` WorldSetting at
+bootstrap) — both injected read-only at run time, so a script's own source
+carries only its logic plus the pack's play opinions (`lua/pack.lua`,
+prepended by `scenario._behaviour` and visible in `get_behaviour`). A
+player rewriting from scratch keeps, drops, or replaces those opinions;
+the vocabulary beneath never goes missing.
+
 ## The content pack (declared)
 
 The full recipe graph lives in `scenario.py::create_content`. Three recipes

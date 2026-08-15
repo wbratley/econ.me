@@ -34,7 +34,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from econengine import goods, markets, needs, parcels, production, services, tech
+from econengine import goods, markets, needs, parcels, production, scripting, services, tech
 from econengine.models import Entity, EntityType, Script, ScriptType
 from econengine.tech import TechScope
 
@@ -73,9 +73,16 @@ def _read_lua(name: str) -> str:
 
 
 def _behaviour(name: str) -> str:
-    """Behaviour source is prelude + role script (the sandbox has no
-    `require`, so shared helpers are prepended)."""
-    return _read_lua("prelude.lua") + "\n" + _read_lua(name)
+    """Behaviour source is the content pack's helpers + the role script.
+
+    The tiers under every script (docs/scripting.md): engine vocabulary
+    arrives as the injected `std` namespace, this world's idioms as the
+    injected `world` namespace (world_lib.lua, seeded into the
+    `scripting.world_lib` WorldSetting by create_content). Only the pack's
+    own play opinions -- pack.lua -- must ride in the script's source,
+    which is why they stay visible in get_behaviour: they are the strategy
+    a player inherits and rewrites."""
+    return _read_lua("pack.lua") + "\n" + _read_lua(name)
 
 
 @dataclass
@@ -104,6 +111,10 @@ def create_content(session: Session) -> None:
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
+    # The world's script vocabulary tier: engine idioms every script in this
+    # world shares, injected as `world` (docs/scripting.md section 3).
+    # Operator-authored at world creation -- settled decision #2.
+    scripting.set_world_lib(session, _read_lua("world_lib.lua"))
 
 
 def build_economy(session: Session) -> World:

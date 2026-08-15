@@ -18,6 +18,8 @@ Scoping: a script with entity_id NULL applies to every operation; with
 entity_id set it only fires for operations acted by that entity.
 """
 
+
+
 import json
 import threading
 from contextlib import contextmanager
@@ -38,6 +40,57 @@ class OperationVetoedError(ValueError):
 
 _engine = LuaEngine()
 _local = threading.local()
+
+
+# ---------------------------------------------------------------------------
+# The per-world script library (docs/scripting.md section 3)
+# ---------------------------------------------------------------------------
+
+#: WorldSetting key holding the world lib: a Lua chunk that RETURNS its
+#: namespace table, injected as `world` into every script run in this world
+#: (BEHAVIOUR, POLICY, VALIDATOR, HOOK alike) alongside the engine `std`.
+#: Engine idioms shared by the world's scripts -- no play opinions; those
+#: live in content packs. Operator-authored at world bootstrap (settled
+#: decision #2: whether world-lib changes can become votable is open, and
+#: nothing here forecloses it). Determinism (settled decision #1): this is
+#: replay INPUT -- a snapshot/fork carries it like any other row, and `std`
+#: is pinned by the engine version.
+WORLD_LIB_KEY = "scripting.world_lib"
+
+
+def get_world_lib(session: Session) -> str | None:
+    """The world lib source, or None if unset/blank."""
+    row = session.get(WorldSetting, WORLD_LIB_KEY)
+    source = row.value if row else None
+    return source if isinstance(source, str) and source.strip() else None
+
+
+def set_world_lib(session: Session, source: str | None) -> str | None:
+    """Set (non-blank str) or clear (None/blank) the world lib."""
+    if source is not None and not source.strip():
+        source = None
+    row = session.get(WorldSetting, WORLD_LIB_KEY)
+    if source is None:
+        if row is not None:
+            session.delete(row)
+            session.flush()
+        return None
+    if row is None:
+        session.add(WorldSetting(key=WORLD_LIB_KEY, value=source))
+    else:
+        row.value = source
+    session.flush()
+    return source
+
+
+def get_world_libraries(session: Session) -> dict[str, str] | None:
+    """The `libraries` dict every LuaEngine.run() call in this world passes.
+
+    One accessor so the tick path, the VALIDATOR/HOOK dispatch below, and
+    the platform's dry-run endpoint all inject exactly the same tiers --
+    the one-choke-point rule (docs/scripting.md section 4)."""
+    world_lib = get_world_lib(session)
+    return {"world": world_lib} if world_lib else None
 
 
 def _depth() -> int:
@@ -62,7 +115,9 @@ def fire_validators(session: Session, op: dict) -> None:
     if _depth():
         return
     for script in _applicable_scripts(session, ScriptType.VALIDATOR, op):
-        result = _engine.run(script.source, _op_ctx(session, script, op), timeout_ms=script.timeout_ms)
+        result = _engine.run(script.source, _op_ctx(session, script, op),
+                             timeout_ms=script.timeout_ms,
+                             libraries=get_world_libraries(session))
         if result.error:
             raise OperationVetoedError(f"validator {script.name!r} failed: {result.error}")
         verdict = result.return_value
@@ -78,7 +133,9 @@ def fire_hooks(session: Session, op: dict) -> None:
     if _depth():
         return
     for script in _applicable_scripts(session, ScriptType.HOOK, op):
-        result = _engine.run(script.source, _op_ctx(session, script, op), timeout_ms=script.timeout_ms)
+        result = _engine.run(script.source, _op_ctx(session, script, op),
+                             timeout_ms=script.timeout_ms,
+                             libraries=get_world_libraries(session))
         if result.error:
             continue  # a broken hook must not fail the operation
         script.state = dict(result.state_updates)

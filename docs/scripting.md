@@ -1,10 +1,14 @@
 # Scripting libraries — the three tiers under every script
 
 Status: *design — settled 2026-08-15 after the first live-world demo
-surfaced the seam below; Phase 1 is next (§6). This note is the spec for
-the tiered library model. It spans engine (the injection mechanism),
-content (world libs and packs), and platform (join composition) — exactly
-wherever each owns its seam. Nothing here changes the mechanism/data/
+surfaced the seam below. **Phase 1 is shipped** (§6): the injection
+mechanism, the engine `std`, the `world` namespace + `scripting.world_lib`
+wiring (tick, VALIDATOR/HOOK dispatch, and the dry-run endpoint all inject
+through one accessor), the admin `GET/PUT/DELETE /admin/world-lib` surface,
+and the demo world migrated as the reference implementation. This note is
+the spec for the tiered library model. It spans engine (the injection
+mechanism), content (world libs and packs), and platform (join composition)
+— wherever each owns its seam. Nothing here changes the mechanism/data/
 policy doctrine (`design.md` §2); it applies it to script vocabulary.*
 
 ## 1. The seam this closes
@@ -159,11 +163,19 @@ does not have, whatever it calls.
 
 ## 6. Phasing
 
-1. **Phase 1 — the mechanism + the stdlib + the join fix**: `libraries`
-   injection in `lua_engine`; engine stdlib (`std`); world-lib
-   WorldSetting + `run_tick` wiring; join stores/reads only the editable
-   part (kills §1's gap; improves `get_behaviour`). Ship the demo-world
-   bootstrap rewritten against it.
+1. **Phase 1 — the mechanism + the stdlib + the join fix — ✅ shipped.**
+   `libraries` injection in `lua_engine` (namespaces frozen read-only
+   pre-sandbox); engine stdlib (`std`); `scripting.world_lib` WorldSetting
+   + wiring through one accessor (`get_world_libraries`) used by `run_tick`,
+   the VALIDATOR/HOOK dispatch, and the `/admin/scripts/{id}/validate`
+   dry-run; admin `GET/PUT/DELETE /admin/world-lib`; `experiments/world`
+   migrated as the reference implementation (survival tests unchanged and
+   green). Join needs no code change: a starter stored WITHOUT library
+   text now works, because vocabulary arrives from the tiers at run time
+   — the §1 gap is closed. *As-built deviation:* the pack stratum
+   (`concede`/`sell_surplus`/`buy_food`) still rides in script source,
+   concatenated by the scenario — deliberately, since the pack namespace
+   is Phase 2's; the helpers being visible in `get_behaviour` is the point.
 2. **Phase 2 — the world tier + the gate**: `world` namespace populated
    from `scripting.world_lib`; install-time validation (syntax,
    smoke-run, lint) for world lib and pack scripts; pack manifest
