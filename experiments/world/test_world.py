@@ -27,7 +27,8 @@ from econengine.tech import TechScope
 from econengine.tick import run_tick
 
 from experiments.world.scenario import (
-    MONEY_SUPPLY, _behaviour, build_economy, create_content,
+    MONEY_SUPPLY, PROVING_UPKEEP_BUFFER, UPKEEP_BUFFER, UPKEEP_RATE,
+    _behaviour, build_economy, create_content,
 )
 
 
@@ -76,16 +77,18 @@ def _run(session, ticks):
 
 
 def _worker(session, name, usd=Decimal("200"), grain=Decimal("50"),
-             entity_type=EntityType.INDIVIDUAL):
+             iron=PROVING_UPKEEP_BUFFER, entity_type=EntityType.INDIVIDUAL):
     """A solvent entity with no script -- a clean test subject for focused
-    recipe tests. INDIVIDUALs auto-issue LABOR and carry a GRAIN buffer so
-    FOOD stays met; use a BUSINESS for tests whose OUTPUT is itself a FOOD
+    recipe tests. INDIVIDUALs auto-issue LABOR and carry GRAIN and IRON
+    buffers so FOOD and UPKEEP stay met (pass iron=0 when the test measures
+    IRON itself); use a BUSINESS for tests whose OUTPUT is itself a FOOD
     satisfier (FLOUR/BREAD/GRAIN), so the consumption pass does not eat the
     thing being measured."""
     entity = services.create_entity(session, name, entity_type)
     services.create_account(session, entity, "USD", initial_balance=usd)
     if entity_type == EntityType.INDIVIDUAL:
         markets.adjust_holding(session, entity, "GRAIN", grain)
+        markets.adjust_holding(session, entity, "IRON", iron)
     return entity
 
 
@@ -126,6 +129,60 @@ def test_food_need_fully_met(session):
     # (HUNGER is granted only on shortfall, scaled by it).
     for entity in (world.farmer, world.miner, world.smith):
         assert _hold(session, entity.id, "HUNGER") == Decimal("0")
+
+
+def test_proving_run_inert_to_upkeep(session):
+    """The proving cast's 30-IRON buffer covers all 40 ticks: DISREPAIR
+    never accrues and every UPKEEP tick is met, so the sink changes
+    nothing about the proving run's balanced-by-construction story."""
+    world = build_economy(session)
+    session.commit()
+    _run(session, 40)
+    for entity in (world.farmer, world.miner, world.smith):
+        assert _hold(session, entity.id, "DISREPAIR") == Decimal("0")
+    unmet = [e for e in _all_events(session) if e.get("type") == "need_unmet"]
+    assert unmet == []
+
+
+# ===========================================================================
+# THE DEMAND SINK -- UPKEEP burns IRON so the ORE->IRON chain has a customer
+# ===========================================================================
+
+def test_upkeep_consumes_iron_per_tick(session):
+    """UPKEEP draws exactly UPKEEP_RATE IRON per tick from every INDIVIDUAL,
+    and a fully-covered entity accrues no DISREPAIR."""
+    create_content(session)
+    worker = _worker(session, "Smith", grain=Decimal("50"))
+    start = _hold(session, worker.id, "IRON")
+    _run(session, 2)
+    assert start - _hold(session, worker.id, "IRON") == 2 * UPKEEP_RATE
+    assert _hold(session, worker.id, "DISREPAIR") == Decimal("0")
+
+
+def test_upkeep_shortfall_credits_disrepair(session):
+    """No IRON at all: each tick grants 1 DISREPAIR (the HUNGER shape),
+    scaled by the shortfall -- half-covered grants half. Decay lands the
+    same tick (consumption, then decay), so a granted 1 reads 0.95."""
+    create_content(session)
+    broke = _worker(session, "Luddite", grain=Decimal("50"), iron=Decimal("0"))
+    _run(session, 1)
+    assert _hold(session, broke.id, "DISREPAIR") == Decimal("0.95")
+    events = _tick_events(session, 1)
+    assert {e["type"] for e in events if e.get("need")} == {
+        "need_satisfied", "need_unmet"}   # FOOD met, UPKEEP not
+    half = _worker(session, "Halfstock", grain=Decimal("50"),
+                   iron=UPKEEP_RATE / 2)
+    _run(session, 1)
+    assert _hold(session, half.id, "DISREPAIR") == Decimal("0.475")
+
+
+def test_house_seats_carry_the_upkeep_buffer(session):
+    """make_house endows each symmetric seat with UPKEEP_BUFFER IRON --
+    one round of grace, the iron analog of FOOD_BUFFER."""
+    create_content(session)
+    from experiments.world.scenario import make_house
+    house = make_house(session, "House Test")
+    assert _hold(session, house.id, "IRON") == UPKEEP_BUFFER
 
 
 def test_industrial_chain_runs(session):
@@ -294,9 +351,10 @@ def test_mine_coal_depletes_deposit(session):
 
 
 def test_make_tools_capital_good(session):
-    """MAKE_TOOLS consumes IRON+STEEL and produces TOOLS (a capital good)."""
+    """MAKE_TOOLS consumes IRON+STEEL and produces TOOLS (a capital good).
+    iron=0: UPKEEP would otherwise nibble the buffer and blur the assert."""
     create_content(session)
-    worker = _worker(session, "Toolmaker")
+    worker = _worker(session, "Toolmaker", iron=Decimal("0"))
     _grant(session, worker, "SMELTING")
     _grant(session, worker, "TOOLMAKING")
     markets.adjust_holding(session, worker, "IRON", Decimal("1"))
