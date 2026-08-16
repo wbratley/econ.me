@@ -96,6 +96,9 @@ def test_start_unknown_or_inactive_recipe(world):
     session, baker, recipe = world
     with pytest.raises(ValueError, match="no recipe"):
         start_process(session, baker, "NOPE")
+    with pytest.raises(ValueError, match=r"available:.*BAKE_BREAD") as err:
+        start_process(session, baker, "FARMING")   # unlock name, not code
+    assert "no recipe 'FARMING'" in str(err.value)
     recipe.is_active = False
     with pytest.raises(ValueError, match="inactive"):
         start_process(session, baker, "BAKE_BREAD")
