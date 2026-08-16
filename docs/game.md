@@ -216,9 +216,99 @@ epoch):
   than government cycles" as two nested periods.
 - **Scheduler is platform.** A long-running process owns the clock, calls
   `run_tick()` K times per round, and opens/closes windows. The engine is
-  untouched.
+  untouched. For small worlds the clock can instead be driven by player
+  consent — the readiness gate (§9.1) — with no scheduler process at all;
+  the operator's advance remains the override either way.
 - **Pace** is a platform config (tick period, K, window length) — operator's
   knob, not a WorldSetting.
+
+### 9.1 The readiness gate — rounds close by consent
+
+*Design note (pre-implementation). Status: specced.*
+
+The v0 answer to "who ticks the world": **each round stays open until
+every eligible player signals readiness** (or the operator overrides).
+No scheduler infrastructure; a world of N agents and humans paces
+itself. The operator's role shifts from clockmaker to referee — the
+admin advance is the stall-breaker, which is the proper operator role:
+exceptions, not metronome.
+
+**Why it fits the batched model.** A round here is not "the bell rang"
+but "everyone had their turn": all player agency is between-rounds
+behaviour rewrites, so readiness — done-ness — is the semantically exact
+close signal. Pacing then matches cognition, not wall-clock: fast agent
+worlds run fast; a human thinking holds the world only while they are
+actually thinking.
+
+**Why last-mover advantage is a non-issue here.** The usual objection to
+ready-checks is the trigger-holder acting last on fresh information. But
+the submit window is *information-static*: no ticks run mid-window, no
+orders execute (orders are tick-time intents), prices and books are
+frozen at the last resolved tick. The last player to ready learns nothing
+except *who else has committed* — weak signal in a static window — and
+withholding is symmetric self-harm (it delays their own production as
+much as anyone's). The equilibrium is "ready when done," which is the
+desired behavior. A real-time game could not say this; a batched one
+can.
+
+**Mechanism (platform only; engine and `tick.py` untouched).**
+
+- **Storage:** one `WorldSetting` register, `round.readiness` =
+  `{"round": N, "ready": [user ids]}` — same pattern as `round.state`
+  and the council registers. Reset to the next round on every advance.
+  No new tables, no migrations.
+- **`POST /rounds/ready`** (authenticated player): record the caller as
+  ready **for the round open at POST time** — the server derives the
+  round number; clients never supply it, which makes the advance race
+  harmless (a straggler POST just lands in the new round). Idempotent.
+  If this ready completes the set, **the round resolves in the same
+  request** and the response carries the round summary. `DELETE
+  /rounds/ready` un-readies — allowed until the advance fires (see
+  rules).
+- **Gate:** when the mode is `readiness`, the set of ready users ⊇ the
+  eligible set closes the round. The operator path `POST
+  /admin/rounds/advance` is unchanged and always works — the override,
+  not the clock.
+- **MCP:** one tool, `set_ready(ready=true|false)`; `round_state`
+  (already public) carries the gate block. This completes the agent
+  story: `AgentLoop.cycle()` ends with `set_ready`, and a multi-agent
+  world self-paces with no admin in the loop (the last agent's ready
+  fires the round).
+- **Status:** `current_round_state` gains `"readiness": {"mode",
+"ready": k, "eligible": n, "ready_users": [...]}` — public facts, like
+  prices and standings; `status` stays `"submit"`.
+
+**Rules.**
+
+- **Eligibility:** a user is eligible iff they own ≥ 1 ACTIVE entity.
+  This excludes eliminated dynasties (no ACTIVE entities — they cannot
+  block a world they no longer play) and pure spectators (no agency in
+  the round) by the same test. The operator is eligible only if they
+  own a playing entity; otherwise they are the referee, not a player.
+- **Empty eligibility set:** the gate does not block (genesis world,
+  operator-only bootstrap) — admin advance is the only clock.
+- **Un-ready allowed, cheaply**, until the advance actually fires: a
+  premature ready means a stale behaviour for a whole round, which is
+  real in-game pain; do not lock people into typos. Once the round
+  resolves, readiness is historical.
+- **Mid-window joins:** the new player becomes eligible the moment they
+  own an ACTIVE entity; they ready like anyone else. Joins never
+  un-ready anyone.
+- **Concurrency:** the final-ready advance rides the register row —
+  serialize on it (trivial under SQLite's single writer; the
+  `round.state` row lock under Postgres). Two simultaneous final-readies
+  must produce exactly one advance.
+
+**Policy vs. mechanism.** The readiness machinery (register, endpoints,
+gate check) is mechanism and ships once. *Who must consent* is world
+policy: the gate mode lives as a WorldSetting (`"readiness"` |
+`"operator"`), set by the operator at creation, default `"operator"`
+(existing worlds and demo flows unchanged). Amendment of the gate by
+legislation — a world voting its own clock policy — is exactly the kind
+of question the mid-epoch amendment analysis (scripting.md §8) was
+scoped for; nothing built here forecloses it. A wall-clock backstop
+(`ECON_SUBMIT_WINDOW_SECONDS`, auto-ready on expiry) is deliberately
+deferred until a public world shows an AFK-human problem worth solving.
 
 ## 10. Logistics — deliberately deferred
 
@@ -539,6 +629,9 @@ deleted, so every player who ever played keeps theirs. Tests:
    — *done (PR #68)*
 3. **2c — leaderboard:** standings endpoint + MCP `leaderboard`.
    *(platform read)* — *done; Phase 2 complete*
+4. **2d — readiness gate (§9.1):** `round.readiness` register +
+   `POST`/`DELETE /rounds/ready` + gate on final ready + MCP `set_ready`.
+   *(platform only, specced)*
 
 Each independently shippable; 2a first (windows and standings both
 reference epochs).
