@@ -60,6 +60,31 @@ def admin_advancer(base: str, admin_token: str):
     return advance
 
 
+def run_cycles(loop: AgentLoop, cycles: int, ready: bool = False,
+                between=None) -> tuple[list[dict], list[dict]]:
+    """Cycle, then the clock step -- one or the other, per cycle.
+    Returns ``(journal_entries, ready_log)``; ``ready_log`` is non-empty
+    only for ``ready=True`` (one ``set_ready`` result per cycle).
+
+      * ``ready`` (the players' clock, §9.1): ``set_ready`` after EVERY
+        cycle, the last included — closing the round is the point, and
+        the next cycle observes a world that moved. Still pure MCP: no
+        admin client involved.
+      * ``between`` (the operator clock): between cycles only, never
+        after the last — the operator resolves what was submitted, not
+        a player vote.
+    """
+    entries: list[dict] = []
+    ready_log: list[dict] = []
+    for i in range(cycles):
+        entries.append(loop.cycle())
+        if ready:
+            ready_log.append(loop.set_ready())
+        elif between and i < cycles - 1:
+            between(i)
+    return entries, ready_log
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", required=True, help="server base URL")
@@ -100,14 +125,16 @@ def main(argv=None) -> int:
     eid = loop.ensure_entity()
     print(f"agent {model.name} playing entity {eid}: {args.cycles} cycle(s)")
 
-    for entry in loop.run(args.cycles, between=between):
+    entries, ready_log = run_cycles(loop, args.cycles,
+                                     ready=args.ready, between=between)
+    for i, entry in enumerate(entries):
         mark = "accepted" if entry["accepted"] else "KEPT OLD (refused)"
         print(f"  cycle {entry['round']}: {mark} after {entry['attempts']} attempt(s)"
               + (f" — {entry['refusal'][:100]}" if entry["refusal"] else ""))
         if entry["warnings"]:
             print(f"    warnings: {entry['warnings']}")
-        if args.ready:
-            out = loop.set_ready()
+        if i < len(ready_log):
+            out = ready_log[i]
             if out.get("resolved"):
                 print(f"    readiness closed round "
                       f"{out['resolved']['round_number']} "

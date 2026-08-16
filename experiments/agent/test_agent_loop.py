@@ -29,6 +29,7 @@ from experiments.agent.llm import (
     model_from_env, strip_fences,
 )
 from experiments.agent.loop import AgentLoop, McpClient, McpError
+from experiments.agent.run import run_cycles
 
 TRAP = "local fills = settle_last_orders()"          # the nil-call zombie
 CLEAN = "ctx.state.plan = std.amount_str(1)"         # legal, tiered, clean
@@ -248,3 +249,44 @@ def test_set_ready_closes_the_round_in_readiness_mode(client, monkeypatch):
     assert out["resolved"]["ticks"] == [1, 2]
     assert out["readiness"]["round"] == 2      # register reset for round 2
     assert lp.observe()["round"]["round_number"] == 1
+
+
+def test_run_cycles_ready_moves_the_world_between_cycles(client, monkeypatch):
+    """--ready semantics: the ready fires after EACH cycle (the last
+    included), so cycle 2 observes a world that moved. Regression for the
+    first live run, where all cycles observed one frozen round and both
+    readies fired at the end."""
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")
+    with Session(app.state._test_engine) as session:
+        session.add(WorldSetting(key="round.gate", value={"mode": "readiness"}))
+        session.commit()
+    lp, _ = loop(client, [CLEAN, CLEAN])
+    lp.ensure_entity()                        # sole eligible player
+    entries, ready_log = run_cycles(lp, 2, ready=True)
+    # each ready closed its round: two resolutions, world moved each time
+    assert [r["resolved"]["round_number"] for r in ready_log] == [1, 2]
+    # and the cycles saw it: cycle 2 observed the round AFTER round 1
+    assert entries[0]["round"] == 1
+    assert entries[1]["round"] == 2
+
+
+def test_run_cycles_operator_mode_ready_records_without_firing(client):
+    """Default gate: run_cycles still works -- readies record, nothing
+    fires, and every cycle stays inside the open round."""
+    lp, _ = loop(client, [CLEAN, CLEAN])
+    lp.ensure_entity()
+    entries, ready_log = run_cycles(lp, 2, ready=True)
+    assert all(r["resolved"] is None for r in ready_log)
+    assert [e["round"] for e in entries] == [1, 1]   # world never moved
+
+
+def test_run_cycles_operator_between_never_after_last(client):
+    """The operator clock through run_cycles: between cycles only, never
+    after the last -- run.py's --advance path rides this."""
+    lp, _ = loop(client, [CLEAN, CLEAN, CLEAN])
+    lp.ensure_entity()
+    seen = []
+    entries, ready_log = run_cycles(lp, 3, between=lambda i: seen.append(i))
+    assert seen == [0, 1]
+    assert ready_log == []
+    assert all(e["accepted"] for e in entries)
