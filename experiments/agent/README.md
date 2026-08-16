@@ -81,3 +81,51 @@ Model selection: `ECON_AGENT_SCRIPTED_FILE` > `ANTHROPIC_API_KEY` >
 - Determinism of the *harness*: a scripted run is byte-stable (same
   observations → same prompts → same journal); a real-model run journals
   source shas so successive cycles are diffable.
+
+## The dynasty run: 3 models, N rounds, one dashboard (NIM)
+
+`multi.py` + `nim_run.py` + `dashboard.py` lift the loop to a
+self-pacing multi-agent world: three dynasties over the content pack's
+substrate (the farmer/miner/smith roles, owned), readiness gate ON —
+every round each dynasty cycles then readies, the final ready resolves
+the round, a snapshot lands on disk. No admin paces anything.
+
+```bash
+# 0) the key (never in the repo): one of
+export NVIDIA_API_KEY=nvapi-...            # or NIM_API_KEY, or
+echo nvapi-... > ~/.nim_api_key            # first line of this file
+
+# 1) pick three usable models from your catalog:
+.venv/bin/python -m experiments.agent.nim_pick --list
+.venv/bin/python -m experiments.agent.nim_pick --probe \
+    meta/llama-3.3-70b-instruct qwen/qwen2.5-7b-instruct \
+    mistralai/mistral-small-24b-instruct-2501
+
+# 2) the run (spawns its own server on a scratch port, tears it down):
+.venv/bin/python -m experiments.agent.nim_run \
+    --models <slug-1> <slug-2> <slug-3> \
+    --names "House Llama" "House Qwen" "House Mistral" \
+    --rounds 10 --out /tmp/nim-run
+
+# 3) open the artifact:
+xdg-open /tmp/nim-run/dashboard.html
+```
+
+The dashboard is one self-contained HTML file (inline SVG, no CDN):
+final standings (money / assets-at-last-price / wealth / rewrites /
+kept-old rounds), wealth-money-prices-FOOD charts over rounds, a
+round-by-round activity table (each house's attempts and refusals, the
+round's event mix), and per-house strategy panels — the full current
+behaviour source with the sha trail of every rewrite, so "what is House
+Qwen doing?" is a scroll. Everything in it is the §13 parity view: the
+data the dynasties themselves can see.
+
+Offline dress rehearsal (no key, canned responses, same pipe):
+`--scripted a.jsonl b.jsonl c.jsonl --rounds 3`. A dynasty whose model
+hard-fails keeps its behaviour, journals the failure, and STILL readies
+— one dead model never stops the world.
+
+Cost shape: one model call per dynasty per round (plus one per lint
+refusal, bounded by `--max-attempts`); 10 rounds ≈ 30-45 calls.
+`ECON_AGENT_NIM_BASE` points `NimModel` at a self-hosted NIM container
+(same OpenAI-compatible protocol).
