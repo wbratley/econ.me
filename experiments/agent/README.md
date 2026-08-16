@@ -130,7 +130,15 @@ kept-old rounds), wealth-money-prices-FOOD charts over rounds, a
 round-by-round activity table (each house's attempts and refusals, the
 round's event mix), and per-house strategy panels — the full current
 behaviour source with the sha trail of every rewrite, so "what is House
-Qwen doing?" is a scroll. Everything in it is the §13 parity view: the
+Qwen doing?" is a scroll. Each panel also carries the house's
+**strategy diary**: one short extra model call per house per round
+(default ON for NIM runs, `--no-diary` to skip), made AFTER the
+decision stands and carrying the complete round record — the rules
+played under, every prompt with its findings, the model's own replies
+verbatim (the code itself), and every platform response in between —
+so the entry is grounded in what the model actually did, not a
+hallucination of it; consistent across reasoning and non-reasoning
+models alike. Everything in it is the §13 parity view: the
 data the dynasties themselves can see.
 
 Offline dress rehearsal (no key, canned responses, same pipe):

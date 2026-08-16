@@ -108,6 +108,50 @@ def test_first_cycle_joins_and_accepts_clean_rewrite(client):
     assert got["source"] == CLEAN
 
 
+def test_diary_captures_the_minds_reasoning(client):
+    # on: one extra call after the decision lands in the entry — and it
+    # carries the full round record, so the diary is grounded in what
+    # the model actually wrote, not a hallucination of it
+    lp, model = loop(client, [CLEAN, "Farming held. Grain is abundant and "
+                                 "cheap, so I will keep producing and try "
+                                 "selling the surplus."], diary=True)
+    entry = lp.cycle()
+    assert entry["accepted"]
+    assert "Grain is abundant" in entry["thoughts"]
+    diary_user = model.calls[-1]["user"]      # the diary call's prompt
+    assert "FINAL OUTCOME: action taken: rewrite" in diary_user
+    assert CLEAN in diary_user                 # its own code, verbatim
+    assert "RULES YOU PLAYED UNDER" in diary_user   # the system, too
+    assert "OBSERVATION (exactly what your entity can see)" in diary_user
+    assert entry["prompt_bytes"] == len(model.calls[0]["user"])  # decision,
+    #                                                               not diary
+
+
+def test_diary_record_shows_the_full_retry_chain(client):
+    # a round with a lint refusal: the diary record must carry BOTH
+    # attempts — the refused reply, the platform's rejection, the
+    # corrected reply — or the diary would narrate a clean round that
+    # never happened
+    lp, model = loop(client, [TRAP, CLEAN,
+                              "I tried to settle orders at the last tick and "
+                              "lint rejected it; the fallback holds."],
+                     diary=True)
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    diary_user = model.calls[-1]["user"]
+    assert TRAP in diary_user                    # the failed attempt, kept
+    assert "submission refused by lint" in diary_user
+    assert diary_user.count("PROMPT TO YOU") == 2
+    assert CLEAN in diary_user
+
+
+def test_diary_off_by_default_and_failure_degrades_to_silence(client):
+    lp, model = loop(client, [CLEAN])          # no diary line provisioned
+    entry = lp.cycle()
+    assert entry["thoughts"] == ""           # off: no extra call at all
+    assert len(model.calls) == 1
+
+
 def test_lint_refusal_feeds_back_and_second_attempt_accepts(client):
     lp, model = loop(client, [TRAP, CLEAN])
     entry = lp.cycle()

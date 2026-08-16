@@ -158,6 +158,39 @@ def user_prompt(observation: dict, current: dict, feedback: list[str],
     return "\n".join(parts)
 
 
+def diary_prompt(system_text: str, transcript: list[dict],
+                 action: str, refusal: str | None) -> tuple[str, str]:
+    """The strategy diary: after the decision stands, one short call
+    carrying the COMPLETE round record — the rules played under, every
+    prompt (with accumulated findings), the model's own replies
+    verbatim (the code itself), and every platform response between
+    attempts. Anything less asks the model to describe a decision it
+    can no longer see, and it will hallucinate a plausible one."""
+    system = (
+        "You are the strategist of an entity in a batched simulated "
+        "economy. A round just concluded; below is the complete verbatim "
+        "record of your own decision-making chat for it. Write your "
+        "strategy diary for this round: 1-3 plain sentences — no "
+        "markdown, no code, no quotes — on what you changed or kept and "
+        "why, your read of the world (markets, food, rivals), and your "
+        "intent for next round. Ground it strictly in the record: it is "
+        "the authority on what you actually did.")
+    parts = ["THE COMPLETE RECORD OF THIS ROUND (your own chat, verbatim):",
+             "", "===== RULES YOU PLAYED UNDER (system prompt) =====",
+             system_text]
+    for step in transcript:
+        if "user" in step:
+            parts += ["", "===== PROMPT TO YOU =====", step["user"],
+                      "", "===== YOUR REPLY (verbatim) =====", step["reply"]]
+        else:
+            parts += ["", "===== PLATFORM RESPONSE =====", step["platform"]]
+    outcome = f"\nFINAL OUTCOME: action taken: {action}"
+    if refusal:
+        outcome += f" (last refusal: {refusal})"
+    parts += [outcome, "", "Write the diary entry now. Plain sentences only."]
+    return system, "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Edit blocks (SEARCH/REPLACE): patch the current behaviour instead of
 # rewriting it whole. Aider's format — the one LLMs transcribe most
@@ -198,7 +231,8 @@ def _apply_edits(source: str,
 class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
-                 last_ticks: int = 8, edit_mode: bool = False):
+                 last_ticks: int = 8, edit_mode: bool = False,
+                 diary: bool = False):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
@@ -206,6 +240,7 @@ class AgentLoop:
         self.journal_path = journal_path
         self.last_ticks = last_ticks
         self.edit_mode = edit_mode
+        self.diary = diary
         self._feedback: list[str] = []          # rides into the next prompt
         self.journal_lines: list[dict] = []
 
@@ -268,18 +303,24 @@ class AgentLoop:
 
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action = "", "rewrite"
+        sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode)
+        transcript: list[dict] = []      # prompts + replies + platform
+        # responses: the diary's ground truth, captured as it happens
         while attempts < self.max_attempts:
             attempts += 1
             try:
-                raw = self.model.complete(
-                    system_prompt(libraries, eid, edit_mode=self.edit_mode),
-                    user_prompt(obs, current, feedback, edit_mode=self.edit_mode))
+                usr_text = user_prompt(obs, current, feedback,
+                                       edit_mode=self.edit_mode)
+                raw = self.model.complete(sys_text, usr_text)
             except ScriptedModelEmpty:
                 raise                  # a missing fixture, not a provider hiccup
             except Exception as exc:  # provider/model failure: an attempt,
                 last_error = f"model failure: {exc}"   # not a dead round
                 feedback.append(f"the previous model call failed: {exc}")
+                transcript.append(
+                    {"platform": f"the model call failed: {exc}"})
                 continue
+            transcript.append({"user": usr_text, "reply": raw})
 
             # action 1: KEEP — carry the behaviour forward verbatim, no
             # submission at all. Readying up without gambling a rewrite.
@@ -290,6 +331,9 @@ class AgentLoop:
                 last_error = "KEEP refused: no previous behaviour to keep"
                 feedback.append("you replied KEEP, but there is no previous "
                                 "behaviour to keep — write the complete script")
+                transcript.append(
+                    {"platform": "KEEP refused: no previous behaviour "
+                                "to keep — write the complete script"})
                 continue
 
             # action 2: edit blocks — patch the current behaviour, then
@@ -300,12 +344,17 @@ class AgentLoop:
                     last_error = "patch refused: no previous behaviour to patch"
                     feedback.append("you sent edit blocks, but there is no "
                                     "previous behaviour — write the complete script")
+                    transcript.append(
+                        {"platform": "edit blocks refused: no previous "
+                                    "behaviour to patch"})
                     continue
                 patched, err = _apply_edits(current["source"], patches)
                 if err:
                     last_error = err
                     feedback.append(f"patch did not apply: {err}. SEARCH must "
                                     "match the current behaviour exactly")
+                    transcript.append(
+                        {"platform": f"patch did not apply: {err}"})
                     continue
                 source, action = patched, "edit"
             else:                     # action 3: the full rewrite
@@ -317,12 +366,31 @@ class AgentLoop:
                     {"entity_id": eid, "source": source,
                      "description": f"agent cycle ({self.model.name})"})
                 accepted, warnings = True, result.get("lint_warnings", [])
+                transcript.append({"platform": "submission accepted"
+                                   + (f" (warnings: {warnings})" if warnings
+                                      else "")})
                 if warnings:  # accepted, but the model should still see them
                     self._feedback += [f"lint warning: {w}" for w in warnings]
                 break
             except McpError as exc:
                 last_error = str(exc)
                 feedback.append(f"submission refused by lint: {last_error}")
+                transcript.append(
+                    {"platform": f"submission refused by lint: {last_error}"})
+
+        # The strategy diary: one extra short call, same mind, after the
+        # decision stands. Failure degrades to silence — the diary must
+        # never be the reason a round dies.
+        thoughts = ""
+        if self.diary:
+            try:
+                thoughts = self.model.complete(
+                    *diary_prompt(sys_text, transcript,
+                                  action, last_error)).strip()
+            except ScriptedModelEmpty:
+                raise                 # a missing fixture, not a provider hiccup
+            except Exception:
+                thoughts = ""
 
         entry = {
             "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
@@ -336,8 +404,9 @@ class AgentLoop:
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],
-            "prompt_bytes": 0 if not getattr(self.model, "calls", None)
-                            else len(self.model.calls[-1]["user"]),
+            "thoughts": thoughts,
+            "prompt_bytes": next((len(s["user"]) for s in reversed(transcript)
+                                  if "user" in s), 0),
         }
         self.journal_lines.append(entry)
         if self.journal_path:

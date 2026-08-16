@@ -185,6 +185,11 @@ def main(argv=None) -> int:
     ap.add_argument("--edit-mode", action="store_true",
                     help="models may answer with SEARCH/REPLACE edit blocks "
                          "or KEEP instead of a full rewrite")
+    ap.add_argument("--diary", action="store_true",
+                    help="strategy diary per house per round even in a "
+                         "scripted run (fixtures must interleave them)")
+    ap.add_argument("--no-diary", action="store_true",
+                    help="skip the per-round strategy-diary model call")
     ap.add_argument("--port", type=int, default=8906)
     ap.add_argument("--serve", type=int, default=8090, metavar="PORT",
                     help="live dashboard: serve the out dir here "
@@ -260,13 +265,17 @@ def main(argv=None) -> int:
 
     try:
         loops = []
+        # the diary defaults ON for NIM runs (one short extra call per
+        # house per round, inside the same parallel window) and OFF for
+        # scripted rehearsals (legacy fixtures carry one line per round)
+        diary = args.diary or (not args.no_diary and not args.scripted)
         for d, model in zip(dynasties, models):
             lp = AgentLoop(
                 McpClient(http_transport(base, d.token)),
                 model,
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
                 journal_path=str(out / f"journal-{slug(d.name)}.jsonl"),
-                edit_mode=args.edit_mode)
+                edit_mode=args.edit_mode, diary=diary)
             loops.append((d, lp))
 
         print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")
