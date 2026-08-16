@@ -267,6 +267,15 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert "Final standings" in page and page.count("<svg") >= 3
     assert "Wealth over rounds" in page and "Market prices" in page
     assert "(no data)" in page            # prices with zero trades: quiet, not broken
+    # regression (nim-run3): a market unpriced in early snapshots that
+    # trades later must chart zeros before the first print — not crash
+    # on Decimal(None)
+    for m in snapshots[-1]["market"]:
+        if m["symbol"] == "GRAIN":
+            m["last_price"] = "0.42"
+    page = build_dashboard(snapshots, {
+        "title": "test run", "ticks_per_round": 2, "generated": "now"})
+    assert "GRAIN" in page and "0.42" in page
     assert "FOOD satisfaction" in page
     assert "R1" in page and "R2" in page
     assert page.count("500.00") >= 3        # three identical seats

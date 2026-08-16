@@ -208,7 +208,8 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
     symbols = sorted({m["symbol"] for s in snapshots for m in s["market"]
                       if m.get("last_price") is not None})
     prices = {sym: [next((Decimal(m["last_price"]) for m in s["market"]
-                          if m["symbol"] == sym), Decimal("0"))
+                          if m["symbol"] == sym
+                          and m["last_price"] is not None), Decimal("0"))
                     for s in snapshots] for sym in symbols}
 
     houses = " · ".join(
