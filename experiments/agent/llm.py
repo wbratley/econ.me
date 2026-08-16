@@ -155,12 +155,86 @@ class OpenAIModel:
         return r.json()["choices"][0]["message"]["content"]
 
 
+NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
+
+
+def nim_key(env: dict[str, str] | None = None) -> str | None:
+    """The NVIDIA NIM key: NVIDIA_API_KEY / NIM_API_KEY from the env, or
+    the first line of ~/.nim_api_key (kept out of the repo and shells)."""
+    env = dict(env if env is not None else os.environ)
+    if key := (env.get("NVIDIA_API_KEY") or env.get("NIM_API_KEY")):
+        return key.strip()
+    path = Path.home() / ".nim_api_key"
+    if path.exists():
+        first = path.read_text().splitlines()
+        if first and first[0].strip():
+            return first[0].strip()
+    return None
+
+
+class NimModel(OpenAIModel):
+    """NVIDIA NIM (OpenAI-compatible hosted inference): same chat
+    completions call, NIM base URL, plus the two courtesies a shared
+    metered endpoint wants — explicit max_tokens/temperature and a small
+    retry on 429/5xx (backoff, bounded; never on 4xx, which retrying
+    cannot fix)."""
+
+    def __init__(self, api_key: str, model: str,
+                 timeout: float = 120.0,
+                 base_url: str = NIM_DEFAULT_BASE,
+                 temperature: float = 0.3, max_tokens: int = 4096):
+        super().__init__(api_key, model=model, timeout=timeout,
+                         base_url=base_url)
+        self.name = f"nim:{model}"
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+
+    def complete(self, system: str, user: str) -> str:
+        import time
+
+        import httpx
+
+        last_error = None
+        for attempt in range(3):
+            if attempt:
+                time.sleep(2.0 * attempt)          # 2s, 4s — polite, bounded
+            try:
+                r = httpx.post(
+                    f"{self._base_url}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    timeout=self._timeout,
+                    json={
+                        "model": self._model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        "temperature": self._temperature,
+                        "max_tokens": self._max_tokens,
+                        "top_p": 0.95,
+                    },
+                )
+                if r.status_code in (429,) or r.status_code >= 500:
+                    last_error = f"HTTP {r.status_code}: {r.text[:200]}"
+                    continue
+                r.raise_for_status()
+                return r.json()["choices"][0]["message"]["content"]
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
+        raise RuntimeError(f"NIM {self._model} failed after 3 attempts: "
+                           f"{last_error}")
+
+
 def model_from_env(env: dict[str, str] | None = None) -> Model:
     """Pick the model from the environment (see README):
 
       ECON_AGENT_SCRIPTED_FILE  offline scripted run (checked first)
       ANTHROPIC_API_KEY         Anthropic (ECON_AGENT_MODEL overrides slug)
       OPENAI_API_KEY            OpenAI (ECON_AGENT_MODEL overrides slug)
+      NVIDIA_API_KEY/NIM_API_KEY  NVIDIA NIM, ECON_AGENT_MODEL = the slug
+                                 (or ~/.nim_api_key; ECON_AGENT_NIM_BASE
+                                 overrides the hosted endpoint — self-hosted
+                                 NIM containers speak the same protocol)
     """
     env = dict(env if env is not None else os.environ)
     if path := env.get("ECON_AGENT_SCRIPTED_FILE"):
@@ -170,8 +244,16 @@ def model_from_env(env: dict[str, str] | None = None) -> Model:
         return AnthropicModel(key, model=slug or "claude-sonnet-4-5")
     if key := env.get("OPENAI_API_KEY"):
         return OpenAIModel(key, model=slug or "gpt-4o")
+    if key := nim_key(env):
+        if not slug:
+            raise RuntimeError(
+                "NIM key found but no model: set ECON_AGENT_MODEL to a NIM "
+                "catalog slug (see `python -m experiments.agent.nim_pick --list`)"
+            )
+        return NimModel(key, model=slug,
+                        base_url=env.get("ECON_AGENT_NIM_BASE", NIM_DEFAULT_BASE))
     raise RuntimeError(
         "no model configured: set ECON_AGENT_SCRIPTED_FILE (offline), "
-        "ANTHROPIC_API_KEY, or OPENAI_API_KEY (ECON_AGENT_MODEL overrides "
-        "the default slug)"
+        "ANTHROPIC_API_KEY, OPENAI_API_KEY, or NVIDIA_API_KEY/NIM_API_KEY "
+        "plus ECON_AGENT_MODEL (ECON_AGENT_MODEL overrides the slug elsewhere)"
     )
