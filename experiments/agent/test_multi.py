@@ -255,6 +255,38 @@ def test_decisions_overlap_in_time(client, tmp_path):
 # The dashboard
 # ===========================================================================
 
+def test_on_round_watches_the_run_grow(client, monkeypatch, tmp_path):
+    # the live dashboard's fuel: at each call the snapshot list has
+    # grown by one and ends on the round just resolved (evaluated NOW —
+    # the callback receives the growing list itself, by reference)
+    loops = make_loops(client, [[CLEAN, CLEAN2]] * 3, monkeypatch)
+    seen: list[tuple[int, int]] = []
+    snapshots = run_rounds(
+        loops, 2, tmp_path,
+        on_round=lambda s: seen.append((len(s), s[-1]["round"])))
+    assert seen == [(1, 1), (2, 2)]
+    assert len(snapshots) == 2
+
+
+def test_serve_run_hands_out_the_dashboard(tmp_path):
+    # stdlib static serving from the harness: `/` and `/dashboard` both
+    # answer the live file; the rest of the dir rides along as files
+    from experiments.agent.nim_run import serve_run
+
+    (tmp_path / "dashboard.html").write_text("<h1>live</h1>")
+    (tmp_path / "round-01.json").write_text("{}")
+    assert serve_run(tmp_path, 8977) is True
+    import httpx
+
+    for path in ("/", "/dashboard", "/dashboard.html"):
+        r = httpx.get(f"http://127.0.0.1:8977{path}", timeout=5.0)
+        assert r.status_code == 200 and "<h1>live</h1>" in r.text
+    assert httpx.get("http://127.0.0.1:8977/round-01.json",
+                     timeout=5.0).status_code == 200
+    assert httpx.get("http://127.0.0.1:8977/nope.json",
+                     timeout=5.0).status_code == 404
+
+
 def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     loops = make_loops(client, [
         [CLEAN, CLEAN2], [CLEAN, CLEAN2], [CLEAN, CLEAN2]], monkeypatch)
@@ -267,6 +299,21 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert "Final standings" in page and page.count("<svg") >= 3
     assert "Wealth over rounds" in page and "Market prices" in page
     assert "(no data)" in page            # prices with zero trades: quiet, not broken
+    assert 'http-equiv="refresh"' not in page   # a finished run never reloads
+    # live header: mid-run meta carries a status the page wears as a
+    # badge + auto-refresh, so a served dashboard advances on its own
+    live = build_dashboard(snapshots, {
+        "title": "live run", "ticks_per_round": 2, "generated": "now",
+        "status": "live", "round": 1, "rounds_total": 2,
+        "elapsed_s": 75, "refresh_s": 10})
+    assert 'http-equiv="refresh" content="10"' in live
+    assert "LIVE" in live and "round 1 of 2" in live and "1:15" in live
+    done = build_dashboard(snapshots, {
+        "title": "done run", "ticks_per_round": 2, "generated": "now",
+        "status": "complete", "round": 2, "rounds_total": 2,
+        "elapsed_s": 3725})
+    assert "complete" in done and "1:02:05" in done
+    assert 'http-equiv="refresh"' not in done
     # regression (nim-run3): a market unpriced in early snapshots that
     # trades later must chart zeros before the first print — not crash
     # on Decimal(None)
