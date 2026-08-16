@@ -9,13 +9,14 @@ transports pointed at a spawned server. Same doctrine, one level up.
 
 The world is the content pack's substrate (experiments/world/scenario.py:
 goods, tech, recipes, needs, markets, the tiered libs) with one twist —
-the cast's three specialist roles are OWNED by the three dynasties and
-run role behaviours only until their first cycle replaces them. From
-then on every mind in the world is a model rewriting Lua between rounds;
-the readiness gate (§9.1) paces it: each round, every dynasty cycles
-then readies, and the final ready resolves the round in-request. No
-admin in the pacing loop — the operator built the world, then stepped
-back.
+the seats are SYMMETRIC: every dynasty gets scenario.make_house's
+identical bundle (same money, FARM + FORGE + ORE seam, both unlocks)
+and the plain survival starter, which runs only until its first cycle
+replaces it. From then on every mind in the world is a model rewriting
+Lua between rounds; the readiness gate (§9.1) paces it: each round,
+every dynasty cycles then readies, and the final ready resolves the
+round in-request. No admin in the pacing loop — the operator built the
+world, then stepped back.
 
 Snapshots are taken from each dynasty's OWN MCP surface (the §13 parity
 set plus leaderboard/prices): the dashboard's data is exactly what the
@@ -38,55 +39,44 @@ from .loop import AgentLoop, McpClient, McpError
 # The dynasties and their world
 # ---------------------------------------------------------------------------
 
-ROLES = ("farmer", "miner", "smith")
-
 
 @dataclass
 class Dynasty:
-    """One player seat: a user, a house name, a starting role, and the
-    model that will mind it. `entity_id` fills in at world build."""
+    """One player seat: a user, a house name, and the model that will
+    mind it. `entity_id` fills in at world build."""
     user_id: str
     name: str
-    role: str
     model_name: str
     token: str
     entity_id: str | None = None
 
 
 def build_agent_world(session, dynasties: list[Dynasty]) -> None:
-    """Content-pack substrate + the three roles, agent-owned.
+    """Content-pack substrate + symmetric, agent-owned seats.
 
     `scenario.create_content` gives goods/tech/recipes/needs/markets and
     installs the tiered libs through the gate (with manifest pinning).
-    Then each dynasty gets its role's endowment, parcel, and starting
-    behaviour (starter/miner/smith.lua — survival from tick 1, with all
-    the pack's knobs left to optimize). The readiness gate is switched
-    to `readiness` mode: from here the world paces itself.
+    Then each dynasty gets `scenario.make_house`'s identical endowment —
+    no role priming, no seat-specific starter — and the readiness gate
+    is switched to `readiness` mode: from here the world paces itself.
     """
     from econengine.models import Script, ScriptType, WorldSetting
 
     from experiments.world import scenario
 
-    if len(dynasties) not in (1, 2, 3):
-        raise ValueError(f"this world's cast has 3 roles; got {len(dynasties)} dynasties")
-    if {d.role for d in dynasties} - set(ROLES):
-        raise ValueError(f"roles must be among {ROLES}")
+    if not dynasties:
+        raise ValueError("need at least one dynasty")
 
     scenario.create_content(session)
 
-    makers = {"farmer": scenario._make_farmer,
-              "miner": scenario._make_miner,
-              "smith": scenario._make_smith}
-    starters = {"farmer": "starter.lua", "miner": "miner.lua", "smith": "smith.lua"}
-
     for d in dynasties:
-        entity = makers[d.role](session)
+        entity = scenario.make_house(session, d.name)
         entity.owner_id = d.user_id          # the join-tool pattern: the
-        d.entity_id = entity.id              # seat becomes a player's own
+        d.entity_id = entity.id               # seat becomes a player's own
         session.add(Script(
-            name=f"{d.role}-behaviour-{entity.id}",
+            name=f"house-behaviour-{entity.id}",
             script_type=ScriptType.BEHAVIOUR,
-            source=scenario._read_lua(starters[d.role]),
+            source=scenario._read_lua("starter.lua"),
             entity_id=entity.id,
             timeout_ms=200,
             state={},
@@ -135,7 +125,6 @@ def _dynasty_view(mcp: McpClient, d: Dynasty, entry: dict | None) -> dict:
     row = next((r for r in board.get("rows", []) if r["user_id"] == d.user_id), None)
     return {
         "model": d.model_name,
-        "role": d.role,
         "leaderboard": row,
         "accounts": state.get("accounts", []),
         "holdings": state.get("holdings", []),

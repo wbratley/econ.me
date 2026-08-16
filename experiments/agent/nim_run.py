@@ -16,8 +16,9 @@
         --rounds 3 --out /tmp/nim-rehearsal
 
 What happens: fresh SQLite world; the content-pack substrate
-(experiments/world/scenario) with the three specialist roles OWNED by the
-three dynasties; readiness gate ON; a uvicorn on a scratch port; then
+(experiments/world/scenario) with SYMMETRIC seats owned by the dynasties
+(same endowment, same parcel bundle, same starter — nothing primed but
+the model itself); readiness gate ON; a uvicorn on a scratch port; then
 `multi.run_rounds` — each round every dynasty cycles (observe -> think ->
 submit through its own MCP surface) and readies, the final ready resolves
 the round, a snapshot lands in out/round-XX.json. After the last round:
@@ -34,6 +35,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -62,6 +64,11 @@ def http_transport(base: str, token: str):
         return body["result"]
 
     return transport
+
+
+def slug(name: str) -> str:
+    """A house name as a filename-safe id: `House Llama` -> `house-llama`."""
+    return re.sub(r"\W+", "-", name.lower()).strip("-")
 
 
 def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
@@ -122,14 +129,12 @@ def spawn_server(port: int, log_path: Path) -> subprocess.Popen:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--models", nargs=3, metavar="SLUG",
-                    help="three NIM catalog slugs, one per dynasty "
-                         "(farmer, miner, smith in seat order)")
-    ap.add_argument("--names", nargs=3, default=["House Llama", "House Qwen",
-                                                 "House Mistral"],
-                    help="dynasty names (default: three houses)")
-    ap.add_argument("--scripted", nargs=3, metavar="JSONL",
-                    help="offline: three canned-response files (no key)")
+    ap.add_argument("--models", nargs="+", metavar="SLUG",
+                    help="NIM catalog slugs, one per dynasty (seat order)")
+    ap.add_argument("--names", nargs="+", default=None,
+                    help="dynasty names, one per model (default: House 1..N)")
+    ap.add_argument("--scripted", nargs="+", metavar="JSONL",
+                    help="offline: canned-response files, one per dynasty")
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--ticks-per-round", type=int, default=5)
     ap.add_argument("--max-attempts", type=int, default=3)
@@ -146,7 +151,6 @@ def main(argv=None) -> int:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    roles = ("farmer", "miner", "smith")
 
     models: list[Model]
     if args.scripted:
@@ -160,10 +164,15 @@ def main(argv=None) -> int:
         models = [NimModel(key, slug) for slug in args.models]
         model_names = args.models
 
+    names = args.names or [f"House {i + 1}" for i in range(len(model_names))]
+    if len(names) != len(model_names):
+        ap.error(f"{len(model_names)} models but {len(names)} names — "
+                 "one name per dynasty")
+
     dynasties = [
-        Dynasty(user_id=f"u-{role[:3]}", name=name, role=role,
+        Dynasty(user_id=f"u-{slug(name)}", name=name,
                 model_name=mn, token="")
-        for role, name, mn in zip(roles, args.names, model_names)
+        for name, mn in zip(names, model_names)
     ]
 
     started = _dt.datetime.now(_dt.timezone.utc)
@@ -176,24 +185,24 @@ def main(argv=None) -> int:
 
     with Session(db_engine) as s:
         build_agent_world(s, dynasties)
-    world = {d.name: {"user_id": d.user_id, "role": d.role,
+    world = {d.name: {"user_id": d.user_id,
                       "entity_id": d.entity_id, "model": d.model_name}
              for d in dynasties}
 
     os.environ["ECON_TICKS_PER_ROUND"] = str(args.ticks_per_round)
     proc = spawn_server(args.port, out / "server.log")
     base = f"http://127.0.0.1:{args.port}"
-    print(f"world up: 3 dynasties, gate=readiness, "
+    print(f"world up: {len(dynasties)} dynasties, gate=readiness, "
           f"K={args.ticks_per_round} ticks/round, {args.rounds} rounds")
 
     try:
         loops = []
-        for d in dynasties:
+        for d, model in zip(dynasties, models):
             lp = AgentLoop(
                 McpClient(http_transport(base, d.token)),
-                models[roles.index(d.role)],
+                model,
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
-                journal_path=str(out / f"journal-{d.role}.jsonl"),
+                journal_path=str(out / f"journal-{slug(d.name)}.jsonl"),
                 edit_mode=args.edit_mode)
             loops.append((d, lp))
 

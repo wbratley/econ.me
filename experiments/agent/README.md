@@ -85,8 +85,9 @@ Model selection: `ECON_AGENT_SCRIPTED_FILE` > `ANTHROPIC_API_KEY` >
 ## The dynasty run: 3 models, N rounds, one dashboard (NIM)
 
 `multi.py` + `nim_run.py` + `dashboard.py` lift the loop to a
-self-pacing multi-agent world: three dynasties over the content pack's
-substrate (the farmer/miner/smith roles, owned), readiness gate ON —
+self-pacing multi-agent world: dynasties over the content pack's
+substrate (symmetric seats — same endowment, same parcel bundle, same
+starter; nothing primed but the model), readiness gate ON —
 every round each dynasty cycles then readies, the final ready resolves
 the round, a snapshot lands on disk. No admin paces anything.
 
