@@ -246,6 +246,13 @@ class AgentLoop:
                 fh.write(json.dumps(entry) + "\n")
         return entry
 
+    def set_ready(self, ready: bool = True) -> dict:
+        """Signal (or withdraw) readiness for the open round (game.md §9.1).
+        In a readiness-gated world the final ready closes the round — the
+        player's clock vote, still pure MCP: no admin client, no operator,
+        the world paces itself."""
+        return self.mcp.call("set_ready", {"ready": ready})
+
     def run(self, cycles: int, between=None) -> list[dict]:
         """N cycles; `between(cycle_no)` runs after each (e.g. advance one
         round — the operator step, supplied by the driver, never by the

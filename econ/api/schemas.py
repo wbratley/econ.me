@@ -591,13 +591,55 @@ class JoinResult(BaseModel):
 
 class RoundState(BaseModel):
     """The round clock's current state (a read). ``current_round`` is the
-    round open for submission; ``round_number`` is how many have resolved."""
+    round open for submission; ``round_number`` is how many have resolved.
+    ``readiness`` is the gate (§9.1): public facts, like prices."""
     round_number: int
     current_round: int
     status: str
     ticks_run: int
     ticks_per_round: int
     ticks_into_round: int
+    readiness: "ReadinessBlock"
+
+
+class ReadinessBlock(BaseModel):
+    """The readiness gate's public face (§9.1): ``mode`` is world policy
+    (``readiness`` = rounds close by player consent; ``operator`` = admin
+    advance only, the default). ``eligible`` counts users owning >= 1
+    ACTIVE entity; ``ready_users`` names the ones who have readied."""
+    mode: str
+    round: int
+    ready: int
+    eligible: int
+    ready_users: list[str]
+
+
+class ReadyResponse(BaseModel):
+    """Returned by ``POST /rounds/ready``. ``resolved`` carries the round
+    summary when this ready was the final one and resolved the round
+    in-request (§9.1); ``None`` when it merely recorded consent."""
+    user_id: str
+    round: int
+    readiness: ReadinessBlock
+    resolved: Optional[RoundSummary] = None
+
+
+class UnreadyResponse(BaseModel):
+    """Returned by ``DELETE /rounds/ready`` -- idempotent; readiness of a
+    resolved round is historical."""
+    user_id: str
+    round: int
+    readiness: ReadinessBlock
+
+
+class GateMode(BaseModel):
+    """The gate's mode -- who closes rounds (§9.1). Operator-set world
+    policy; the update model restricts it to the two legal modes."""
+    mode: str
+
+
+class GateModeUpdate(BaseModel):
+    mode: str = Field(pattern="^(readiness|operator)$")
 
 
 class RoundSummary(BaseModel):

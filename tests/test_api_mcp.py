@@ -122,7 +122,7 @@ def test_tools_list_exposes_the_player_surface(client):
     assert set(tools) == {
         "join", "my_entities", "entity_state", "entity_events",
         "get_behaviour", "get_script_libraries", "set_behaviour",
-        "round_state", "epoch_state", "governance_current",
+        "round_state", "set_ready", "epoch_state", "governance_current",
         "market_prices", "leaderboard",
     }
     for t in tools.values():

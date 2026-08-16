@@ -44,7 +44,9 @@ from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
 from econ.api.onboarding import get_join_config
-from econ.api.rounds import current_round_state
+from econ.api.rounds import (
+    NotEligibleError, current_round_state, set_user_ready, unset_user_ready,
+)
 
 
 class ToolError(Exception):
@@ -211,8 +213,26 @@ def tool_get_behaviour(session: Session, user: User, args: dict[str, Any]) -> di
 
 def tool_round_state(session: Session, user: User, args: dict[str, Any]) -> dict:
     """The round clock: which round is open for submission, how many ticks
-    have run, and how many ticks resolve per round (K)."""
+    have run, and how many ticks resolve per round (K). In readiness mode
+    the ``readiness`` block also shows the gate: how many eligible players
+    have readied, and who (public facts, like prices)."""
     return current_round_state(session)
+
+
+def tool_set_ready(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """Signal (or withdraw) readiness for the round open now -- the agent's
+    vote to close the round (game.md §9.1). The final ready resolves the
+    round in-request; the response carries the gate state and, when it
+    fired, the round summary."""
+    if bool(args.get("ready", True)):
+        try:
+            out = set_user_ready(session, user.id)
+        except NotEligibleError as exc:
+            raise ToolError(str(exc)) from exc
+    else:
+        out = unset_user_ready(session, user.id)
+    session.commit()
+    return out
 
 
 def tool_epoch_state(session: Session, user: User, args: dict[str, Any]) -> dict:
@@ -439,9 +459,28 @@ TOOLS: list[Tool] = [
     {
         "name": "round_state",
         "description": "The round clock: which round is open for submission, how "
-                       "many ticks have run, ticks per round (K).",
+                       "many ticks have run, ticks per round (K), and the readiness "
+                       "gate (mode, who of the eligible players has readied).",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_round_state,
+    },
+    {
+        "name": "set_ready",
+        "description": "Signal (or withdraw) readiness for the round open now -- "
+                       "your vote to close this round. The final ready resolves the "
+                       "round immediately (K ticks run in a batch); withdraw with "
+                       "ready=false before it fires if you reconsidered.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ready": {
+                    "type": "boolean",
+                    "description": "true (default) = ready; false = withdraw",
+                },
+            },
+            "required": [],
+        },
+        "handler": tool_set_ready,
     },
     {
         "name": "epoch_state",

@@ -6,8 +6,10 @@ its entity's BEHAVIOUR and rewrites it between rounds). Everything it
 does goes through MCP, exactly the bytes a remote agent client sends;
 its observation set is the §13 parity set — what its own script sees,
 plus public facts. No operator surfaces inside the loop: rounds are
-advanced by the driver (`run.py` with a separate admin client) or a live
-operator.
+advanced by the driver (`run.py` with a separate admin client), a live
+operator, or — in a readiness-gated world (game.md §9.1) — by the
+players themselves: `AgentLoop.set_ready` / `run.py --ready` casts the
+loop's clock vote over MCP, and the final ready closes the round.
 
 It is also the payoff of the scripting arc (docs/scripting.md):
 
@@ -68,7 +70,10 @@ Model selection: `ECON_AGENT_SCRIPTED_FILE` > `ANTHROPIC_API_KEY` >
 
 - The loop never advances rounds itself — batched economy, agent acts
   between resolution; the operator step stays visible as such in the
-  driver.
+  driver. The one exception is by design: `set_ready` (§9.1) is not an
+  operator surface but a *player* one — closing the round by consent is
+  in-band agency, and in a readiness-gated world the last agent's ready
+  fires the resolution with no admin anywhere.
 - The prompts are assertions, not vibes: `ScriptedModel.calls` records
   exactly what a provider would receive, and the tests pin the parity
   set (own entity, public facts, no other dynasty) and the tier
