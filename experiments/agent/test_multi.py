@@ -101,14 +101,15 @@ def client(tmp_path):
         app.dependency_overrides.clear()
 
 
-def make_loops(fixture, responses_per_agent, monkeypatch=None, rounds_k=None):
+def make_loops(fixture, responses_per_agent, monkeypatch=None, rounds_k=None,
+               diary=False):
     if monkeypatch is not None:
         monkeypatch.setenv("ECON_TICKS_PER_ROUND", str(rounds_k or 2))
     loops = []
     for d, responses in zip(fixture["dynasties"], responses_per_agent):
         lp = AgentLoop(McpClient(fixture["transports"][d.user_id]),
                        ScriptedModel(list(responses)),
-                       entity_id=d.entity_id)
+                       entity_id=d.entity_id, diary=diary)
         loops.append((d, lp))
     return loops
 
@@ -285,6 +286,29 @@ def test_serve_run_hands_out_the_dashboard(tmp_path):
                      timeout=5.0).status_code == 200
     assert httpx.get("http://127.0.0.1:8977/nope.json",
                      timeout=5.0).status_code == 404
+
+
+def test_diary_rides_the_snapshots_to_the_dashboard(client, monkeypatch, tmp_path):
+    # the houses' own words for their strategy, one entry per round:
+    # journaled in the entry, snapshotted per round, rendered on the
+    # dashboard under each house's strategy panel
+    d1 = ("Round one: I farm for myself and hoard grain as insurance. "
+          "The market is thin and I distrust the prices.")
+    d2 = "Round two: still no trades, so I will post a modest ask."
+    own = [CLEAN, d1, CLEAN2, d2]
+    others = [[CLEAN, "farming.", CLEAN2, "keeping the course."]] * 2
+    loops = make_loops(client, [own] + others, monkeypatch, diary=True)
+    snapshots = run_rounds(loops, 2, tmp_path)
+    first = snapshots[0]["dynasties"][NAMES[0]]["entry"]
+    assert "hoard grain" in first["thoughts"]
+    assert snapshots[1]["dynasties"][NAMES[0]]["entry"]["thoughts"].startswith(
+        "Round two")
+    assert "hoard grain" not in (                    # per-house, not shared
+        snapshots[0]["dynasties"][NAMES[1]]["entry"]["thoughts"])
+    page = build_dashboard(snapshots, {
+        "title": "diary run", "ticks_per_round": 2, "generated": "now"})
+    assert "strategy diary" in page
+    assert "hoard grain as insurance" in page and "post a modest ask" in page
 
 
 def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):

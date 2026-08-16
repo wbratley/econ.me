@@ -188,6 +188,17 @@ def _strategy(snapshots: list[dict]) -> str:
             parts.append(f'<span class="{cls}{changed}" title="round '
                          f'{snap["round"]}">{_esc(b["sha"] or "—")}</span>')
         parts.append("</div>")
+        diary = [(snap["round"], snap["dynasties"][name].get("entry") or {})
+                 for snap in snapshots]
+        if any(e.get("thoughts") for _, e in diary):
+            parts.append('<h4>strategy diary</h4><div class="diary">')
+            for rnd, e in diary:
+                if e.get("thoughts"):
+                    parts.append(f'<p class="diary-line"><b>R{rnd}</b> '
+                                 f'<span class="quiet">'
+                                 f'{_esc(e.get("action") or "")}</span> — '
+                                 f'{_esc(e["thoughts"])}</p>')
+            parts.append('</div>')
         b = view["behaviour"]
         if b.get("state") is not None:
             parts.append(f'<p class="quiet">behaviour state: '
@@ -267,6 +278,9 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       .sha-ok{background:#12321f;color:#6ee7b7}
       .sha-bad{background:#3a1717;color:#fca5a5}
       .sha-new{outline:2px solid #facc15}
+      .diary{margin:10px 0 4px}
+      .diary-line{margin:4px 0;color:#c7cdd9;font-size:13px}
+      .diary-line b{color:#e5e7eb}.diary-line .quiet{font-size:11.5px}
       pre.lua{background:#141821;border:1px solid #2a2f3a;border-radius:8px;
            padding:14px;overflow:auto;max-height:420px;font-size:12.5px;
            white-space:pre-wrap}
