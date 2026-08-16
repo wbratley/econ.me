@@ -224,7 +224,8 @@ epoch):
 
 ### 9.1 The readiness gate — rounds close by consent
 
-*Design note (pre-implementation). Status: specced.*
+*Design note (pre-implementation). Status: shipped — register +
+`/rounds/ready` + gate + `set_ready` + agent `--ready`.*
 
 The v0 answer to "who ticks the world": **each round stays open until
 every eligible player signals readiness** (or the operator overrides).
@@ -631,7 +632,7 @@ deleted, so every player who ever played keeps theirs. Tests:
    *(platform read)* — *done; Phase 2 complete*
 4. **2d — readiness gate (§9.1):** `round.readiness` register +
    `POST`/`DELETE /rounds/ready` + gate on final ready + MCP `set_ready`.
-   *(platform only, specced)*
+   *(platform only, specced)* — *done*
 
 Each independently shippable; 2a first (windows and standings both
 reference epochs).

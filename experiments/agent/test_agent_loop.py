@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
-from econengine.models import Base, User
+from econengine.models import Base, User, WorldSetting
 
 from experiments.agent.llm import (
     AnthropicModel, OpenAIModel, ScriptedModel, ScriptedModelEmpty,
@@ -215,3 +215,36 @@ def test_model_from_env_picks_by_configuration():
     assert isinstance(m, AnthropicModel) and m.name == "anthropic:m-slug"
     m = model_from_env({"OPENAI_API_KEY": "k"})
     assert isinstance(m, OpenAIModel) and m.name == "openai:gpt-4o"
+
+
+# ===========================================================================
+# The clock vote: set_ready (game.md §9.1)
+# ===========================================================================
+
+def test_set_ready_records_consent_in_operator_mode(client):
+    """Default gate: readiness is recorded but never fires — the operator
+    stays the clock. The call is pure MCP, like everything else."""
+    lp, _ = loop(client, [CLEAN])
+    lp.ensure_entity()                       # alice now owns an ACTIVE entity
+    out = lp.set_ready()
+    assert out["resolved"] is None
+    r = out["readiness"]
+    assert r["mode"] == "operator"
+    assert r["ready"] == 1 and r["eligible"] == 1
+
+
+def test_set_ready_closes_the_round_in_readiness_mode(client, monkeypatch):
+    """Readiness-gated world: the sole eligible player's ready is final —
+    it resolves the round in-request, and the next observation sees a
+    world that moved. The players' clock, no admin anywhere."""
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")
+    with Session(app.state._test_engine) as session:
+        session.add(WorldSetting(key="round.gate", value={"mode": "readiness"}))
+        session.commit()
+    lp, _ = loop(client, [CLEAN])
+    lp.ensure_entity()
+    out = lp.set_ready()
+    assert out["resolved"]["round_number"] == 1
+    assert out["resolved"]["ticks"] == [1, 2]
+    assert out["readiness"]["round"] == 2      # register reset for round 2
+    assert lp.observe()["round"]["round_number"] == 1

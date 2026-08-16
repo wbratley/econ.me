@@ -72,6 +72,10 @@ def main(argv=None) -> int:
                     help="advance a round after each of the first N cycles "
                          "(operator step; needs --admin-token)")
     ap.add_argument("--admin-token", help="admin bearer for --advance")
+    ap.add_argument("--ready", action="store_true",
+                    help="after each cycle, signal readiness for the open round "
+                         "(§9.1: in a readiness-gated world the final ready "
+                         "closes the round — the players' clock, no admin)")
     ap.add_argument("--scripted", help="JSONL of canned responses (offline model)")
     ap.add_argument("--journal", default="/tmp/agent-journal.jsonl")
     args = ap.parse_args(argv)
@@ -102,6 +106,15 @@ def main(argv=None) -> int:
               + (f" — {entry['refusal'][:100]}" if entry["refusal"] else ""))
         if entry["warnings"]:
             print(f"    warnings: {entry['warnings']}")
+        if args.ready:
+            out = loop.set_ready()
+            if out.get("resolved"):
+                print(f"    readiness closed round "
+                      f"{out['resolved']['round_number']} "
+                      f"(ticks {out['resolved']['ticks']})")
+            else:
+                r = out["readiness"]
+                print(f"    ready: {r['ready']}/{r['eligible']} waiting")
     print(f"journal: {args.journal}")
     return 0
 
