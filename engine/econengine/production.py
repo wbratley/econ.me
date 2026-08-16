@@ -195,7 +195,19 @@ def start_process(
     running processes are unavailable."""
     recipe = get_recipe(session, recipe_code)
     if recipe is None:
-        raise ValueError(f"no recipe {str(recipe_code).upper()!r}")
+        # Name the valid codes: an agent that guesses a recipe name
+        # (FARMING vs FARM_GRAIN) is blind otherwise — the unlock names
+        # technologies, not recipes, and nothing else in its observation
+        # ever lists the codes. One error message with the catalog turns
+        # 200 ticks of starvation into one corrected submission.
+        available = ", ".join(
+            session.execute(
+                select(Recipe.code).where(Recipe.is_active)
+                .order_by(Recipe.code)
+            ).scalars())
+        raise ValueError(
+            f"no recipe {str(recipe_code).upper()!r}; "
+            f"available: {available or 'none'}")
     if not recipe.is_active:
         raise ValueError(f"recipe {recipe.code} is inactive")
     if entity.status != EntityStatus.ACTIVE:
