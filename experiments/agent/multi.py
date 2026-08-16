@@ -175,7 +175,7 @@ def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
 
 def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                out_dir: str | Path,
-               admin_advance=None) -> list[dict]:
+               admin_advance=None, on_round=None) -> list[dict]:
     """Rounds 1..N. Each round: every dynasty cycles — CONCURRENTLY, the
     decisions are independent — then readies in order, and the final
     ready resolves the round in-request (readiness gate); a snapshot
@@ -183,7 +183,9 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
     (network, provider) keeps its behaviour, journals the failure, and
     STILL readies — one dead model must not stop the world.
     `admin_advance` is the referee fallback for a round nobody resolved
-    (never expected in readiness mode; keeps long runs unstickable)."""
+    (never expected in readiness mode; keeps long runs unstickable).
+    `on_round(snapshots)` fires after each resolved round with the
+    full list so far — the live dashboard is rewritten from it."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     mcps = [(d, lp.mcp) for d, lp in loops]
@@ -224,6 +226,8 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                           sorted(snap.events_by_type.items())) or "quiet"
         print(f"  round {round_no} resolved (ticks {snap.ticks[0]}.."
               f"{snap.ticks[-1] if snap.ticks else '?'}): {kinds}")
+        if on_round is not None:
+            on_round(snapshots)
     return snapshots
 
 

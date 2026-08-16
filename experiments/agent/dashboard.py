@@ -33,6 +33,16 @@ def _fmt(d: Decimal) -> str:
     return f"{q:,}"
 
 
+def _hms(seconds) -> str:
+    """75 -> '1:15', 3725 -> '1:02:05' — the run clock, for the header."""
+    if seconds is None:
+        return ""
+    s = int(seconds)
+    h, s = divmod(s, 3600)
+    m, s = divmod(s, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 # ---------------------------------------------------------------------------
 # Charts (inline SVG; y-scaled, gridded, legended)
 # ---------------------------------------------------------------------------
@@ -215,12 +225,30 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
     houses = " · ".join(
         f"{_esc(n)} ({_esc(snapshots[-1]['dynasties'][n].get('model', ''))})"
         for n in names)
+
+    # live-run header: when meta carries a status, the page says where
+    # the run is and (while live) reloads itself, so a served dashboard
+    # watched in a browser advances round by round on its own.
+    refresh = (f'<meta http-equiv="refresh" content="{int(meta["refresh_s"])}">'
+               if meta.get("refresh_s") else "")
+    status = ""
+    if meta.get("status") == "live":
+        status = (f'<p class="meta"><span class="live">● LIVE</span> '
+                  f'round {meta.get("round", len(snapshots))} of '
+                  f'{meta.get("rounds_total", "?")} · '
+                  f'elapsed {_hms(meta.get("elapsed_s"))} · page refreshes '
+                  f'every {int(meta["refresh_s"])}s</p>')
+    elif meta.get("status") == "complete":
+        status = (f'<p class="meta"><span class="done">✓ complete</span> '
+                  f'{len(snapshots)} rounds in '
+                  f'{_hms(meta.get("elapsed_s"))}</p>')
     css = """
       body{font:14px/1.45 -apple-system,'Segoe UI',sans-serif;margin:0;
            background:#0f1115;color:#e5e7eb;padding:28px 34px}
       h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:30px 0 10px;
            border-bottom:1px solid #2a2f3a;padding-bottom:6px}
       .quiet{color:#8b93a3}.meta{color:#8b93a3;margin-bottom:6px}
+      .live{color:#facc15;font-weight:600}.done{color:#34d399;font-weight:600}
       table.grid{border-collapse:collapse;margin:8px 0;width:100%}
       table.grid th,table.grid td{border:1px solid #2a2f3a;padding:5px 9px;
            text-align:left;font-size:13px}
@@ -248,10 +276,11 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       code{color:#93c5fd}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
+{refresh}<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
 </head><body>
 <h1>{_esc(meta.get("title", "Dynasty run"))}</h1>
 <p class="meta">{houses}</p>
+{status}
 <p class="meta">{len(snapshots)} rounds · {_esc(meta.get("ticks_per_round", "?"))
 } ticks/round · ticks {_esc(snapshots[0]["ticks"][0] if snapshots else "")}–
 {_esc(snapshots[-1]["ticks"][-1] if snapshots else "")} ·

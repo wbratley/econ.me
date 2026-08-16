@@ -108,9 +108,21 @@ echo nvapi-... > ~/.nim_api_key            # first line of this file
     --names "House Llama" "House Qwen" "House Mistral" \
     --rounds 10 --out /tmp/nim-run
 
-# 3) open the artifact:
-xdg-open /tmp/nim-run/dashboard.html
+# 3) watch it live — the out dir is served while the run is on
+#    (--serve PORT, default 8090; 0 disables):
+xdg-open http://127.0.0.1:8090/
 ```
+
+The live page is the dashboard itself: rewritten atomically after every
+resolved round (write-then-rename, so a browser never reads a torn
+file), wearing a `● LIVE · round N of K · elapsed` header and a 10s
+self-refresh that drops off at the finish. From second zero the URL
+answers a "warming up" placeholder until round 1 resolves. The served
+root also hands out `round-XX.json` and the journals — the whole out
+dir is plain static files, so nginx does the same job with
+`location /run/ { alias /tmp/nim-run/; index dashboard.html; }`; the
+built-in server exists because watching a run shouldn't need root to
+install one.
 
 The dashboard is one self-contained HTML file (inline SVG, no CDN):
 final standings (money / assets-at-last-price / wealth / rewrites /

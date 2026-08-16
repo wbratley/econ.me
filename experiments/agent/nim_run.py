@@ -39,6 +39,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -69,6 +70,49 @@ def http_transport(base: str, token: str):
 def slug(name: str) -> str:
     """A house name as a filename-safe id: `House Llama` -> `house-llama`."""
     return re.sub(r"\W+", "-", name.lower()).strip("-")
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write-then-rename, so a browser (or nginx) never reads a file
+    mid-rewrite when the dashboard lands after a round."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def serve_run(out: Path, port: int) -> bool:
+    """Serve the run's out dir on 127.0.0.1:<port> from a daemon thread:
+    `/` is the live dashboard (rewritten after every round), and the
+    round-XX.json snapshots + journals ride along as plain files. nginx
+    can do this job just as well — the dir is static — but watching a
+    run shouldn't need root to install one."""
+    import http.server
+    import socketserver
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(out), **kw)
+
+        def translate_path(self, path):
+            if path.split("?")[0] in ("/", "/dashboard"):
+                path = "/dashboard.html"
+            return super().translate_path(path)
+
+        def log_message(self, *a):      # the run log stays about the run
+            pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    try:
+        srv = Server(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        print(f"dashboard: not serving ({exc})")
+        return False
+    threading.Thread(target=srv.serve_forever, daemon=True,
+                     name="dashboard").start()
+    return True
 
 
 def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
@@ -142,6 +186,9 @@ def main(argv=None) -> int:
                     help="models may answer with SEARCH/REPLACE edit blocks "
                          "or KEEP instead of a full rewrite")
     ap.add_argument("--port", type=int, default=8906)
+    ap.add_argument("--serve", type=int, default=8090, metavar="PORT",
+                    help="live dashboard: serve the out dir here "
+                         "(0 disables; nginx on the same dir works too)")
     ap.add_argument("--out", default="/tmp/nim-run")
     ap.add_argument("--keep-server", action="store_true")
     args = ap.parse_args(argv)
@@ -195,6 +242,22 @@ def main(argv=None) -> int:
     print(f"world up: {len(dynasties)} dynasties, gate=readiness, "
           f"K={args.ticks_per_round} ticks/round, {args.rounds} rounds")
 
+    if args.serve:
+        # A placeholder so the URL answers from second zero — round 1's
+        # LLM calls take minutes, and the watcher should see that, not a
+        # 404. Replaced by the first real rewrite at round 1's resolution.
+        (out / "dashboard.html").write_text(
+            '<!doctype html><meta charset="utf-8">'
+            '<meta http-equiv="refresh" content="10">'
+            "<title>econ.me — warming up</title>"
+            '<body style="font:14px sans-serif;background:#0f1115;'
+            'color:#e5e7eb;padding:28px"><h1>warming up…</h1>'
+            "<p>round 1 is in flight; the dashboard lands when it resolves "
+            "(this page retries every 10s).</p></body>")
+        if serve_run(out, args.serve):
+            print(f"dashboard: http://127.0.0.1:{args.serve}/ "
+                  "(live — rewritten after every round)")
+
     try:
         loops = []
         for d, model in zip(dynasties, models):
@@ -208,27 +271,42 @@ def main(argv=None) -> int:
 
         print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")
         t0 = time.monotonic()
-        snapshots = run_rounds(loops, args.rounds, out)
+
+        def write_dash(snaps: list[dict], done: bool = False) -> None:
+            """The dashboard rewrite: after every round while live, once
+            more at the finish (status flips, auto-refresh drops off)."""
+            meta = {
+                "title": f"econ.me dynasty run — {args.rounds} rounds",
+                "ticks_per_round": args.ticks_per_round,
+                "generated": _dt.datetime.now(_dt.timezone.utc)
+                             .isoformat(timespec="seconds"),
+                "elapsed_s": round(time.monotonic() - t0, 1),
+                "world": world,
+                "round": snaps[-1]["round"] if snaps else 0,
+                "rounds_total": args.rounds,
+                "status": "complete" if done else "live",
+            }
+            if not done:
+                meta["refresh_s"] = 10
+            _atomic_write(out / "dashboard.html",
+                          build_dashboard(snaps, meta))
+            _atomic_write(out / "meta.json", json.dumps(meta, indent=1))
+
+        snapshots = run_rounds(loops, args.rounds, out,
+                               on_round=write_dash)
         elapsed = time.monotonic() - t0
     finally:
         if not args.keep_server:
             proc.send_signal(signal.SIGTERM)
             proc.wait(timeout=10)
 
-    meta = {
-        "title": f"econ.me dynasty run — {args.rounds} rounds",
-        "ticks_per_round": args.ticks_per_round,
-        "generated": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-        "elapsed_s": round(elapsed, 1), "world": world,
-    }
+    write_dash(snapshots, done=True)
     (out / "snapshots.json").write_text(json.dumps(snapshots, indent=1))
-    (out / "meta.json").write_text(json.dumps(meta, indent=1))
-    dash = out / "dashboard.html"
-    dash.write_text(build_dashboard(snapshots, meta))
 
     print(f"\ndone in {elapsed:.0f}s — {snapshots[-1]['ticks'][-1]} ticks, "
           f"{len(snapshots)} rounds")
-    print(f"dashboard: {dash}")
+    print(f"dashboard: {out}/dashboard.html"
+          + (f" (was http://127.0.0.1:{args.serve}/)" if args.serve else ""))
     print(f"snapshots: {out}/round-*.json, journals: {out}/journal-*.jsonl")
     return 0
 
