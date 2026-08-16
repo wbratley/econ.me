@@ -181,6 +181,9 @@ def main(argv=None) -> int:
                     help="offline: canned-response files, one per dynasty")
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--ticks-per-round", type=int, default=5)
+    ap.add_argument("--scenario", default="frontier",
+                    choices=["frontier", "stone_age"],
+                    help="content pack to build the world from")
     ap.add_argument("--max-attempts", type=int, default=3)
     ap.add_argument("--edit-mode", action="store_true",
                     help="models may answer with SEARCH/REPLACE edit blocks "
@@ -236,7 +239,7 @@ def main(argv=None) -> int:
     from econ.db import engine as db_engine
 
     with Session(db_engine) as s:
-        build_agent_world(s, dynasties)
+        build_agent_world(s, dynasties, scenario=args.scenario)
     world = {d.name: {"user_id": d.user_id,
                       "entity_id": d.entity_id, "model": d.model_name}
              for d in dynasties}

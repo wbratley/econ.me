@@ -105,6 +105,9 @@ ORE_REGEN = Decimal("2")
 # --- Run shape -------------------------------------------------------------
 DEFAULT_TICKS = 40
 
+# The starter behaviour every agent seat inherits until its first rewrite.
+STARTER = "starter.lua"
+
 
 def _read_lua(name: str) -> str:
     return (_LUA_DIR / name).read_text()

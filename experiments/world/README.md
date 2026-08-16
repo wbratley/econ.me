@@ -119,6 +119,54 @@ endowment.
   IRON/tick, unmet → DISREPAIR, HUNGER's twin), so there the IRON market
   has three standing customers and specialization is a paid choice.
 
+## The stone age (content pack #2)
+
+`stone_age.py` is the second content pack — same rule (data + Lua, zero
+engine change), different problem. The frontier pack proves the engine is
+an *economy*; the stone age proves it is a *survival game*: survival
+costs most of the tick, tools buy back time, and neglect kills.
+
+| axis | frontier | stone age |
+|---|---|---|
+| bind | markets / specialization | needs / the elements |
+| scarcity | ORE (deposit-gated) | LABOR (1/tick ration) |
+| teeth | DISREPAIR (the UPKEEP sink) | HUNGER, EXPOSURE, DISEASE |
+| starter script | comfortable | hand-to-mouth treadmill |
+
+The shape: two needs — **FOOD** (1/tick from BERRIES / COOKED_MEAT, else
+HUNGER) and **WARMTH** (1.5/tick from the WARMTH flow-good, else
+EXPOSURE). Food comes from GATHER (a loot-table recipe) and HUNT (a
+lottery: 55% nothing bare-handed); warmth from TEND_FIRE (1 WOOD → 8
+WARMTH at a FIRE facility) plus a graded ladder — REST under a SHELTER
+(1.0, labor-free), HUDDLE in CLOTHES (+0.5, labor-free). Shelter +
+clothes exactly cover the need; shelter alone is a chronic-but-
+survivable 0.5 gap (equilibrium 10 < threshold 18). MEAT rots (0.30/tick)
+and eating it raw is a 25%-per-meal DISEASE lottery — cooking is a FIRE
+facility away. Capital goods are the escape: SPEAR / BAG / TRAP improve
+the hunt and the gather, CLOTHES / SHELTER / BED the warmth budget. All
+conditions follow the run-5 equilibrium lesson: grant/decay equilibrium
+sits **above** the incapacitation threshold (HUNGER 20 ≫ 15, EXPOSURE
+30 ≫ 18, DISEASE 20 ≫ 2.5), so neglect reliably kills between ticks
+18–40, and adaptation reliably saves.
+
+The balance contract is three policy tests, not numbers in a comment:
+`test_neglect_kills` (a seat that gathers nothing dies in 18–40),
+`test_shelter_alone_is_misery_not_death` (chronic cold, alive), and
+`test_starter_survives` (the bare `lua/stone_age_starter.lua` treadmill
+survives 40 ticks — barely, by design: it never builds capital).
+
+Expansion hooks left deliberately inert: BED (built, no effect yet),
+TRAP-consuming HUNT_TRAPS (best table, consumable), and the whole
+GOOD/RESEARCH axis from `docs/game.md` — the pack is data, so phases
+land as new rows, not engine patches.
+
+Agent runs pick it with `--scenario stone_age`:
+
+```bash
+.venv/bin/python -m experiments.agent.nim_run --scenario stone_age ...
+.venv/bin/pytest experiments/world/test_stone_age.py
+```
+
 ## What Phase 0 deliberately does NOT do
 
 - **Player control** (editing your own entity's behaviour script) — that's the

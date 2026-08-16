@@ -51,32 +51,41 @@ class Dynasty:
     entity_id: str | None = None
 
 
-def build_agent_world(session, dynasties: list[Dynasty]) -> None:
+def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier") -> None:
     """Content-pack substrate + symmetric, agent-owned seats.
 
-    `scenario.create_content` gives goods/tech/recipes/needs/markets and
-    installs the tiered libs through the gate (with manifest pinning).
-    Then each dynasty gets `scenario.make_house`'s identical endowment —
-    no role priming, no seat-specific starter — and the readiness gate
-    is switched to `readiness` mode: from here the world paces itself.
+    `scenario` names the pack (SCENARIOS below): it provides goods/tech/
+    recipes/needs/markets, installs the tiered libs through the gate (with
+    manifest pinning), and defines the symmetric seat constructor plus the
+    starter behaviour every dynasty inherits. Then each dynasty gets that
+    pack's identical endowment — no role priming, no seat-specific starter
+    — and the readiness gate is switched to `readiness` mode: from here the
+    world paces itself.
     """
     from econengine.models import Script, ScriptType, WorldSetting
 
-    from experiments.world import scenario
+    from experiments.world import scenario as _frontier
+    from experiments.world import stone_age
+
+    scenarios = {"frontier": _frontier, "stone_age": stone_age}
+    if scenario not in scenarios:
+        raise ValueError(f"unknown scenario {scenario!r}; "
+                         f"known: {sorted(scenarios)}")
+    pack = scenarios[scenario]
 
     if not dynasties:
         raise ValueError("need at least one dynasty")
 
-    scenario.create_content(session)
+    pack.create_content(session)
 
     for d in dynasties:
-        entity = scenario.make_house(session, d.name)
+        entity = pack.make_house(session, d.name)
         entity.owner_id = d.user_id          # the join-tool pattern: the
         d.entity_id = entity.id               # seat becomes a player's own
         session.add(Script(
             name=f"house-behaviour-{entity.id}",
             script_type=ScriptType.BEHAVIOUR,
-            source=scenario._read_lua("starter.lua"),
+            source=pack._read_lua(pack.STARTER),
             entity_id=entity.id,
             timeout_ms=200,
             state={},
