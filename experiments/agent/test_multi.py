@@ -17,7 +17,6 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
@@ -40,11 +39,14 @@ ROLES = ("farmer", "miner", "smith")
 
 
 @pytest.fixture
-def client():
+def client(tmp_path):
+    # A FILE-backed DB, like the live server: parallel rounds issue
+    # concurrent requests, and StaticPool's one shared :memory: connection
+    # serializes mid-query ("tuple index out of range"). Separate
+    # connections let SQLite's own locking do the coordinating.
     engine = create_engine(
-        "sqlite:///:memory:",
+        f"sqlite:///{tmp_path}/world.db",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     app.state._test_engine = engine
@@ -196,6 +198,31 @@ def test_dead_model_never_stops_the_world(client, monkeypatch, tmp_path):
     # the dead house kept its starter behaviour
     src = snapshots[1]["dynasties"]["House Two"]["behaviour"]["source"]
     assert "ctx" in src or "--" in src          # still the wired starter
+
+
+def test_decisions_overlap_in_time(client, tmp_path):
+    """The houses' model calls run concurrently: every model waits on a
+    barrier ALL of them must reach while its own call is in flight —
+    sequential cycles would break the barrier (timeout) and the houses
+    would journal failures instead of accepting."""
+    import threading
+
+    gate = threading.Barrier(3, timeout=10)
+
+    class BarrierModel:
+        name = "test:barrier"
+
+        def complete(self, system, user):
+            gate.wait()                 # only passes if 3 calls overlap
+            return CLEAN
+
+    loops = [(d, AgentLoop(McpClient(client["transports"][d.user_id]),
+                           BarrierModel(), entity_id=d.entity_id))
+             for d in client["dynasties"]]
+    snapshots = run_rounds(loops, 1, tmp_path)
+
+    for name in NAMES:
+        assert snapshots[0]["dynasties"][name]["entry"]["accepted"]
 
 
 # ===========================================================================

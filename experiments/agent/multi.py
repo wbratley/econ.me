@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -167,14 +168,31 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
     return snap
 
 
+def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
+    """One dynasty's decision turn, ready to run on its own thread: the
+    dynasties' cycles are independent (each reads only its own entity's
+    surface, and ticks only move at resolution — after everyone has
+    decided), so their LLM latencies can overlap instead of summing."""
+    try:
+        return lp.cycle()
+    except Exception as exc:                # provider death: keep playing
+        return {
+            "entity": d.entity_id, "model": d.model_name,
+            "round": round_no, "attempts": 0, "accepted": False,
+            "kept_old": True, "refusal": f"model failure: {exc}",
+            "warnings": [], "source_sha": None, "prompt_bytes": 0,
+        }
+
+
 def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                out_dir: str | Path,
                admin_advance=None) -> list[dict]:
-    """Rounds 1..N. Each round: every dynasty cycles then readies; the
-    final ready resolves the round in-request (readiness gate); a
-    snapshot lands in `out_dir/round-XX.json`. A dynasty whose model
-    hard-fails (network, provider) keeps its behaviour, journals the
-    failure, and STILL readies — one dead model must not stop the world.
+    """Rounds 1..N. Each round: every dynasty cycles — CONCURRENTLY, the
+    decisions are independent — then readies in order, and the final
+    ready resolves the round in-request (readiness gate); a snapshot
+    lands in `out_dir/round-XX.json`. A dynasty whose model hard-fails
+    (network, provider) keeps its behaviour, journals the failure, and
+    STILL readies — one dead model must not stop the world.
     `admin_advance` is the referee fallback for a round nobody resolved
     (never expected in readiness mode; keeps long runs unstickable)."""
     out = Path(out_dir)
@@ -184,16 +202,15 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
 
     for round_no in range(1, rounds + 1):
         resolved, entries = None, {}
+        with ThreadPoolExecutor(max_workers=len(loops)) as pool:
+            futures = [(d, pool.submit(_decide, d, lp, round_no))
+                       for d, lp in loops]
+            for d, fut in futures:
+                entries[d.name] = fut.result()
+        # Readying stays sequential: consent order is free (the gate
+        # resolves in whichever ready lands last), and a slow set_ready
+        # costs a round trip, not an LLM call.
         for d, lp in loops:
-            try:
-                entries[d.name] = lp.cycle()
-            except Exception as exc:            # provider death: keep playing
-                entries[d.name] = {
-                    "entity": d.entity_id, "model": d.model_name,
-                    "round": round_no, "attempts": 0, "accepted": False,
-                    "kept_old": True, "refusal": f"model failure: {exc}",
-                    "warnings": [], "source_sha": None, "prompt_bytes": 0,
-                }
             try:
                 out_ready = lp.set_ready()
                 if out_ready.get("resolved"):
