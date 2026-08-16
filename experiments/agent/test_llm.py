@@ -40,8 +40,9 @@ def test_window_slides():
 # ===========================================================================
 
 class _Resp:
-    def __init__(self, body):
+    def __init__(self, body, status_code=200):
         self._body = body
+        self.status_code = status_code
 
     def raise_for_status(self):
         pass
@@ -84,3 +85,27 @@ def test_nim_default_budget_covers_reasoning():
     # the regression: 4096 shared by thinking + answer starved gpt-oss —
     # the cap is not a target, so doubling it costs nothing when unused
     assert NimModel("k", "openai/gpt-oss-20b")._max_tokens >= 8192
+
+
+def test_nim_complete_raises_on_null_content(monkeypatch):
+    # the wiring gap, seen live twice (nim-run2 r4, nim-run3 r2 under a
+    # machine suspend): NimModel returned the raw content field, so a
+    # null final channel leaked into the loop and died far from the
+    # cause as `'NoneType' object has no attribute 'strip'`. Now the
+    # same seam as OpenAIModel: _final_content raises with the
+    # finish_reason in the message — and does NOT burn transport
+    # retries on an empty answer.
+    import httpx
+    body = {"choices": [{"finish_reason": "length", "message": {
+        "content": None, "reasoning_content": "thinking...",
+    }}]}
+    posts = []
+
+    def fake_post(*a, **k):
+        posts.append(k)
+        return _Resp(body)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    with pytest.raises(RuntimeError, match="finish_reason=length"):
+        NimModel("k", "openai/gpt-oss-20b").complete("s", "u")
+    assert len(posts) == 1          # raised out, not retried in-loop
