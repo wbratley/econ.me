@@ -24,7 +24,10 @@ The loop is the payoff of the scripting arc (docs/scripting.md):
 
 One cycle = observe, think, submit (retried on lint refusal, bounded),
 journal. Warnings and per-tick script errors ride into the next cycle's
-prompt: the model sees the consequences of its last rewrite.
+prompt: the model sees the consequences of its last rewrite. The model
+has three ways to answer: the complete script, edit blocks (edit_mode),
+or KEEP to carry the current behaviour forward verbatim — a player
+whose script is right readies up without gambling on a rewrite.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import re
 
 from .llm import ScriptedModelEmpty, strip_fences
 
@@ -64,13 +68,33 @@ class McpClient:
 # ---------------------------------------------------------------------------
 
 
-def system_prompt(libraries: dict, entity_id: str) -> str:
+def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False) -> str:
     """Identity + the tier vocabulary, verbatim. The std/world/pack sources
     go in whole: a model that has read them cannot honestly hallucinate a
     helper, and the lint backstops the ones that do anyway."""
     std = libraries["std"]["source"]
     world = libraries.get("world") or "-- (no world lib installed)"
     pack = libraries.get("pack") or "-- (no content pack installed)"
+    reply_rules = (
+        "Reply with ONLY the complete Lua source of your next behaviour script.\n"
+        "No prose, no markdown fences. If the current behaviour is already\n"
+        "right, reply with the single line KEEP to carry it forward unchanged.")
+    if edit_mode:
+        reply_rules = (
+            "Reply in one of three ways:\n"
+            "- the complete Lua source of your next behaviour script (no prose,\n"
+            "  no markdown fences), or\n"
+            "- the single line KEEP, to carry the current behaviour forward\n"
+            "  unchanged, or\n"
+            "- a list of edit blocks, to change only part of the current\n"
+            "  behaviour — nothing outside the blocks:\n\n"
+            "  <<<<<<< SEARCH\n"
+            "  exact lines copied from the current behaviour\n"
+            "  =======\n"
+            "  replacement lines\n"
+            "  >>>>>>> REPLACE\n\n"
+            "  Each SEARCH must match the current behaviour exactly, whitespace\n"
+            "  included; blocks apply in order.")
     return f"""\
 You are the mind of entity {entity_id} in a batched simulated economy. You
 do NOT act tick by tick: your whole agency is one Lua BEHAVIOUR script
@@ -104,8 +128,7 @@ undeclared globals (read OR write) are refused; `local` is always the
 fix. Money quantities are exact decimal strings — convert with tonumber
 for arithmetic, pass strings to intents.
 
-Reply with ONLY the complete Lua source of your next behaviour script.
-No prose, no markdown fences.
+{reply_rules}
 
 ----- std.* (engine stdlib, pinned) -----
 {std}
@@ -118,7 +141,8 @@ No prose, no markdown fences.
 """
 
 
-def user_prompt(observation: dict, current: dict, feedback: list[str]) -> str:
+def user_prompt(observation: dict, current: dict, feedback: list[str],
+                edit_mode: bool = False) -> str:
     """One turn: the parity digest, the current behaviour, and every
     finding the platform handed back since (lint refusals, warnings,
     script errors) — the model argues with the world, not from memory."""
@@ -128,8 +152,42 @@ def user_prompt(observation: dict, current: dict, feedback: list[str]) -> str:
     if feedback:
         parts += ["", "FINDINGS since your last submission (address these):"]
         parts += [f"- {f}" for f in feedback]
-    parts += ["", "Write the next behaviour. Lua source only."]
+    parts += ["", ("Write the next behaviour: complete Lua source, edit "
+                    "blocks, or KEEP." if edit_mode
+                    else "Write the next behaviour. Lua source only.")]
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Edit blocks (SEARCH/REPLACE): patch the current behaviour instead of
+# rewriting it whole. Aider's format — the one LLMs transcribe most
+# faithfully; strict exact match, because the retry loop is the fuzzing.
+# ---------------------------------------------------------------------------
+
+_PATCH_RE = re.compile(
+    r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE",
+    re.DOTALL)
+
+
+def _parse_patches(text: str) -> list[tuple[str, str]]:
+    """All (search, replace) blocks in a raw completion; [] when the reply
+    isn't in block form (a full rewrite or KEEP — the other two actions)."""
+    return [(m.group(1), m.group(2)) for m in _PATCH_RE.finditer(text)]
+
+
+def _apply_edits(source: str,
+                 patches: list[tuple[str, str]]) -> tuple[str | None, str | None]:
+    """Apply blocks in order, first occurrence each. Returns the patched
+    source, or (None, why) — `why` is feedback the model can act on."""
+    for i, (search, replace) in enumerate(patches, 1):
+        if not search.strip():
+            return None, f"block {i}: SEARCH is empty"
+        if search not in source:
+            head = " ".join(search.split())[:60]
+            return None, f"block {i}: SEARCH not found in the current " \
+                         f"behaviour: {head!r}"
+        source = source.replace(search, replace, 1)
+    return source, None
 
 
 # ---------------------------------------------------------------------------
@@ -140,13 +198,14 @@ def user_prompt(observation: dict, current: dict, feedback: list[str]) -> str:
 class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
-                 last_ticks: int = 8):
+                 last_ticks: int = 8, edit_mode: bool = False):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
         self.max_attempts = max_attempts
         self.journal_path = journal_path
         self.last_ticks = last_ticks
+        self.edit_mode = edit_mode
         self._feedback: list[str] = []          # rides into the next prompt
         self.journal_lines: list[dict] = []
 
@@ -205,22 +264,53 @@ class AgentLoop:
             # to show the model except that fact.
             current = {"source": "(no behaviour yet — this submission is your first)"}
         feedback, self._feedback = self._feedback, []
+        has_current = current.get("id") is not None
 
         attempts, accepted, warnings, last_error = 0, False, [], None
-        source = ""
+        source, action = "", "rewrite"
         while attempts < self.max_attempts:
             attempts += 1
             try:
                 raw = self.model.complete(
-                    system_prompt(libraries, eid),
-                    user_prompt(obs, current, feedback))
+                    system_prompt(libraries, eid, edit_mode=self.edit_mode),
+                    user_prompt(obs, current, feedback, edit_mode=self.edit_mode))
             except ScriptedModelEmpty:
                 raise                  # a missing fixture, not a provider hiccup
             except Exception as exc:  # provider/model failure: an attempt,
                 last_error = f"model failure: {exc}"   # not a dead round
                 feedback.append(f"the previous model call failed: {exc}")
                 continue
-            source = strip_fences(raw)
+
+            # action 1: KEEP — carry the behaviour forward verbatim, no
+            # submission at all. Readying up without gambling a rewrite.
+            if strip_fences(raw).upper() == "KEEP":
+                if has_current:
+                    source, action = current["source"], "keep"
+                    break
+                last_error = "KEEP refused: no previous behaviour to keep"
+                feedback.append("you replied KEEP, but there is no previous "
+                                "behaviour to keep — write the complete script")
+                continue
+
+            # action 2: edit blocks — patch the current behaviour, then
+            # through the same lint gate as a full rewrite
+            patches = _parse_patches(raw)
+            if patches:
+                if not has_current:
+                    last_error = "patch refused: no previous behaviour to patch"
+                    feedback.append("you sent edit blocks, but there is no "
+                                    "previous behaviour — write the complete script")
+                    continue
+                patched, err = _apply_edits(current["source"], patches)
+                if err:
+                    last_error = err
+                    feedback.append(f"patch did not apply: {err}. SEARCH must "
+                                    "match the current behaviour exactly")
+                    continue
+                source, action = patched, "edit"
+            else:                     # action 3: the full rewrite
+                source, action = strip_fences(raw), "rewrite"
+
             try:
                 result = self.mcp.call(
                     "set_behaviour",
@@ -242,6 +332,7 @@ class AgentLoop:
             "attempts": attempts,
             "accepted": accepted,
             "kept_old": not accepted,
+            "action": action,
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],
