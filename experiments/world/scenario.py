@@ -49,6 +49,12 @@ MINER_USD = Decimal("500")
 SMITH_USD = Decimal("1000")
 MONEY_SUPPLY = FARMER_USD + MINER_USD + SMITH_USD
 
+# The agent world's seats: symmetric. Every house the same endowment —
+# identical hands, so any asymmetry that shows up later was EARNED (a
+# model chose to specialize) rather than dealt. The proving run's cast
+# keeps its specialist numbers above.
+HOUSE_USD = Decimal("500")
+
 # --- The survival buffer ---------------------------------------------------
 # FARM_GRAIN is duration-1, so a Farmer has no home-grown food on tick 1;
 # every entity carries a few GRAIN so the first tick's consumption pass does
@@ -401,6 +407,29 @@ def _make_smith(session: Session) -> Entity:
     # whole world. Only the Smith owns a FORGE, so only the Smith smelts.
     tech.grant_unlock(session, smith, tech.get_technology(session, "SMELTING"), 0)
     return smith
+
+
+def make_house(session: Session, name: str = "House") -> Entity:
+    """One symmetric seat for the agent world: same money, same survival
+    buffer, same parcel bundle — FARM and FORGE, an ORE seam, both live
+    unlocks — as every other house. No role is primed anywhere: the
+    starter behaviour is the plain survival script (farm, eat, sell the
+    surplus), and everything beyond that is the player's to invent."""
+    house = services.create_entity(session, name, EntityType.INDIVIDUAL)
+    services.create_account(session, house, "USD", initial_balance=HOUSE_USD)
+    markets.adjust_holding(session, house, "GRAIN", FOOD_BUFFER)
+    parcel = parcels.create_parcel(session, "LAND", name=f"{name}'s Land",
+                                    owner=house)
+    parcels.add_facility(session, parcel, "FARM")
+    parcels.add_facility(session, parcel, "FORGE")
+    parcels.add_deposit(session, parcel, "ORE", ORE_QUANTITY,
+                        capacity=ORE_CAPACITY, regen_per_tick=ORE_REGEN)
+    tech.grant_unlock(session, house,
+                      tech.get_technology(session, "FARMING"), 0)
+    # SMELTING is world-scope: the first grant unlocks it for everyone.
+    tech.grant_unlock(session, house,
+                      tech.get_technology(session, "SMELTING"), 0)
+    return house
 
 
 def _wire_scripts(session: Session, farmer: Entity, miner: Entity, smith: Entity) -> None:

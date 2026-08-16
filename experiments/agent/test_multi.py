@@ -8,6 +8,7 @@ never stops the world, and the dashboard tells the story from the
 snapshots alone.
 """
 
+import hashlib
 import json
 from decimal import Decimal
 
@@ -33,9 +34,13 @@ from experiments.agent.multi import (
 CLEAN = "ctx.state.note = 'round'"
 CLEAN2 = "ctx.state.note = 'again'"
 
+# the shared survival starter every seat now runs on round 0
+import experiments.world.scenario as _scenario
+_starter_sha = hashlib.sha256(
+    _scenario._read_lua("starter.lua").encode()).hexdigest()
+
 NAMES = ["House One", "House Two", "House Three"]
-USER_IDS = ["u-far", "u-min", "u-smi"]
-ROLES = ("farmer", "miner", "smith")
+USER_IDS = ["u-one", "u-two", "u-three"]
 
 
 @pytest.fixture
@@ -71,9 +76,9 @@ def client(tmp_path):
         s.add_all([User(id=uid, email=f"{uid}@x", name=n, provider="test",
                         provider_id=uid) for uid, n in zip(USER_IDS, NAMES)])
         s.commit()
-        dynasties = [Dynasty(user_id=uid, name=n, role=r, model_name=f"test:{r}",
+        dynasties = [Dynasty(user_id=uid, name=n, model_name=f"test:{uid}",
                              token=uid)
-                     for uid, n, r in zip(USER_IDS, NAMES, ROLES)]
+                     for uid, n in zip(USER_IDS, NAMES)]
         build_agent_world(s, dynasties)
 
     tc = TestClient(app)
@@ -129,17 +134,38 @@ def test_world_builds_with_owned_seats_and_readiness_gate(client):
     assert libs["world"] and libs["pack"]
 
 
-def test_roles_are_distinct_starting_positions(client):
-    """Farmer/Miner/Smith: different parcels, different starter holdings —
-    the asymmetry the strategies play against."""
-    views = {}
+def test_seats_start_identical(client):
+    """No primed roles: every house starts with the same money, the same
+    parcel bundle (FARM + FORGE + an ORE seam), both live unlocks, and
+    the same survival starter — identical hands, so anything the run
+    shows later was played, not dealt."""
+    from sqlalchemy import select
+
+    from econengine.models import Account, Parcel
+
+    with Session(client["engine"]) as s:
+        for d in client["dynasties"]:
+            money = s.execute(select(Account.balance).where(
+                Account.entity_id == d.entity_id)).scalar_one()
+            assert Decimal(money) == Decimal("500")
+            parcels = s.execute(select(Parcel).where(
+                Parcel.owner_id == d.entity_id)).scalars().all()
+            assert len(parcels) == 1
+            parcel = parcels[0]
+            assert {f.facility_type for f in parcel.facilities} == {
+                "FARM", "FORGE"}
+            assert [(dep.symbol, dep.capacity, dep.regen_per_tick)
+                    for dep in parcel.deposits] == [
+                ("ORE", Decimal("100"), Decimal("2"))]
     for uid, d in zip(USER_IDS, client["dynasties"]):
         state = McpClient(client["transports"][uid]).call(
             "entity_state", {"entity_id": d.entity_id})
-        views[d.role] = state
-    assert any(h["symbol"] == "GRAIN" and Decimal(h["quantity"]) > 0
-               for h in views["farmer"]["holdings"])
-    assert views["smith"]["parcels"] and views["miner"]["parcels"]
+        unlocks = set(state.get("unlocks", []))
+        assert {"FARMING", "SMELTING"} <= unlocks, unlocks
+        behaviour = McpClient(client["transports"][uid]).call(
+            "get_behaviour", {"entity_id": d.entity_id})["source"]
+        assert hashlib.sha256(behaviour.encode()).hexdigest() \
+            == _starter_sha
 
 
 # ===========================================================================
@@ -164,7 +190,7 @@ def test_rounds_resolve_on_final_consent_and_snapshot(client, monkeypatch, tmp_p
     first, last = snapshots[0], snapshots[-1]
     total0 = sum(dynasty_money(v) for v in first["dynasties"].values())
     total1 = sum(dynasty_money(v) for v in last["dynasties"].values())
-    assert total1 == total0 == Decimal("2000")
+    assert total1 == total0 == Decimal("1500")
     # files on disk, one per round
     names = sorted(p.name for p in tmp_path.glob("round-*.json"))
     assert names == ["round-01.json", "round-02.json"]
@@ -183,7 +209,7 @@ def test_dead_model_never_stops_the_world(client, monkeypatch, tmp_path):
 
     loops = []
     for d in client["dynasties"]:
-        model = (ExplodingModel() if d.role == "miner"
+        model = (ExplodingModel() if d.user_id == USER_IDS[1]
                  else ScriptedModel([CLEAN, CLEAN2]))
         loops.append((d, AgentLoop(McpClient(client["transports"][d.user_id]),
                                    model, entity_id=d.entity_id)))
@@ -243,7 +269,7 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert "(no data)" in page            # prices with zero trades: quiet, not broken
     assert "FOOD satisfaction" in page
     assert "R1" in page and "R2" in page
-    assert "1,000.00" in page and "500.00" in page   # smith / farmer seats
+    assert page.count("500.00") >= 3        # three identical seats
     assert "ctx.state.note" in page         # latest behaviour source shown
     # strategy trail: one sha chip per round per dynasty
     assert page.count("sha-") >= 2 * 3

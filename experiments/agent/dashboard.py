@@ -164,8 +164,7 @@ def _strategy(snapshots: list[dict]) -> str:
     for name, view in snapshots[-1]["dynasties"].items():
         parts.append(
             f"<details open><summary><b>{_esc(name)}</b> "
-            f"<span class=\"quiet\">({_esc(view.get('model', ''))}, "
-            f"started as {_esc(view.get('role', ''))})</span></summary>")
+            f"<span class=\"quiet\">({_esc(view.get('model', ''))})</span></summary>")
         parts.append('<div class="sha-trail">')
         for snap in snapshots:
             b = snap["dynasties"][name]["behaviour"]
