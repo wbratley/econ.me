@@ -90,6 +90,28 @@ def strip_fences(text: str) -> str:
     return stripped
 
 
+def _final_content(data: dict) -> str:
+    """The final answer from a chat-completions body: `message.content`,
+    ignoring the reasoning channel reasoning models also return
+    (`reasoning_content` / `reasoning`). Thinking stays enabled — the
+    budget just has to cover it (see NimModel's max_tokens). A null or
+    empty final channel raises with `finish_reason` in the message:
+    the classic case is `length` with reasoning present, i.e. thinking
+    consumed the whole completion budget and the answer never started.
+    Raising beats leaking None into the loop, where it dies far from
+    the cause as `'NoneType' object has no attribute 'strip'`."""
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if content is None or not str(content).strip():
+        finish = choice.get("finish_reason") or "?"
+        why = ("; reasoning consumed the token budget — raise max_tokens"
+               if message.get("reasoning_content") else "")
+        raise RuntimeError(
+            f"empty final content (finish_reason={finish}{why})")
+    return str(content)
+
+
 class AnthropicModel:
     """Anthropic Messages API over plain httpx."""
 
@@ -122,6 +144,9 @@ class AnthropicModel:
         )
         r.raise_for_status()
         body = r.json()
+        # content blocks: text blocks join; thinking blocks (extended
+        # mind) carry "thinking", not "text", so they vanish here —
+        # reasoning on, reasoning ignored
         return "".join(
             block.get("text", "") for block in body.get("content", [])
         )
@@ -155,7 +180,7 @@ class OpenAIModel:
             },
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        return _final_content(r.json())
 
 
 NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
@@ -235,7 +260,7 @@ class NimModel(OpenAIModel):
     def __init__(self, api_key: str, model: str,
                  timeout: float = 120.0,
                  base_url: str = NIM_DEFAULT_BASE,
-                 temperature: float = 0.3, max_tokens: int = 4096):
+                 temperature: float = 0.3, max_tokens: int = 8192):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"

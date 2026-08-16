@@ -33,7 +33,7 @@ import datetime as _dt
 import hashlib
 import json
 
-from .llm import strip_fences
+from .llm import ScriptedModelEmpty, strip_fences
 
 # ---------------------------------------------------------------------------
 # MCP client (transport-free: tests inject a TestClient adapter, run.py an
@@ -210,8 +210,16 @@ class AgentLoop:
         source = ""
         while attempts < self.max_attempts:
             attempts += 1
-            raw = self.model.complete(
-                system_prompt(libraries, eid), user_prompt(obs, current, feedback))
+            try:
+                raw = self.model.complete(
+                    system_prompt(libraries, eid),
+                    user_prompt(obs, current, feedback))
+            except ScriptedModelEmpty:
+                raise                  # a missing fixture, not a provider hiccup
+            except Exception as exc:  # provider/model failure: an attempt,
+                last_error = f"model failure: {exc}"   # not a dead round
+                feedback.append(f"the previous model call failed: {exc}")
+                continue
             source = strip_fences(raw)
             try:
                 result = self.mcp.call(
