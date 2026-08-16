@@ -295,7 +295,7 @@ class NimModel(OpenAIModel):
                     last_error = f"HTTP {r.status_code}: {r.text[:200]}"
                     continue
                 r.raise_for_status()
-                return r.json()["choices"][0]["message"]["content"]
+                return _final_content(r.json())
             except httpx.HTTPError as exc:
                 last_error = str(exc)
         raise RuntimeError(f"NIM {self._model} failed after 3 attempts: "
