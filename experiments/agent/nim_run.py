@@ -70,6 +70,10 @@ def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
     app import so DATABASE_URL points at the run's own database."""
     db_path = out / "world.db"
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    # The harness outlives an hour-long human session: tokens must last the
+    # whole run (a 20-round world runs past 60 minutes — learned the hard
+    # way when round 12 bounced 401 on set_ready).
+    os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "100000"
     if db_path.exists():
         db_path.unlink()
 

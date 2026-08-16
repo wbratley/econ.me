@@ -6,7 +6,10 @@ from jose import JWTError, jwt
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+# Deployment config: the default serves humans on the public site (an hour
+# is a reasonable session); a harness that boots its own world for a
+# multi-hour dynasty run sets this much higher in the environment.
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 oauth = OAuth()
 
