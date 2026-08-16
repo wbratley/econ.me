@@ -129,6 +129,9 @@ def main(argv=None) -> int:
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--ticks-per-round", type=int, default=5)
     ap.add_argument("--max-attempts", type=int, default=3)
+    ap.add_argument("--edit-mode", action="store_true",
+                    help="models may answer with SEARCH/REPLACE edit blocks "
+                         "or KEEP instead of a full rewrite")
     ap.add_argument("--port", type=int, default=8906)
     ap.add_argument("--out", default="/tmp/nim-run")
     ap.add_argument("--keep-server", action="store_true")
@@ -186,7 +189,8 @@ def main(argv=None) -> int:
                 McpClient(http_transport(base, d.token)),
                 models[roles.index(d.role)],
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
-                journal_path=str(out / f"journal-{d.role}.jsonl"))
+                journal_path=str(out / f"journal-{d.role}.jsonl"),
+                edit_mode=args.edit_mode)
             loops.append((d, lp))
 
         print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")

@@ -93,6 +93,9 @@ def main(argv=None) -> int:
     ap.add_argument("--cycles", type=int, default=1)
     ap.add_argument("--max-attempts", type=int, default=3,
                     help="lint-refusal retries per cycle before keeping the old behaviour")
+    ap.add_argument("--edit-mode", action="store_true",
+                    help="answer with SEARCH/REPLACE edit blocks or KEEP "
+                         "instead of a full rewrite")
     ap.add_argument("--advance", type=int, default=0, metavar="N",
                     help="advance a round after each of the first N cycles "
                          "(operator step; needs --admin-token)")
@@ -121,7 +124,8 @@ def main(argv=None) -> int:
 
     loop = AgentLoop(McpClient(http_transport(args.base, args.token)),
                      model, entity_id=args.entity_id,
-                     max_attempts=args.max_attempts, journal_path=args.journal)
+                     max_attempts=args.max_attempts, journal_path=args.journal,
+                     edit_mode=args.edit_mode)
     eid = loop.ensure_entity()
     print(f"agent {model.name} playing entity {eid}: {args.cycles} cycle(s)")
 

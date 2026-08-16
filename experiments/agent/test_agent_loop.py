@@ -28,7 +28,9 @@ from experiments.agent.llm import (
     AnthropicModel, OpenAIModel, ScriptedModel, ScriptedModelEmpty,
     model_from_env, strip_fences,
 )
-from experiments.agent.loop import AgentLoop, McpClient, McpError
+from experiments.agent.loop import (
+    AgentLoop, McpClient, McpError, system_prompt, user_prompt,
+)
 from experiments.agent.run import run_cycles
 
 TRAP = "local fills = settle_last_orders()"          # the nil-call zombie
@@ -127,6 +129,66 @@ def test_exhausted_attempts_keep_the_working_behaviour(client):
     assert not entry["accepted"] and entry["kept_old"]
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["id"] == good["id"] and got["source"] == "-- healthy"
+
+
+# ===========================================================================
+# KEEP and edit blocks: three ways to answer
+# ===========================================================================
+
+def test_keep_carries_the_behaviour_forward_verbatim(client):
+    lp, _ = loop(client, ["KEEP"])
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert entry["action"] == "keep" and entry["attempts"] == 1
+    assert not entry["accepted"] and entry["kept_old"]
+    assert entry["refusal"] is None              # a choice, not a failure
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["id"] == good["id"] and got["source"] == "-- healthy"
+
+
+def test_keep_without_previous_behaviour_is_refused(client):
+    lp, model = loop(client, ["KEEP", CLEAN])
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "no previous behaviour to keep" in model.calls[1]["user"]
+
+
+def test_edit_blocks_patch_the_current_behaviour(client):
+    lp, _ = loop(client, ["<<<<<<< SEARCH\nctx.state.plan = std.amount_str(1)\n=======\nctx.state.plan = std.amount_str(2)\n>>>>>>> REPLACE"])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["action"] == "edit"
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == "ctx.state.plan = std.amount_str(2)"
+
+
+def test_failed_patch_feeds_back_and_retries(client):
+    bad = "<<<<<<< SEARCH\nnot in the source anywhere\n=======\nx\n>>>>>>> REPLACE"
+    good = f"<<<<<<< SEARCH\n{CLEAN}\n=======\nctx.state.plan = std.amount_str(3)\n>>>>>>> REPLACE"
+    lp, model = loop(client, [bad, good])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "SEARCH not found" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == "ctx.state.plan = std.amount_str(3)"
+
+
+def test_system_prompt_offers_the_three_actions(client):
+    lp, _ = loop(client, [CLEAN])
+    model_edit = ScriptedModel([CLEAN])
+    AgentLoop(mcp(client), model_edit, edit_mode=True)
+    # default mode: full rewrite, and KEEP as the no-change answer
+    prompt = system_prompt({"std": {"source": "-- std"}}, "e1")
+    assert "KEEP" in prompt and "SEARCH" not in prompt
+    # edit mode: all three
+    prompt_edit = system_prompt({"std": {"source": "-- std"}}, "e1",
+                                edit_mode=True)
+    assert "KEEP" in prompt_edit and "<<<<<<< SEARCH" in prompt_edit
+    assert ">>>>>>> REPLACE" in prompt_edit
 
 
 class FlakyProvider:
