@@ -112,10 +112,12 @@ endowment.
 - **No monetary authority.** Money is a genesis endowment; nothing mints or
   burns during the run, so the money supply is conserved by trade (asserted).
   A bank/issue path is a Phase 1+ concern.
-- **The IRON market has no buyer** in this cast — the Smith accumulates IRON
-  and runs on its endowment. A Toolmaker/Steelmaker that closes the loop is a
-  natural Phase 1 addition; for Phase 0 the point is that the chain *runs*,
-  not that it reaches a sustainable steady state.
+- **The IRON market has no buyer in the proving cast** — the Smith
+  accumulates IRON and runs on its endowment (the cast's 30-IRON upkeep
+  buffer keeps the 40-tick proving run inert to the sink). The agent
+  world closes the loop: every house carries the **UPKEEP** need (0.5
+  IRON/tick, unmet → DISREPAIR, HUNGER's twin), so there the IRON market
+  has three standing customers and specialization is a paid choice.
 
 ## What Phase 0 deliberately does NOT do
 

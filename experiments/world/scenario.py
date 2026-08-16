@@ -6,6 +6,13 @@ across markets beside a food chain (GRAIN), with needs, deposits, and
 facilities. **No engine change** -- this is data + Lua, the substrate every
 later phase of the game is built on.
 
+THE DEMAND SINK: every INDIVIDUAL burns 0.5 IRON per tick as UPKEEP, and
+neglect accumulates DISREPAIR (HUNGER's twin). Without a customer for IRON,
+nobody mines (runs 3 and 4: identical seats converge on subsistence
+farming, zero ORE/IRON orders all game); with it, a house must spend LABOR
+on its own mine + smelt or buy IRON from a specialist -- specialization
+becomes a paid choice instead of an accident.
+
 THE CAST (three specialist INDIVIDUALs; survival is robust by design):
 
   Farmer   runs starter.lua: FARM_GRAIN (1 LABOR -> 4 GRAIN) on a FARM,
@@ -62,6 +69,30 @@ HOUSE_USD = Decimal("500")
 # survival past the buffer depends on the food market clearing (it does --
 # food is cheap to produce: the Farmer's LABOR is auto-issued and free).
 FOOD_BUFFER = Decimal("5")
+
+# --- The industrial demand sink --------------------------------------------
+# UPKEEP: every INDIVIDUAL burns UPKEEP_RATE IRON per tick keeping its tools
+# and works in repair. This is the customer the ORE -> IRON chain was built
+# for: without a sink for IRON nobody mines (runs 3 and 4 -- zero ORE/IRON
+# orders all game), and identical seats converge on subsistence farming.
+# With it a house must either self-supply -- spending LABOR on MINE_ORE +
+# SMELT_IRON alongside its farming -- or buy IRON from a specialist, so
+# specialization becomes a paid choice instead of an accident.
+# 0.5/tick is 10 IRON per round per house: a specialist serving all three
+# houses runs ~1.5 LABOR/tick of mining and smelting, more than one house's
+# whole subsistence budget, so division of labour has room to pay even
+# before LABOR itself trades.
+UPKEEP_RATE = Decimal("0.5")
+# Startup stock, the iron analog of FOOD_BUFFER: round one is free to spend
+# learning (the recipe catalog names the codes), and the bill starts
+# arriving in round two. DISREPAIR grants 1 per fully-unmet tick and
+# incapacitates at 30, so outright neglect has roughly two rounds of grace
+# (buffer + counter) before an entity seizes.
+UPKEEP_BUFFER = Decimal("5")
+# The proving cast predates UPKEEP and its scripts do not trade IRON; a
+# 60-tick buffer keeps the 40-tick proving run inert to the sink, so the
+# chain's balanced-by-construction story is unchanged.
+PROVING_UPKEEP_BUFFER = Decimal("30")
 
 # --- The ORE seam ----------------------------------------------------------
 # The Miner draws 2 ORE/tick against regen of 2: a single mine is exactly
@@ -254,6 +285,15 @@ def _create_goods(session: Session) -> None:
         incapacitates_at=Decimal("30"),
         decay_per_tick=Decimal("0.05"),
     )
+    # DISREPAIR: the deprivation counter for neglected UPKEEP, in HUNGER's
+    # exact shape (grant 1 per fully-unmet tick, decay 0.05, incapacitates
+    # at 30) -- chronic neglect eventually seizes the entity, an
+    # intermittent miss does not.
+    goods.create_good(
+        session, "DISREPAIR",
+        incapacitates_at=Decimal("30"),
+        decay_per_tick=Decimal("0.05"),
+    )
 
 
 def _create_tech(session: Session) -> None:
@@ -360,6 +400,17 @@ def _create_needs(session: Session) -> None:
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
+    # UPKEEP: the industrial demand sink. Every INDIVIDUAL burns 0.5 IRON
+    # per tick (tools and works wearing out), giving the ORE -> IRON chain
+    # a customer other than its own producer. Unmet -> DISREPAIR, HUNGER's
+    # twin: 1 per fully-unmet tick, incapacitating at 30. IRON alone
+    # satisfies it -- one market to watch, and TOOLS stays a pure capital
+    # good the need never eats.
+    needs.create_need(
+        session, "UPKEEP", UPKEEP_RATE, ["IRON"],
+        entity_type=EntityType.INDIVIDUAL, priority=1,
+        condition_symbol="DISREPAIR", condition_quantity=Decimal("1"),
+    )
 
 
 def _create_markets(session: Session) -> None:
@@ -376,6 +427,7 @@ def _make_farmer(session: Session) -> Entity:
     farmer = services.create_entity(session, "Farmer", EntityType.INDIVIDUAL)
     services.create_account(session, farmer, "USD", initial_balance=FARMER_USD)
     markets.adjust_holding(session, farmer, "GRAIN", FOOD_BUFFER)
+    markets.adjust_holding(session, farmer, "IRON", PROVING_UPKEEP_BUFFER)
     # A FARM on an owned parcel, and the skill to use it.
     parcel = parcels.create_parcel(session, "LAND", name="Farmer's Field", owner=farmer)
     parcels.add_facility(session, parcel, "FARM")
@@ -387,6 +439,7 @@ def _make_miner(session: Session) -> Entity:
     miner = services.create_entity(session, "Miner", EntityType.INDIVIDUAL)
     services.create_account(session, miner, "USD", initial_balance=MINER_USD)
     markets.adjust_holding(session, miner, "GRAIN", FOOD_BUFFER)
+    markets.adjust_holding(session, miner, "IRON", PROVING_UPKEEP_BUFFER)
     # A parcel with a regenerating ORE seam (no facility -- the deposit binds).
     parcel = parcels.create_parcel(session, "LAND", name="Miner's Claim", owner=miner)
     parcels.add_deposit(
@@ -400,6 +453,7 @@ def _make_smith(session: Session) -> Entity:
     smith = services.create_entity(session, "Smith", EntityType.INDIVIDUAL)
     services.create_account(session, smith, "USD", initial_balance=SMITH_USD)
     markets.adjust_holding(session, smith, "GRAIN", FOOD_BUFFER)
+    markets.adjust_holding(session, smith, "IRON", PROVING_UPKEEP_BUFFER)
     # A FORGE on an owned parcel.
     parcel = parcels.create_parcel(session, "LAND", name="Smith's Forge", owner=smith)
     parcels.add_facility(session, parcel, "FORGE")
@@ -418,6 +472,11 @@ def make_house(session: Session, name: str = "House") -> Entity:
     house = services.create_entity(session, name, EntityType.INDIVIDUAL)
     services.create_account(session, house, "USD", initial_balance=HOUSE_USD)
     markets.adjust_holding(session, house, "GRAIN", FOOD_BUFFER)
+    # The iron analog of the food buffer: one round of UPKEEP covered at
+    # genesis, so the first round is free to spend learning the world (and
+    # the recipe catalog now names the codes). From round two the sink
+    # bills: mine and smelt, or buy from whoever does.
+    markets.adjust_holding(session, house, "IRON", UPKEEP_BUFFER)
     parcel = parcels.create_parcel(session, "LAND", name=f"{name}'s Land",
                                     owner=house)
     parcels.add_facility(session, parcel, "FARM")
