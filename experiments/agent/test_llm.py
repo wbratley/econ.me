@@ -8,7 +8,11 @@ full, the next call waits for the oldest entry to age out, and the
 
 import time
 
-from experiments.agent.llm import _RateLimiter
+import pytest
+
+from experiments.agent.llm import (
+    _RateLimiter, _final_content, NimModel, OpenAIModel,
+)
 
 
 def test_bursts_pass_then_wait():
@@ -29,3 +33,54 @@ def test_window_slides():
     lim.wait()                              # window already drained — no wait
     assert time.monotonic() - t0 < 0.2
     assert len(lim._times) == 1             # only the fresh call recorded
+
+
+# ===========================================================================
+# The reasoning-model seam: thinking on, thinking ignored
+# ===========================================================================
+
+class _Resp:
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+def test_final_content_takes_the_answer_not_the_reasoning():
+    body = {"choices": [{"finish_reason": "stop", "message": {
+        "content": "ctx.state.plan = std.amount_str(1)",
+        "reasoning_content": "the user wants a Lua behaviour; let me plan",
+        "reasoning": {"content": "nested variant some providers send"},
+    }}]}
+    assert _final_content(body) == "ctx.state.plan = std.amount_str(1)"
+
+
+def test_budget_starved_reasoning_raises_with_the_cause():
+    # gpt-oss-20b against a real prompt: 4096 completion tokens, all spent
+    # thinking, content comes back null with finish_reason=length
+    body = {"choices": [{"finish_reason": "length", "message": {
+        "content": None, "reasoning_content": "16k chars of thinking",
+    }}]}
+    with pytest.raises(RuntimeError, match="finish_reason=length"):
+        _final_content(body)
+    with pytest.raises(RuntimeError, match="raise max_tokens"):
+        _final_content(body)
+
+
+def test_openai_complete_ignores_reasoning_channel(monkeypatch):
+    import httpx
+    body = {"choices": [{"finish_reason": "stop", "message": {
+        "content": "final", "reasoning_content": "ignored",
+    }}]}
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp(body))
+    assert OpenAIModel("k").complete("s", "u") == "final"
+
+
+def test_nim_default_budget_covers_reasoning():
+    # the regression: 4096 shared by thinking + answer starved gpt-oss —
+    # the cap is not a target, so doubling it costs nothing when unused
+    assert NimModel("k", "openai/gpt-oss-20b")._max_tokens >= 8192

@@ -129,6 +129,48 @@ def test_exhausted_attempts_keep_the_working_behaviour(client):
     assert got["id"] == good["id"] and got["source"] == "-- healthy"
 
 
+class FlakyProvider:
+    """A model that fails like a reasoning model whose thinking ate the
+    token budget: the call succeeds at the wire, the final channel is
+    empty. The loop must count it as an attempt and play on."""
+
+    name = "flaky"
+
+    def __init__(self, failures: int):
+        self.failures = failures
+        self.calls: list[str] = []
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls.append({"system": system, "user": user})
+        if self.failures > 0:
+            self.failures -= 1
+            raise RuntimeError("empty final content (finish_reason=length)")
+        return CLEAN
+
+
+def test_model_failure_is_an_attempt_not_a_crash(client):
+    model = FlakyProvider(1)
+    lp = AgentLoop(mcp(client), model)
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "model failure" in entry["refusal"] or entry["refusal"] is None
+    # the failure reached the model as plain text to react to
+    assert "finish_reason=length" in model.calls[1]["user"]
+
+
+def test_persistent_model_failure_keeps_the_old_behaviour(client):
+    model = FlakyProvider(99)
+    lp = AgentLoop(mcp(client), model, max_attempts=3)
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert not entry["accepted"] and entry["kept_old"]
+    assert "model failure" in entry["refusal"]
+    assert len(model.calls) == 3                 # bounded, never a crash loop
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["id"] == good["id"] and got["source"] == "-- healthy"
+
+
 def test_no_behaviour_yet_is_not_a_crash(client):
     """A world without a join starter: the fresh player's first cycle has
     nothing to keep and nothing to show — the loop still runs, and the
