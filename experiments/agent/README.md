@@ -129,3 +129,8 @@ Cost shape: one model call per dynasty per round (plus one per lint
 refusal, bounded by `--max-attempts`); 10 rounds ≈ 30-45 calls.
 `ECON_AGENT_NIM_BASE` points `NimModel` at a self-hosted NIM container
 (same OpenAI-compatible protocol).
+
+Rate shape: every NIM client in the process shares one sliding-window
+budget — `ECON_AGENT_NIM_RPM` calls/minute, default 36, deliberately
+under the hosted tier's 40 — so three dynasties bursting lint retries
+still can't trip the meter (the 429 backoff stays as suspenders).

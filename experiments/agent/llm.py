@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
+from collections import deque
 from pathlib import Path
 from typing import Protocol
 
@@ -160,16 +163,66 @@ NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
 
 def nim_key(env: dict[str, str] | None = None) -> str | None:
     """The NVIDIA NIM key: NVIDIA_API_KEY / NIM_API_KEY from the env, or
-    the first line of ~/.nim_api_key (kept out of the repo and shells)."""
+    (only when reading the real process env) the first line of
+    ~/.nim_api_key — kept out of the repo and shells. An explicit env
+    dict is hermetic: tests pass {} and mean nothing is configured,
+    even on a machine that happens to hold a key file."""
+    file_fallback = env is None
     env = dict(env if env is not None else os.environ)
     if key := (env.get("NVIDIA_API_KEY") or env.get("NIM_API_KEY")):
         return key.strip()
-    path = Path.home() / ".nim_api_key"
-    if path.exists():
-        first = path.read_text().splitlines()
-        if first and first[0].strip():
-            return first[0].strip()
+    if file_fallback:
+        path = Path.home() / ".nim_api_key"
+        if path.exists():
+            first = path.read_text().splitlines()
+            if first and first[0].strip():
+                return first[0].strip()
     return None
+
+
+class _RateLimiter:
+    """Sliding-window limiter, process-wide, thread-safe. The hosted NIM
+    key is metered per minute and shared by every dynasty client in the
+    run — so the budget is shared too, and a wait happens BEFORE the
+    request (belt), while the 429-retry stays as suspenders."""
+
+    def __init__(self, max_calls: int, window: float = 60.0):
+        self._n = max_calls
+        self._window = window
+        self._times: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        """Block until one call fits the window, then record it."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._times and now - self._times[0] >= self._window:
+                    self._times.popleft()
+                if len(self._times) < self._n:
+                    self._times.append(now)
+                    return
+                sleep_for = self._window - (now - self._times[0]) + 0.05
+            time.sleep(max(sleep_for, 0.05))
+
+
+_nim_limiter: _RateLimiter | None = None
+_nim_limiter_lock = threading.Lock()
+
+
+def nim_limiter() -> _RateLimiter:
+    """The process-wide NIM budget: ECON_AGENT_NIM_RPM calls per minute,
+    default 36 — deliberately under the hosted tier's 40 so a burst of
+    lint retries can't trip it."""
+    global _nim_limiter
+    with _nim_limiter_lock:
+        if _nim_limiter is None:
+            try:
+                rpm = int(os.environ.get("ECON_AGENT_NIM_RPM") or 36)
+            except ValueError:
+                rpm = 36
+            _nim_limiter = _RateLimiter(max(rpm, 1))
+        return _nim_limiter
 
 
 class NimModel(OpenAIModel):
@@ -190,12 +243,11 @@ class NimModel(OpenAIModel):
         self._max_tokens = max_tokens
 
     def complete(self, system: str, user: str) -> str:
-        import time
-
         import httpx
 
         last_error = None
         for attempt in range(3):
+            nim_limiter().wait()                  # shared per-minute budget
             if attempt:
                 time.sleep(2.0 * attempt)          # 2s, 4s — polite, bounded
             try:
