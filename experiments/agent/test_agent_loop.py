@@ -380,6 +380,36 @@ def test_strip_fences():
     assert strip_fences("  -- plain  ") == "-- plain"
 
 
+def test_strip_fences_survives_a_prose_prefix():
+    """The stone-run2 failure: Nemotron prefixed every answer with
+    'Here are the changes:' before the fence, and the whole response
+    was submitted as Lua -- syntax error near 'are', three attempts,
+    frozen behaviour, and a DISEASE death the round-10 fix (which says
+    'prioritizes cooking meat') never got to prevent. The fix: take the
+    first fenced block anywhere in the response."""
+    raw = ("Here are the changes I would make to the behaviour script:\n"
+           "```lua\nctx.state.plan = 'cook'\n```\n"
+           "This should avoid disease.")
+    assert strip_fences(raw) == "ctx.state.plan = 'cook'"
+
+
+def test_strip_fences_prose_and_no_fence_is_raw():
+    # no fence anywhere: treat the text as the code (lint will judge)
+    assert strip_fences("-- still lua, just unpunctuated") == \
+        "-- still lua, just unpunctuated"
+
+
+def test_strip_fences_drops_prose_after_the_closing_fence():
+    assert strip_fences("```lua\ncode()\n```\nThat was the script.") == "code()"
+
+
+def test_strip_fences_keep_is_bare_only():
+    # the KEEP handshake reads the raw reply now (loop.py), not the
+    # extract; sanity pins the extractor's half: prose KEEP is prose
+    assert strip_fences("I would KEEP the current script.") != "KEEP"
+    assert strip_fences("KEEP") == "KEEP"
+
+
 def test_model_from_env_picks_by_configuration():
     with pytest.raises(RuntimeError, match="no model configured"):
         model_from_env({})
