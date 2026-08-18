@@ -36,7 +36,10 @@ It is also the payoff of the scripting arc (docs/scripting.md):
 ## One cycle
 
 1. **observe** — `round_state`, `entity_state`, `entity_events` (own
-   events only), `market_prices`, `leaderboard`, `epoch_state`
+   events only), `market_prices`, `leaderboard` (standings without the
+   money column — rival privacy; own cash arrives via `entity_state`),
+   `epoch_state`, and, when the pack ships one, its manual in the system
+   prompt (see experiments/world/README.md, "three pack fixes")
 2. **think** — model completes: system = identity + tier sources; user =
    observation digest + current behaviour + findings since last time
 3. **submit** — `set_behaviour`; `isError` (lint refusal) appends the

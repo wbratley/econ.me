@@ -171,6 +171,13 @@ does not have, whatever it calls.
 4. **Engine-tier scope discipline — yes.** Small, boring, opinion-free;
    additions pass the boundary test in review. The stdlib is vocabulary,
    not strategy.
+5. **Rival privacy — a world flag, not a rewrite.** `ctx.query.*` reads
+   were global by default (right for public share registers, wrong for
+   pantries). The cut that shipped: a world sets `world.private_holdings`
+   and every entity-scoped script — `holding` of another entity returns
+   nil, `holders` comes back empty — while op-context scripts
+   (validators, hooks: the referee) keep the global read. Per-symbol
+   votable visibility stays unbuilt (§8's analysis pattern applies).
 
 ## 6. Phasing
 

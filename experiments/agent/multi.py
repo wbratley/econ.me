@@ -51,7 +51,7 @@ class Dynasty:
     entity_id: str | None = None
 
 
-def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier") -> None:
+def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier") -> dict:
     """Content-pack substrate + symmetric, agent-owned seats.
 
     `scenario` names the pack (SCENARIOS below): it provides goods/tech/
@@ -95,6 +95,13 @@ def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "fronti
     # consents. Operator fiat at world creation — mode is data, not code.
     session.add(WorldSetting(key="round.gate", value={"mode": "readiness"}))
     session.commit()
+
+    # The pack's MANUAL (world.manual WorldSetting), if it ships one: the
+    # legible rules -- tech tree, conditions, effects -- that the agent
+    # loop folds into every system prompt. Rival privacy (multi's own
+    # read below) is a pack decision, not an agent-client one.
+    manual_row = session.get(WorldSetting, getattr(pack, "MANUAL_KEY", "world.manual"))
+    return {"manual": (manual_row.value or {}).get("text") if manual_row else None}
 
 
 # ---------------------------------------------------------------------------

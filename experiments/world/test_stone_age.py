@@ -125,7 +125,8 @@ def test_content_and_coin_markets(session):
 
 
 def test_seat_endowment(session):
-    """A seat: 500 COIN, a day of berries, a night of warmth, a bare camp."""
+    """A seat: walking money (10 COIN -- the rest is found, not endowed),
+    a day of berries, a night of warmth, a bare camp."""
     create_content(session)
     seat = _seat(session, "Seat")
     assert _hold(session, seat.id, "BERRIES") == BERRY_BUFFER
@@ -323,3 +324,61 @@ def test_starter_survives(session):
     assert _hold(session, seat.id, "HUNGER") < Decimal("15")
     assert _hold(session, seat.id, "EXPOSURE") < Decimal("18")
     assert _events(session, "script_error") == []
+
+
+# ===========================================================================
+# MONEY, MANUAL, PRIVACY
+# ===========================================================================
+
+def test_money_comes_from_the_ground(session):
+    """Coins are found, not endowed: a bagged digger mints; a bare one
+    never does (the bare table has no coin branch -- that half is
+    deterministic)."""
+    create_content(session)
+    digger, bare = _biz(session, "Digger"), _biz(session, "Bare")
+    # Spares for the between-tick reservation window (see the bag test).
+    markets.adjust_holding(session, digger, "BAG", Decimal("3"))
+    for _ in range(200):
+        run_tick(session); session.commit()
+        _act(session, digger, "GATHER_BAG")
+        _act(session, bare, "GATHER")
+
+    digs = [e for e in _events(session, "process_completed")
+            if e["entity_id"] == digger.id and e["recipe"] == "GATHER_BAG"]
+    found = [e for e in digs if "COIN" in e["outputs"]]
+    # 5%/dig, 200 digs: P(zero finds) = 0.95^200 ≈ 3.5e-5
+    assert len(digs) >= 150
+    assert len(found) >= 1
+    acc = next(a for a in digger.accounts if a.currency == COIN)
+    assert acc.balance == SEAT_COIN + len(found)   # every find minted, exact
+    # the bare table cannot mint: its account is untouched
+    bare_acc = next(a for a in bare.accounts if a.currency == COIN)
+    assert bare_acc.balance == SEAT_COIN
+    assert _hold(session, digger.id, COIN) == Decimal("0")  # money ≠ good
+
+
+def test_world_ships_a_legible_manual(session):
+    """The manual WorldSetting carries the whole action space: the
+    recipes, the death conditions, the ladder."""
+    from econengine.models import WorldSetting
+
+    create_content(session)
+    row = session.get(WorldSetting, stone_age.MANUAL_KEY)
+    assert row is not None
+    text = row.value["text"]
+    flat = " ".join(text.split()).lower()   # needles must survive line wraps
+    for needle in ("GATHER_BAG", "HUNT_SPEAR", "MAKE_SHELTER", "EAT_RAW",
+                   "dies at 15", "dies at 2.5", "SPEAR", "BAG", "the ladder",
+                   "PRIVACY"):
+        assert needle.lower() in flat, needle
+
+
+def test_pack_sets_rival_privacy(session):
+    """create_content turns on world.private_holdings: scripts see only
+    their own pantry in this world."""
+    from econengine.models import WorldSetting
+    from econengine.scripting import PRIVATE_HOLDINGS_KEY
+
+    create_content(session)
+    row = session.get(WorldSetting, PRIVATE_HOLDINGS_KEY)
+    assert row is not None and row.value

@@ -167,6 +167,32 @@ Agent runs pick it with `--scenario stone_age`:
 .venv/bin/pytest experiments/world/test_stone_age.py
 ```
 
+### stone-run1 postmortem: three pack fixes
+
+The first agent run on this pack (`stone-run1`, 3 models × 10 rounds)
+ended with a starvation death at tick 101, **zero trades**, and an
+untouched tech tree — nobody ever built a tool, and the 500-coin seat
+endowment sat unspent because there was nothing to buy and nobody
+conceived of selling. Three pack-level changes answer it:
+
+1. **Coins are found, not endowed** (SEAT_COIN 500 → 10). GATHER_BAG
+   carries a 5% shiny-stone branch that *mints* COIN — the money supply
+   grows with digging, via the engine's production-mint seam
+   (`_credit_output`: a branch output whose symbol some account banks in
+   credits the account and rides the ledger; anything else stays a good).
+   A start-from-zero fortune now has a visible origin story.
+2. **A legible manual** (`world.manual` WorldSetting, shipped by
+   `create_content`, folded verbatim into every agent system prompt):
+   the whole action space with exact inputs, odds and durations, the
+   death thresholds, and the ladder — FIRE → BAG → SPEAR → SHELTER+
+   CLOTHES → TRAPs. The tech tree was always *visible*; now it is
+   *readable*.
+3. **Rival privacy** (`world.private_holdings`, enforced by the engine):
+   `ctx.query.holding` of another entity returns nil, `holders()` is
+   empty, and the agent loop's observation drops the leaderboard's money
+   column. Nobody plans around a rival's pantry they cannot see; the
+   referee (op-context scripts) stays sighted.
+
 ## What Phase 0 deliberately does NOT do
 
 - **Player control** (editing your own entity's behaviour script) — that's the

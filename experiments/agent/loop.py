@@ -68,10 +68,13 @@ class McpClient:
 # ---------------------------------------------------------------------------
 
 
-def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False) -> str:
+def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False,
+                 manual: str | None = None) -> str:
     """Identity + the tier vocabulary, verbatim. The std/world/pack sources
     go in whole: a model that has read them cannot honestly hallucinate a
-    helper, and the lint backstops the ones that do anyway."""
+    helper, and the lint backstops the ones that do anyway. `manual` -- the
+    pack's legible rules (tech tree, conditions, effects) when it ships
+    one -- rides in whole too: the numbers of the world, stated plainly."""
     std = libraries["std"]["source"]
     world = libraries.get("world") or "-- (no world lib installed)"
     pack = libraries.get("pack") or "-- (no content pack installed)"
@@ -95,7 +98,7 @@ def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False) -> s
             "  >>>>>>> REPLACE\n\n"
             "  Each SEARCH must match the current behaviour exactly, whitespace\n"
             "  included; blocks apply in order.")
-    return f"""\
+    text = f"""\
 You are the mind of entity {entity_id} in a batched simulated economy. You
 do NOT act tick by tick: your whole agency is one Lua BEHAVIOUR script
 that the engine runs for your entity every tick. Between rounds you may
@@ -139,6 +142,12 @@ for arithmetic, pass strings to intents.
 ----- pack.* (content pack opinions) -----
 {pack}
 """
+    if manual:
+        text += f"""
+----- THE WORLD MANUAL (this world's rules, in numbers) -----
+{manual}
+"""
+    return text
 
 
 def user_prompt(observation: dict, current: dict, feedback: list[str],
@@ -232,7 +241,7 @@ class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
                  last_ticks: int = 8, edit_mode: bool = False,
-                 diary: bool = False):
+                 diary: bool = False, manual: str | None = None):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
@@ -241,6 +250,7 @@ class AgentLoop:
         self.last_ticks = last_ticks
         self.edit_mode = edit_mode
         self.diary = diary
+        self.manual = manual              # the pack's legible rules, if any
         self._feedback: list[str] = []          # rides into the next prompt
         self.journal_lines: list[dict] = []
 
@@ -264,13 +274,22 @@ class AgentLoop:
         """The parity set: everything the script itself could see, plus the
         public facts (prices, standings, round clock) any player reads."""
         eid = self.entity_id
+        # Rival privacy: the standings keep every PUBLIC fact (status,
+        # entities, unlocks, wins) but drop `money` -- a fortune is not a
+        # public fact in this loop's worlds (the leaderboard's money column
+        # is a standings tie-breaker the platform sorts by, not something a
+        # player can read off a rival; holdings privacy is the pack's
+        # PRIVATE_HOLDINGS flag, the script-surface twin of this rule).
+        board = self.mcp.call("leaderboard")
+        for row in board.get("rows", []):
+            row.pop("money", None)
         obs = {
             "round": self.mcp.call("round_state"),
             "entity": self.mcp.call("entity_state", {"entity_id": eid}),
             "events": self.mcp.call(
                 "entity_events", {"entity_id": eid, "last_ticks": self.last_ticks}),
             "prices": self.mcp.call("market_prices"),
-            "leaderboard": self.mcp.call("leaderboard"),
+            "leaderboard": board,
             "epoch": self.mcp.call("epoch_state"),
         }
         # Per-tick script errors are the loudest finding there is: the
@@ -303,7 +322,8 @@ class AgentLoop:
 
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action = "", "rewrite"
-        sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode)
+        sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
+                                manual=self.manual)
         transcript: list[dict] = []      # prompts + replies + platform
         # responses: the diary's ground truth, captured as it happens
         while attempts < self.max_attempts:
