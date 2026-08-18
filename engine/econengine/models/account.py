@@ -10,7 +10,7 @@ class Account(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_id: Mapped[str] = mapped_column(String(36), ForeignKey("entities.id"), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False)  # ISO 4217
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)  # ISO 4217 or pack currency (COIN)
     balance: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False, default=Decimal("0"))
 
     entity: Mapped["Entity"] = relationship("Entity", back_populates="accounts")

@@ -12,7 +12,7 @@ class Market(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     symbol: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. WHEAT
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    currency: Mapped[str] = mapped_column(String(3), nullable=False)  # quote currency
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)  # quote currency, e.g. USD or COIN
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(precision=18, scale=4), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

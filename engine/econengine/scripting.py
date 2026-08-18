@@ -108,6 +108,13 @@ PACK_LIB_KEY = "scripting.pack_lib"
 #: and refuses pack re-installs until the manifest is re-pinned.
 STD_PIN_KEY = "scripting.std_version"
 
+#: WorldSetting key: when truthy, entity-scoped scripts see only their
+#: OWN holdings through ctx.query -- `holding` of another entity returns
+#: nil and `holders` comes back empty. The share-register reads stay
+#: available in worlds that leave this unset (real share registers are
+#: public); a private-holdings world sets it at content time.
+PRIVATE_HOLDINGS_KEY = "world.private_holdings"
+
 
 def get_world_lib(session: Session) -> str | None:
     """The world lib source, or None if unset/blank."""
@@ -582,7 +589,8 @@ def set_executing_tick(number: int | None) -> None:
 # Shared with the tick engine
 # ---------------------------------------------------------------------------
 
-def build_queries(session: Session, tick_number: int | None = None) -> dict:
+def build_queries(session: Session, tick_number: int | None = None,
+                  owner_id: str | None = None) -> dict:
     """ctx.query.* — read-only, string results so Lua sees exact decimals.
 
     ``tick_number`` is the tick age() computes against, threaded from the
@@ -590,9 +598,19 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
     (executing tick for POLICY/BEHAVIOUR, latest committed for
     VALIDATOR/HOOK). Unset (the bare ``build_queries(session)`` form used by
     tests) falls back to the latest committed tick.
+
+    ``owner_id`` scopes the entity-visible reads: in a world that set
+    ``world.private_holdings``, a script sees only its own entity's
+    holdings (``holding`` of anyone else is nil, ``holders`` is empty);
+    unset -- the op-context form validators use -- reads stay global, the
+    monetary authority's view of the world it guards.
     """
     from . import markets, tech  # deferred: markets imports this module
     _tick = tick_number if tick_number is not None else _latest_tick_number(session)
+    _private = False
+    if owner_id is not None:
+        _row = session.get(WorldSetting, PRIVATE_HOLDINGS_KEY)
+        _private = bool(_row is not None and _row.value)
 
     def balance(account_id):
         acct = session.get(Account, str(account_id))
@@ -612,6 +630,8 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
         return str(market.last_price)
 
     def holding(entity_id, symbol):
+        if _private and str(entity_id) != str(owner_id):
+            return None
         h = markets.get_holding(session, str(entity_id), str(symbol).upper())
         return str(h.quantity) if h else "0"
 
@@ -631,14 +651,19 @@ def build_queries(session: Session, tick_number: int | None = None) -> dict:
 
         Note this is a GLOBAL read — any script can enumerate holders of any
         symbol, which is right for a share register (real ones are public)
-        and considerably more than that for, say, FOOD. If per-symbol
-        visibility should be votable data rather than always-on, this is the
-        place it would be gated; it is deliberately not gated yet.
+        and considerably more than that for, say, FOOD. Per-symbol
+        visibility as votable data remains unimplemented; the coarse cut
+        a world can make TODAY is world.private_holdings (see
+        PRIVATE_HOLDINGS_KEY): with it set, entity-scoped scripts get nil
+        and empty here — a private pantry — while op-context scripts (the
+        referee) keep the global read.
 
         Ordered by entity id so a script iterating holders is deterministic.
         The account is the entity's first in `currency`, matching how
         ctx.accounts[1] is used everywhere else in this codebase.
         """
+        if _private:
+            return []
         rows = session.execute(
             select(Holding.entity_id, Holding.quantity)
             .where(Holding.symbol == str(symbol).upper(), Holding.quantity > 0)

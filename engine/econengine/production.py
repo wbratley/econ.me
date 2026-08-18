@@ -426,6 +426,30 @@ def _completed_event(process: Process, granted: list) -> dict:
     return event
 
 
+def _credit_output(session: Session, entity: Entity, item, reference: str) -> None:
+    """Credit one recipe output. Goods adjust holdings; a symbol the
+    world banks in (some Account is denominated in it) is money — the
+    output credits the entity's account instead, creating it at zero if
+    needed: production-minted currency (the stone age finds shiny stones
+    while gathering; a later world might mine gold). The credit rides
+    services.deposit, so it lands in the ledger and passes the same
+    validators every other money movement does."""
+    from . import services
+    from .models import Account
+
+    banked = session.execute(
+        select(Account.id).where(Account.currency == item.symbol).limit(1)
+    ).scalar_one_or_none()
+    if banked is None:
+        adjust_holding(session, entity, item.symbol, item.quantity)
+        return
+    account = next(
+        (a for a in entity.accounts if a.currency == item.symbol), None)
+    if account is None:
+        account = services.create_account(session, entity, item.symbol)
+    services.deposit(session, account, item.quantity, reference)
+
+
 def _complete(session: Session, process: Process, seed: str) -> list:
     """Credit outputs — rolling the outcome branch first if the recipe is
     stochastic — erect the built facility, and grant the recipe's unlocks;
@@ -440,7 +464,7 @@ def _complete(session: Session, process: Process, seed: str) -> list:
         )
         outputs = recipe.branches[process.outcome_branch].outputs
     for item in outputs:
-        adjust_holding(session, process.entity, item.symbol, item.quantity)
+        _credit_output(session, process.entity, item, f"mint {recipe.code}")
     if recipe.builds_facility:
         parcels.add_facility(
             session, process.parcel, recipe.builds_facility,

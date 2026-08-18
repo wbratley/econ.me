@@ -5,7 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from econengine.markets import InsufficientHoldingsError, adjust_holding, get_holding
-from econengine.models import Base, EntityType, ProcessStatus
+from econengine.models import (
+    Base, EntityType, ProcessStatus, Transaction, TransactionType,
+)
 from econengine.production import (
     cancel_process,
     complete_processes,
@@ -164,3 +166,54 @@ def test_cancel_ownership_and_state(world):
 
 def test_next_tick_number_empty_db(session):
     assert next_tick_number(session) == 1
+
+
+# --- production-minted money (_credit_output) -------------------------------
+
+def _digger(session):
+    """An entity and a one-tick DIG recipe that always finds 1 COIN —
+    the stone age's shiny-stone gather, made deterministic."""
+    digger = create_entity(session, "Digger", EntityType.INDIVIDUAL)
+    adjust_holding(session, digger, "LABOR", Decimal("1"))
+    recipe = create_recipe(
+        session, "DIG", inputs={"LABOR": Decimal("1")}, outputs={},
+        duration_ticks=1,
+        branches=[{"weight": Decimal("1"), "outputs": {"COIN": Decimal("1")}}],
+    )
+    return digger, recipe
+
+
+def test_money_output_mints_to_account(session):
+    """A branch output the world banks in lands in the account, rides
+    the ledger, and never becomes a holding — money is money."""
+    from econengine.services import create_account, deposit
+
+    digger, _ = _digger(session)
+    # someone — anyone — banks COIN: that is what makes it a currency
+    rich = create_entity(session, "Rich", EntityType.INDIVIDUAL)
+    rich_acc = create_account(session, rich, "COIN")
+    deposit(session, rich_acc, Decimal("10"), "seat stake")
+
+    process = start_process(session, digger, "DIG")
+    complete_processes(session, tick_number=2)
+    assert process.status == ProcessStatus.COMPLETED
+
+    acc = next(a for a in digger.accounts if a.currency == "COIN")  # auto-created
+    assert acc.balance == Decimal("1")
+    assert rich_acc.balance == Decimal("10")            # untouched: no transfer
+    tx = session.query(Transaction).filter_by(account_id=acc.id).one()
+    assert tx.tx_type == TransactionType.CREDIT
+    assert tx.reference == "mint DIG"
+    assert get_holding(session, digger.id, "COIN") is None or \
+        get_holding(session, digger.id, "COIN").quantity == Decimal("0")
+
+
+def test_unbanked_output_stays_a_good(session):
+    """No account in the world holds COIN — it is just another good,
+    credited to holdings exactly as before."""
+    digger, _ = _digger(session)
+    process = start_process(session, digger, "DIG")
+    complete_processes(session, tick_number=2)
+    assert digger.accounts == []
+    assert get_holding(session, digger.id, "COIN").quantity == Decimal("1")
+    assert session.query(Transaction).count() == 0

@@ -312,6 +312,31 @@ def test_observation_is_the_parity_set(client):
     assert "u-bob" not in user                     # no other dynasty's affairs
 
 
+def test_observation_hides_everyones_money(client):
+    """Rival privacy, prompt side: the standings survive but the money
+    column does not — not the rival's, not the player's own either (the
+    entity_state accounts carry own cash; the leaderboard is standings)."""
+    lp, model = loop(client, [CLEAN])
+    lp.cycle()
+    user = model.calls[0]["user"]
+    assert '"money"' not in user
+
+
+def test_manual_rides_in_the_system_prompt(client):
+    """A pack that ships a manual gets it into every system prompt,
+    verbatim — the world's numbers, stated plainly."""
+    lp, model = loop(client, [CLEAN], manual="FIRE FIRST: 2 WOOD. Then a BAG.")
+    lp.cycle()
+    assert "FIRE FIRST: 2 WOOD. Then a BAG." in model.calls[0]["system"]
+    assert "WORLD MANUAL" in model.calls[0]["system"]
+
+
+def test_no_manual_no_section(client):
+    lp, model = loop(client, [CLEAN])
+    lp.cycle()
+    assert "WORLD MANUAL" not in model.calls[0]["system"]
+
+
 def test_system_prompt_carries_the_tier_vocabulary(client):
     lp, model = loop(client, [CLEAN])
     lp.cycle()

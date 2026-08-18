@@ -296,7 +296,9 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
         "unlocks": tech.entity_unlocks(session, entity.id),
         "events": entity_events,
         "state": dict(script.state or {}),
-        "queries": build_queries(session, tick_number),
+        # owner-scoped: in a private-holdings world the script's query
+        # surface shrinks to its own entity (build_queries)
+        "queries": build_queries(session, tick_number, owner_id=entity.id),
     }
 
 

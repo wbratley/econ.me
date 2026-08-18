@@ -3,8 +3,10 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econengine.models import Base, EntityType, Script, ScriptType
-from econengine.scripting import OperationVetoedError
+from econengine.models import Base, EntityType, Script, ScriptType, WorldSetting
+from econengine.scripting import (
+    OperationVetoedError, PRIVATE_HOLDINGS_KEY,
+)
 from econengine.markets import adjust_holding
 from econengine.services import create_account, create_entity, deposit, transfer
 from econengine.tick import run_tick
@@ -384,3 +386,66 @@ def test_holders_supports_paying_a_dividend(world):
     assert a.balance == Decimal("1100.0000")  # 1000 + 25% of 400
     assert b.balance == Decimal("1300.0000")  # 1000 + 75% of 400
     assert f.balance == Decimal("0.0000")
+
+
+# --- rival privacy (world.private_holdings) ---------------------------------
+
+def test_private_flag_blinds_queries_to_rivals(world):
+    """With the flag set, an entity's behaviour sees its own holdings
+    and NOTHING else: holding(rival) is nil, holders() is empty."""
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("5"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("7"))
+    session.add(WorldSetting(key=PRIVATE_HOLDINGS_KEY, value={"enabled": True}))
+
+    script = make_script(
+        session, "nosy",
+        f"""
+        ctx.state.mine = ctx.query.holding(ctx.entity.id, 'SHARE-ACME') or 'none'
+        ctx.state.theirs = ctx.query.holding('{bob.id}', 'SHARE-ACME') or 'none'
+        ctx.state.register = #ctx.query.holders('SHARE-ACME')
+        """,
+        ScriptType.BEHAVIOUR, entity=alice,
+    )
+    run_tick(session)
+
+    assert script.state == {"mine": "5.0000", "theirs": "none", "register": 0}
+
+
+def test_private_flag_leaves_the_referee_sighted(world):
+    """Op-context scripts (validators, hooks — _op_ctx) call
+    build_queries unscoped: the flag blinds entity behaviours, not the
+    referee. Probed at the seam, without a tick."""
+    from econengine.scripting import build_queries
+
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "SHARE-ACME", Decimal("5"))
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("7"))
+    session.add(WorldSetting(key=PRIVATE_HOLDINGS_KEY, value={"enabled": True}))
+
+    referee = build_queries(session)          # the _op_ctx form: no owner
+    assert referee["holding"](bob.id, "SHARE-ACME") == "7.0000"
+    assert len(referee["holders"]("SHARE-ACME")) == 2
+
+    scoped = build_queries(session, owner_id=alice.id)   # _entity_ctx form
+    assert scoped["holding"](bob.id, "SHARE-ACME") is None
+    assert scoped["holding"](alice.id, "SHARE-ACME") == "5.0000"
+    assert scoped["holders"]("SHARE-ACME") == []
+
+
+def test_unset_flag_keeps_queries_global(world):
+    """The default world stays public: the flag is opt-in per pack."""
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, bob, "SHARE-ACME", Decimal("7"))
+
+    script = make_script(
+        session, "nosy",
+        f"""
+        ctx.state.theirs = ctx.query.holding('{bob.id}', 'SHARE-ACME') or 'none'
+        ctx.state.register = #ctx.query.holders('SHARE-ACME')
+        """,
+        ScriptType.BEHAVIOUR, entity=alice,
+    )
+    run_tick(session)
+
+    assert script.state == {"theirs": "7.0000", "register": 1}
