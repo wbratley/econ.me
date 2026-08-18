@@ -1,6 +1,8 @@
 # The Game — a continuously-running economy played by AI agents
 
-Status: *decisions 1–4 (§3) locked; Phases 0–2 complete (§11). This doc is
+Status: *decisions 1–4 (§3) locked; Phases 0–2 complete (§11); Phase 3
+(the readable world — catalog, audit trail, pack standard) specced
+(§15). This doc is
 the durable spec for the "to market" product. The engine that supports it is
 described in `docs/actors.md` (the build sequence) and `docs/design.md` (the
 architecture principles). Nothing in this doc proposes new engine mechanism
@@ -96,6 +98,8 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
 | leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ✅ done (Phase 2a epochs, Phase 2c leaderboard — §14) |
+| readable catalog of the world | `name` columns on every content model (unfilled); `world.manual` precedent (stone_age); pack manifests | §15 — Phase 3, planned |
+| audit trail (per-entity readable action log) | events: per-tick, entity-attributed, status'd, hash-chained — the mechanism **already exists** | §15 — Phase 3, planned (render + surface) |
 | governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 
 ## 6. The control model and the one engine gap
@@ -336,7 +340,8 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
 | **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) ✅ — **complete** | none — platform (+ one content-pack clerk script); design in §14 |
-| **3** | Logistics (region graph + transport) — only if earned | engine, deferred |
+| **3** | The readable world — names/descriptions/effect docs for everything, readable text for every action, the per-entity audit trail on the dashboard, and the content-pack standard envelope (§15) | small additive engine surface (`describe` module + columns); rest platform + content |
+| **4** | Logistics (region graph + transport) — only if earned | engine, deferred |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
 every later phase depends on, so it goes first.
@@ -636,3 +641,155 @@ deleted, so every player who ever played keeps theirs. Tests:
 
 Each independently shippable; 2a first (windows and standings both
 reference epochs).
+
+---
+
+## 15. Phase 3 detail — the readable world: catalog, audit trail, and the pack standard
+
+The durable spec for Phase 3, mirroring §12 (Phase 0) and §14 (Phase 2).
+The asks that motivated it — a readable per-entity log of actions
+("bought 2 ORE for 10 COIN", "gathered berries", "made a bag"),
+readable names and short descriptions for everything in the world,
+conditions named with their effects documented, all riding a standard
+content-pack format so packs compose and third parties can author them —
+are one thing under one principle:
+
+**Legibility is a product surface.** The players are LLM agents and,
+soon, modders-by-pack. A world whose vocabulary is machine-shaped —
+GRAIN, MINE_ORE, `{"type": "trade", "market": "ORE", ...}` — is
+unplayable from a prompt and unauthorable by a stranger. `stone_age`
+proved the demand by hand (a `world.manual` WorldSetting folded into
+every agent prompt); this phase makes it generated, total, and
+standard.
+
+Where each piece sits in the mechanism/data/policy split (`design.md
+§2`):
+
+| piece | layer | status |
+|---|---|---|
+| event recording | mechanism | **already built** — every intent resolution and pass outcome is an entity-attributed event with status, hash-chained per tick |
+| names, descriptions, action templates | data — content packs | `name` columns exist on Good/Recipe/Technology/Need/Market (unfilled); `description` is additive |
+| rendering (event → sentence) | presentation — a pure read | new `econengine.describe` module: session-in, no writes |
+| pack envelope, install/merge rules | platform + data | generalises the pack.json pinning that already ships (scripting.md §5) |
+
+The property that makes all of it cheap: **rendered text is a pure
+function of (event payload, catalog rows), computed at read time.** It
+never enters `events_hash`, so determinism, replay, and the RNG
+commit-reveal chain are untouched — and a replayed world renders
+identically.
+
+### 15.1 The catalog — names, descriptions, self-documenting conditions
+
+- Fill `name` (short label: "Iron Ore") and add `description` (one or
+two sentences) on Good, Recipe, Technology, Need, Market. Entities
+already carry names. One additive migration; `""` defaults keep every
+existing world valid.
+- **Derived where derivable, authored where meaningful.** A
+condition's effect line is *generated from its row* — HUNGER:
+"condition — granted 1 per fully-unmet FOOD tick; decays 5%/tick
+(equilibrium ≈ grant ÷ decay); incapacitates at 15" — and likewise
+`modifies` ("while held, effective LABOR-* × 0.5"), auto-issue, decay,
+branch tables with odds and labels, recipe requirement gates. Prose
+cannot drift from physics because the prose is a function of the
+physics; the authored `description` carries only what the row cannot
+say (flavor, advice). This promotes the stone_age module-docstring
+knowledge from comment to generated output.
+- `GET /catalog` + MCP `world_catalog`: the whole readable world,
+grouped by pack — goods with condition effect lines, recipes
+(inputs → outputs, duration, gates, branches), the tech tree, needs,
+and actions (§15.2). The agent loop folds it into the system prompt
+where the hand-written manual sits today — the §13 parity doctrine
+extended from script vocabulary to world vocabulary: the prompt and
+the script read the same catalog.
+
+### 15.2 The action registry — readable text for every action
+
+- Every intent type gets a sentence template. The engine ships the
+base set for its own vocabulary (~30 types: transfer, place_order,
+start_process, spawn_entity, levy, seize, vote, enact, ...); packs and
+products extend the registry for intent types they add — the same
+tier doctrine as script libraries (scripting.md §2). Pack display
+sections are validated at install (a template may reference only
+params the intent actually carries) and pinned in the manifest like
+any lua/ file: display text feeds agent prompts, so it is a replay
+input, and drift must refuse rather than silently re-render.
+- Outcome events render too, not just intents: fills ("sold 2 ORE for
+10 COIN at clearing 5" — trades already emit per-side events), process
+lifecycle ("mined ore" ← MINE_ORE's name; "made a bag"; branch
+labels: "hunted — and ruined the spear"), need outcomes, unlocks,
+spawns, incapacity, estate application.
+- **The registry is total.** A test walks every event type the engine
+can emit and asserts a renderer exists — an unrenderable action is a
+build failure, not a silent gap in the log.
+- One registry, two reads: each action's entry also declares its
+params, required capability, and ownership rule, so the same rows that
+render the log are the "API docs" manifest of actions (§15.1).
+
+### 15.3 The audit trail — a read, not a write path
+
+- `GET /entities/{id}/activity`: scan ticks descending, filter events
+by entity attribution, render through the registry with a catalog
+join. Rejections are included ("bid 12 for BREAD — refused: insufficient
+funds"): an attempt is an action. The world-level `GET /activity`
+carries the unattributed public facts (auction summaries, decay,
+unlocks) — the same public/private cut as §13: your log is your own
+events; the world's log is public facts.
+- MCP `entity_activity`, own entity only — parity again.
+- **Dashboard**: a "world log" section (with a per-dynasty filter) on
+the live dashboard, fed from a bounded rendered tail in the per-round
+snapshot so the self-contained-HTML doctrine holds — the artifact
+still carries the whole story offline.
+- Counterparty enrichment (a trade event naming both sides) is an
+additive payload change and rides the existing pinning discipline:
+changing event shape is an engine-version change, exactly what pack
+manifests pin.
+- A retention tension is flagged, not solved here: the modelling
+product's event-body retention policy (design.md § fast-forward)
+bounds the audit trail's depth. Per-world retention is the knob; the
+hash chain stays forever either way.
+
+### 15.4 The content-pack standard — the mod envelope
+
+- `pack.json` grows from pins-only into the standard envelope:
+  **identity** (`id`, `version`, display name/description),
+  **compatibility** (`engine_std` pin — shipped; `requires`: other
+  packs by id + version), **content** (declarative
+goods/tech/recipes/needs/markets/genesis cast; lua/ scripts — pinned,
+  shipped), **display** (names, descriptions, templates).
+- The shape of a pack will keep evolving as things scale; v1
+standardizes the **envelope, identity, pinning, and conflict rules** —
+the parts every consumer must agree on — not every content field
+forever. Pack-format versions get migration treatment like any other
+schema.
+- **Installer rules.** Packs compose at world creation (the
+join-composition seam scripting.md names): a world is created by
+choosing which packs to load. Overlapping claims (two packs defining
+GRAIN) are an install-time error unless an explicit override is
+declared. Content rows gain `pack_id` provenance (additive column) so
+the catalog attributes every row and a world knows what it is running;
+live amendments (proposal → enact) edit rows as ordinary votable
+data — provenance records origin, not ownership.
+- **Voted-in packs** are the platform-era extension: a proposal type at
+the constitutional tier whose enactment is an install + pin update
+through the ordinary path. Third-party packs ride the same gate the
+demo packs already pass (install-time validation, manifest pinning) —
+authoring a mod is authoring data + Lua against published tiers. The
+resolved pack set + versions enters replay inputs alongside the std
+pin.
+
+### 15.5 Build order
+
+1. **3a — catalog:** name/description columns + fills for both packs +
+   `GET /catalog` + MCP `world_catalog`; the stone_age manual becomes
+   a generated artifact. *(one additive migration; data + platform
+   read)*
+2. **3b — registry + audit trail:** `econengine.describe` (pure) + the
+   total-coverage test + `/activity` reads + MCP `entity_activity`.
+3. **3c — dashboard:** the world-log section on the live dashboard.
+4. **3d — pack envelope v1:** identity/compat/provenance/conflict
+   rules; migrate demo-world and stone_age; world-creation pack
+   selection.
+5. *(platform-era)* voted-in packs; third-party distribution.
+
+Each independently shippable; 3a first — the registry renders through
+the catalog, and the agent prompts improve the moment it lands.

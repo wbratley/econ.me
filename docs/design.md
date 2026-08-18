@@ -736,6 +736,21 @@ test of the whole boundary design.
   additive, thinner alternative path, still authenticated via the same
   JWT bearer scheme (no new auth mechanism needed).*
 
+### 4.6 Content packs (mods)
+
+Everything content-like is already data (§2); the platform-era shape of
+that fact is the **content pack**: a loadable module bundling everything a
+world needs from it — goods, tech, recipes, needs, parcels, cast, scripts,
+and the readable surface (names, descriptions, action text). A world is
+created by choosing which packs to load; packs compose under install-time
+conflict rules and pin what they were authored against (the manifest
+gate already shipped for the script tiers, `docs/scripting.md` §5). On
+the platform, a pack can be **voted in** — a constitutional-tier proposal
+whose enactment is an install plus a pin update through the ordinary
+path — and packs are authorable by anyone against the published tiers,
+making them mods in the ordinary sense. Durable spec and build order:
+`docs/game.md` §15.
+
 ## 5. Engine extraction (modularity plan)
 
 *Done (§6 step 7).* The split is live in this repo:
