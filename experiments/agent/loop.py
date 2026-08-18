@@ -344,7 +344,9 @@ class AgentLoop:
 
             # action 1: KEEP — carry the behaviour forward verbatim, no
             # submission at all. Readying up without gambling a rewrite.
-            if strip_fences(raw).upper() == "KEEP":
+            # Bare KEEP only: prose around it ("I would KEEP") is the
+            # model talking, and a talking response is a rewrite attempt.
+            if raw.strip().upper() == "KEEP":
                 if has_current:
                     source, action = current["source"], "keep"
                     break

@@ -80,13 +80,33 @@ class ScriptedModel:
 
 def strip_fences(text: str) -> str:
     """Defensively unwrap a ```lua fence a model may add around the
-    source. Raw Lua passes through untouched."""
+    source. Raw Lua passes through untouched.
+
+    The stone-run2 lesson: models (Nemotron, every round) prefix the
+    fence with prose -- "Here are the changes:" -- and a leading-prose
+    response used to pass through whole, so the submitted "script"
+    began with an English sentence and died in lint as `syntax error
+    near 'are'`. Now: if the text does not START with a fence, take the
+    first fenced block anywhere in it (models put the code in one),
+    falling back to the raw text only when there is no fence at all.
+    Prose after the closing fence is dropped the same way.
+    """
     stripped = text.strip()
+    if not stripped:
+        return stripped
+    if not stripped.startswith("```"):
+        idx = stripped.find("```")
+        if idx != -1:
+            stripped = stripped[idx:]
+        # no fence anywhere: assume it is raw Lua and let lint judge
     if stripped.startswith("```"):
         lines = stripped.splitlines()
-        # drop the opening fence line (``` or ```lua) and any closing fence
-        lines = [ln for ln in lines[1:] if not ln.strip() == "```"]
-        stripped = "\n".join(lines).strip()
+        body = []
+        for ln in lines[1:]:          # drop the ```lua / ``` header
+            if ln.strip() == "```":
+                break                 # closing fence: prose after it is prose
+            body.append(ln)
+        stripped = "\n".join(body).strip()
     return stripped
 
 
