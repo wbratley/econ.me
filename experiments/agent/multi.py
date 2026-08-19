@@ -173,12 +173,33 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
     return snap
 
 
+def _extinct_entry(d: Dynasty, round_no: int) -> dict:
+    """The turn an extinct dynasty gets: none. No model call, no
+    observation, no submission — the dead keep their last behaviour
+    (kept_old) and the journal says what happened. From run 3 on this
+    matters twice over: dead houses were burning provider calls for
+    rounds they could not act in, and their 'keep' entries read as
+    strategy in the dashboard when they were tombstones."""
+    return {
+        "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "entity": d.entity_id, "model": d.model_name, "round": round_no,
+        "attempts": 0, "accepted": False, "kept_old": True,
+        "action": "extinct", "refusal": None, "warnings": [],
+        "source_sha": None, "thoughts": "", "prompt_bytes": 0,
+    }
+
+
 def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
     """One dynasty's decision turn, ready to run on its own thread: the
     dynasties' cycles are independent (each reads only its own entity's
     surface, and ticks only move at resolution — after everyone has
-    decided), so their LLM latencies can overlap instead of summing."""
+    decided), so their LLM latencies can overlap instead of summing.
+    An extinct dynasty (status != active) is skipped before any model
+    call: the dead get no turn."""
     try:
+        state = lp.mcp.call("entity_state", {"entity_id": d.entity_id})
+        if (state.get("entity") or {}).get("status") != "active":
+            return _extinct_entry(d, round_no)
         return lp.cycle()
     except Exception as exc:                # provider death: keep playing
         return {

@@ -118,7 +118,9 @@ def _standings(snapshots: list[dict]) -> str:
         rewrites = len(set(shas)) - 1 if shas else 0
         refusals = sum(
             1 for snap in snapshots
-            if (snap["dynasties"][name].get("entry") or {}).get("kept_old"))
+            if (snap["dynasties"][name].get("entry") or {}).get("kept_old")
+            and (snap["dynasties"][name].get("entry") or {}).get("action")
+            != "extinct")     # tombstones are not refusals
         rows.append((money + assets, name, view, money, assets, lb,
                      rewrites, refusals))
     rows.sort(key=lambda r: (-r[0], r[1]))
@@ -156,12 +158,13 @@ def _activity(snapshots: list[dict]) -> str:
                      f"<td class=\"quiet\">{_esc(kinds or 'quiet')}</td>")
         for name, view in snap["dynasties"].items():
             entry = view.get("entry") or {}
-            if entry.get("accepted"):
-                cell = f"{entry.get('attempts', '?')}✓"
+            if entry.get("action") == "extinct":
+                cell, cls = "† extinct", "extinct"
+            elif entry.get("accepted"):
+                cell, cls = f"{entry.get('attempts', '?')}✓", "ok"
             else:
                 why = entry.get("refusal") or "—"
-                cell = f"{entry.get('attempts', '?')}✗ ({why[:60]})"
-            cls = "ok" if entry.get("accepted") else "bad"
+                cell, cls = f"{entry.get('attempts', '?')}✗ ({why[:60]})", "bad"
             parts.append(f'<td class="{cls}"><span class="quiet">'
                          f'{_esc(name)}</span><br>{_esc(cell)}</td>')
         parts.append("</tr>")
@@ -179,7 +182,10 @@ def _strategy(snapshots: list[dict]) -> str:
         for snap in snapshots:
             b = snap["dynasties"][name]["behaviour"]
             entry = snap["dynasties"][name].get("entry") or {}
-            cls = "sha-ok" if entry.get("accepted") else "sha-bad"
+            if entry.get("action") == "extinct":
+                cls = "sha-ext"          # frozen, not refused
+            else:
+                cls = "sha-ok" if entry.get("accepted") else "sha-bad"
             changed = ""
             if snap["round"] > 1:
                 prev = snapshots[snap["round"] - 2]["dynasties"][name][
@@ -266,7 +272,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       table.grid th{background:#171a21}
       td.num{text-align:right;font-variant-numeric:tabular-nums}
       td.num.strong{font-weight:600}td.name{font-weight:600}
-      td.ok{color:#34d399}td.bad{color:#f87171}
+      td.ok{color:#34d399}td.bad{color:#f87171}td.extinct{color:#8b93a3}
       .chart{margin:14px 0}svg{width:100%;max-width:920px;display:block}
       .grid{stroke:#262b36;stroke-width:1}.tick{fill:#8b93a3;font-size:11px}
       .legend{margin-top:6px}.legend span{margin-right:16px;font-size:12px}
@@ -277,6 +283,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
            padding:2px 7px;margin:2px 4px 2px 0;border-radius:9px}
       .sha-ok{background:#12321f;color:#6ee7b7}
       .sha-bad{background:#3a1717;color:#fca5a5}
+      .sha-ext{background:#262b33;color:#8b93a3}
       .sha-new{outline:2px solid #facc15}
       .diary{margin:10px 0 4px}
       .diary-line{margin:4px 0;color:#c7cdd9;font-size:13px}
