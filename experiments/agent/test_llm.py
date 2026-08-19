@@ -87,6 +87,18 @@ def test_nim_default_budget_covers_reasoning():
     assert NimModel("k", "openai/gpt-oss-20b")._max_tokens >= 8192
 
 
+def test_nim_reasoning_models_get_a_bigger_default():
+    # stone-run3: gpt-oss finished `length` with empty content 7 rounds
+    # in — thinking ate the whole 8192 before the answer started. The
+    # per-family default budgets reasoning models generously; plain
+    # instruct models keep the 8192 that has always sufficed.
+    assert NimModel("k", "openai/gpt-oss-20b")._max_tokens == 32768
+    assert NimModel("k", "meta/llama-3.3-70b-instruct")._max_tokens == 8192
+    # explicit argument still wins over any family default
+    assert NimModel("k", "openai/gpt-oss-20b",
+                    max_tokens=1234)._max_tokens == 1234
+
+
 def test_nim_complete_raises_on_null_content(monkeypatch):
     # the wiring gap, seen live twice (nim-run2 r4, nim-run3 r2 under a
     # machine suspend): NimModel returned the raw content field, so a

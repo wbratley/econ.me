@@ -160,9 +160,29 @@ def test_lint_refusal_feeds_back_and_second_attempt_accepts(client):
     # the refusal reached the model verbatim, as plain text to address
     assert "submission refused by lint" in model.calls[1]["user"]
     assert "settle_last_orders" in model.calls[1]["user"]
+    # strict-globals refusals carry their hint: the one move that fixes them
+    assert "undeclared global" in model.calls[1]["user"]
+    assert "local" in model.calls[1]["user"]
     # and the fix is live: the entity now runs the clean source
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == CLEAN
+
+
+def test_syntax_refusal_hints_against_prose(client):
+    """The stone-run2 failure mode: a reply that opens with English dies
+    as `syntax error near 'are'`. The retry prompt must say WHAT to do —
+    resend code alone — not just parrot the loader's error."""
+    # NOTE: strip_fences now extracts the code from inside the prose+
+    # fence wrapper, so this reply ACCEPTS on attempt 1 — the hint fires
+    # only when no fence exists at all. Test that class directly instead:
+    unfenced_prose = "I would make these changes: " + CLEAN
+    lp, model = loop(client, [unfenced_prose, CLEAN])
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    retry = model.calls[1]["user"]
+    assert "syntax error near" in retry
+    assert "prose" in retry
+    assert "code alone" in retry
 
 
 def test_exhausted_attempts_keep_the_working_behaviour(client):
