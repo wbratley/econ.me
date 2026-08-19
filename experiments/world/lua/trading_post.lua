@@ -1,0 +1,120 @@
+-- trading_post.lua  (BEHAVIOUR) -- the market maker of the stone age.
+--
+-- The post SELLS safe food (BERRIES, COOKED_MEAT) and BUYS raw goods
+-- (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN. Three runs showed why
+-- it must exist: houses with coin and hunger found no seller, hunters
+-- with meat found no buyer, and "the price is unknown" froze the one
+-- agent that tried to trade. A standing counterparty IS the fix: every
+-- order the post quotes is a price reference the whole world can read.
+--
+-- It haggles like a person would:
+--   sold food            -> ask +5%          (demand is real, charge it)
+--   bought goods         -> bid -5%          (sellers are eager, pay less)
+--   3 ticks, no fills    -> ask -5% / bid +3% (move the price toward the
+--                                              market instead of waiting)
+-- Bids never commit more COIN than the post holds (quantity shrinks to
+-- fit the balance), and it stops bidding for any good it already holds
+-- 20 of -- a larder, not a landfill. Prices and standing order ids live
+-- in ctx.state, so the haggling persists across ticks.
+--
+-- Vocabulary: std.* (engine), ctx.action.place_order / cancel_order,
+-- ctx.events (the post's own fills and applied orders from last tick).
+
+local S = ctx.state
+if not S.ask then
+  S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00 }
+  S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
+            YARN = 2.00, FLINT = 2.00 }
+  S.quiet = {}   -- ticks since the last fill, per "side_SYMBOL" key
+  S.live = {}    -- the (qty, price) placed per key, to spot drift
+  S.ids = {}     -- order id per key, from applied place_order events
+end
+
+local ASK_FLOOR, ASK_CAP = 1.00, 8.00
+local BID_FLOOR, BID_CAP = 0.50, 5.00
+local APPETITE = 20        -- stop bidding for a good held past this
+
+local function r2(x) return string.format("%.2f", x) end
+
+-- 1. Age every quiet counter first, so a fill this tick resets it to 0
+--    and the drift below fires only on genuinely quiet runs.
+for _, key in ipairs({ "sell_BERRIES", "sell_COOKED_MEAT",
+                       "buy_BERRIES", "buy_MEAT", "buy_WOOD",
+                       "buy_YARN", "buy_FLINT" }) do
+  S.quiet[key] = (S.quiet[key] or 0) + 1
+end
+
+-- 2. Yesterday's news: fills move prices; applied orders bring ids.
+for _, e in ipairs(ctx.events or {}) do
+  if e.type == "trade" then
+    local key = e.side .. "_" .. e.market
+    S.quiet[key] = 0
+    if e.side == "sell" then       -- we sold food: demand, ask up
+      S.ask[e.market] = math.min(S.ask[e.market] * 1.05, ASK_CAP)
+    else                           -- we bought goods: supply, bid down
+      S.bid[e.market] = math.max(S.bid[e.market] * 0.95, BID_FLOOR)
+    end
+  elseif e.type == "place_order" and e.status == "applied"
+         and e.order_id then
+    S.ids[e.params.side .. "_" .. e.params.symbol] = e.order_id
+  end
+end
+
+-- 3. Quiet drift: 3 ticks without a fill eases the price toward trade.
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT" }) do
+  if S.quiet["sell_" .. sym] >= 3 then
+    S.ask[sym] = math.max(S.ask[sym] * 0.95, ASK_FLOOR)
+    S.quiet["sell_" .. sym] = 0
+  end
+end
+for sym in pairs(S.bid) do
+  if S.quiet["buy_" .. sym] >= 3 then
+    S.bid[sym] = math.min(S.bid[sym] * 1.03, BID_CAP)
+    S.quiet["buy_" .. sym] = 0
+  end
+end
+
+-- 4. What should stand now? Sell the whole larder at the ask; bid for
+--    a little of everything the forest offers, within the coin on hand.
+local acct, coin = nil, 0
+for _, a in ipairs(ctx.accounts) do
+  if a.currency == "COIN" then acct, coin = a.id, tonumber(a.balance) end
+end
+
+local want = {}
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT" }) do
+  local qty = math.floor(std.holding_qty(sym))
+  if qty > 0 then
+    want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),
+                             symbol = sym, side = "sell" }
+  end
+end
+local budget = coin
+for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES" }) do
+  local price = S.bid[sym]
+  -- never cross our own ask (the post will not trade with itself)
+  if price and (not S.ask[sym] or price < S.ask[sym])
+     and std.holding_qty(sym) < APPETITE then
+    local qty = math.min(4, math.floor(budget / price))
+    if qty > 0 then
+      want["buy_" .. sym] = { qty = qty, price = r2(price),
+                              symbol = sym, side = "buy" }
+      budget = budget - qty * price
+    end
+  end
+end
+
+-- 5. Reconcile: cancel + replace only where (qty, price) moved or the
+--    order is gone; untouched orders keep their time priority in the
+--    book. Cancelling an order that already filled is a harmless
+--    rejection -- the engine just says no.
+for key, w in pairs(want) do
+  local cur = S.live[key]
+  if not (cur and cur.qty == w.qty and cur.price == w.price) then
+    local id = S.ids[key]
+    if id then ctx.action.cancel_order(id, 30) end
+    ctx.action.place_order(w.symbol, w.side, w.qty, w.price, acct, 30)
+    S.live[key] = w
+    S.ids[key] = nil      -- the new id arrives in next tick's events
+  end
+end
