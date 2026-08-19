@@ -227,6 +227,55 @@ def test_dead_model_never_stops_the_world(client, monkeypatch, tmp_path):
     assert "ctx" in src or "--" in src          # still the wired starter
 
 
+def test_extinct_dynasties_get_no_turn(client, tmp_path):
+    """A dead entity is skipped BEFORE any model call: no cycle, no
+    observation, zero prompt bytes — its entries are tombstones
+    (action=extinct), the round still resolves, and the dashboard
+    counts them as neither refusals nor red cells. Run 3 burned
+    provider calls on rounds the dead could not act in."""
+    from econengine.models import Entity, EntityStatus
+
+    # House Two is dead before the run starts (starved in round 0)
+    with Session(client["engine"]) as s:
+        two = next(d for d in client["dynasties"] if d.name == "House Two")
+        s.get(Entity, two.entity_id).status = EntityStatus.INCAPACITATED
+        s.commit()
+
+    class CountingModel(ScriptedModel):
+        wire_calls = 0
+
+        def complete(self, system, user):
+            type(self).wire_calls += 1
+            return super().complete(system, user)
+
+    dead_model = CountingModel(["-- never used"])
+    loops = []
+    for d in client["dynasties"]:
+        model = (dead_model if d.name == "House Two"
+                 else ScriptedModel([CLEAN, CLEAN2]))
+        loops.append((d, AgentLoop(McpClient(client["transports"][d.user_id]),
+                                   model, entity_id=d.entity_id)))
+
+    snapshots = run_rounds(loops, 2, tmp_path)
+
+    assert [s["round"] for s in snapshots] == [1, 2]
+    assert dead_model.wire_calls == 0       # the dead never reached the wire
+    for snap in snapshots:
+        entry = snap["dynasties"]["House Two"]["entry"]
+        assert entry["action"] == "extinct"
+        assert entry["prompt_bytes"] == 0 and entry["attempts"] == 0
+        assert entry["kept_old"] and entry["refusal"] is None
+        # the living played on
+        assert snap["dynasties"]["House One"]["entry"]["accepted"]
+
+    html = build_dashboard(snapshots, {
+        "title": "extinct run", "ticks_per_round": 2, "generated": "now"})
+    assert "† extinct" in html
+    # tombstones are not refusals: House Two's standings row shows 0,
+    # a refused-every-round house would show 2
+    assert "House Two" in html
+
+
 def test_decisions_overlap_in_time(client, tmp_path):
     """The houses' model calls run concurrently: every model waits on a
     barrier ALL of them must reach while its own call is in flight —
