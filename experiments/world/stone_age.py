@@ -182,6 +182,18 @@ A tooled house gathers ~2.5 food per LABOR against a 1.0 need -- the
 surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
+== THE TRADING POST ==
+A BUSINESS entity, THE TRADING POST, stands in every market with its own
+COIN. It SELLS safe food (BERRIES, COOKED_MEAT) while its larder lasts
+-- food rots, so the post's supply is finite -- and it BUYS raw goods
+(MEAT, WOOD, YARN, FLINT, BERRIES). Its prices haggle: each sale raises
+its ask 5%, each purchase it fills lowers its bid 5%, and 3 quiet ticks
+move prices the other way (ask -5%, bid +3%). Its bids are small (4
+units, and never more than its COIN covers) and it stops bidding for a
+good it holds 20 of. Your surplus MEAT, WOOD, YARN, FLINT can always
+become COIN at the post's bid -- and its ask is the price of food when
+your own gathering fails. Read its standing orders before you quote.
+
 == PRIVACY ==
 You see your own holdings, needs, and accounts. You CANNOT see any
 other entity's holdings or money: ctx.query.holding on another entity
@@ -190,12 +202,42 @@ only way to know a rival's wealth is to trade with them.
 """
 
 
+TRADING_POST = "trading_post.lua"
+POST_COIN = Decimal("30")       # a small purse: price discovery, not a
+                                 # bottomless buyer -- houses earn coin
+                                 # by selling to it, and the coin supply
+                                 # stays what seats minted
+POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20")}
+
+
+def spawn_trading_post(session: Session) -> Entity:
+    """The market maker: a BUSINESS (no needs -- it cannot starve or
+    freeze, and it draws no LABOR) with a purse of COIN, a larder of
+    safe food, and the haggling behaviour. It is the standing
+    counterparty every run lacked: a bid for surplus, an ask for food,
+    and a public price for both."""
+    post = services.create_entity(session, "Trading Post", EntityType.BUSINESS)
+    services.create_account(session, post, COIN, initial_balance=POST_COIN)
+    for sym, qty in POST_FOOD.items():
+        markets.adjust_holding(session, post, sym, qty)
+    session.add(Script(
+        name=f"trading-post-{post.id}",
+        script_type=ScriptType.BEHAVIOUR,
+        source=_gate_pack_script(TRADING_POST),
+        entity_id=post.id,
+        timeout_ms=200,
+        state={},
+    ))
+    return post
+
+
 def create_content(session: Session) -> None:
     """Goods, recipes, needs, markets -- the stone-age "physics"."""
     _create_goods(session)
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
+    spawn_trading_post(session)
     manifest.verify_manifest()
     scripting.pin_std_version(session)
     scripting.set_world_lib(session, _read_lua("world_lib.lua"))

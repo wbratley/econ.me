@@ -160,6 +160,28 @@ TRAP-consuming HUNT_TRAPS (best table, consumable), and the whole
 GOOD/RESEARCH axis from `docs/game.md` — the pack is data, so phases
 land as new rows, not engine patches.
 
+### The trading post (run 1–3 postmortem: the missing sell side)
+
+Three agent runs, zero trades. Coin existed (30 at genesis), hunger
+existed, surplus existed (run 3: Llama ended with 30 FLINT, 11 YARN and
+no buyer in the world; OSS starved at the bid, never seeing a seller) —
+what never existed was a counterparty or a price to quote against
+("the price is unknown", OSS diary). The fix is pack data, not engine
+change: `spawn_trading_post` (called by `create_content`, so every
+stone-age world has one) creates THE TRADING POST — a `BUSINESS`
+entity (no needs, no LABOR: it can neither starve nor freeze) with a
+small COIN purse (30), a finite larder of safe food (60 BERRIES, 20
+COOKED_MEAT — it rots like anyone's), and `lua/trading_post.lua`, a
+market-maker behaviour. It sells the whole larder at an ask and bids
+4 units for MEAT/WOOD/YARN/FLINT/BERRIES, never committing more than
+its balance covers, never crossing its own spread, and stopping at 20
+held of any good. Prices haggle from its own fills (own events feed
+`ctx.events`): each food sale raises the ask 5% (demand), each filled
+bid lowers it 5% (supply), and 3 quiet ticks move prices the other way
+(ask −5%, bid +3%), floored/capped at 1/8 and 0.50/5. The standing
+orders are the world's first public price reference; the coin flows
+are the first circular income (houses sell surplus → coin → buy food).
+
 Agent runs pick it with `--scenario stone_age`:
 
 ```bash

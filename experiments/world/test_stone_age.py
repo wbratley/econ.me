@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 from econengine import markets, parcels, production, services
 from econengine.models import (
-    Base, Entity, EntityStatus, EntityType, Holding, Script, ScriptType, Tick,
+    Base, Entity, EntityStatus, EntityType, Holding, Market, Order,
+    OrderSide, OrderStatus, Script, ScriptType, Tick,
 )
 from econengine.tick import run_tick
 
@@ -50,6 +51,22 @@ def _hold(session, entity_id, symbol):
         .where(Holding.entity_id == entity_id, Holding.symbol == symbol)
     ).scalar_one_or_none()
     return qty if qty is not None else Decimal("0")
+
+
+def _post(session):
+    return session.execute(
+        select(Entity).where(Entity.name == "Trading Post")
+    ).scalar_one()
+
+
+def _open_orders(session, entity_id, symbol=None, side=None):
+    q = select(Order).join(Market, Order.market_id == Market.id).where(
+        Order.entity_id == entity_id, Order.status == OrderStatus.OPEN)
+    if symbol:
+        q = q.where(Market.symbol == symbol)
+    if side:
+        q = q.where(Order.side == side)
+    return session.execute(q).scalars().all()
 
 
 def _run(session, ticks):
@@ -382,3 +399,119 @@ def test_pack_sets_rival_privacy(session):
     create_content(session)
     row = session.get(WorldSetting, PRIVATE_HOLDINGS_KEY)
     assert row is not None and row.value
+
+
+# ===========================================================================
+# The trading post: the standing counterparty, and its price discovery
+# ===========================================================================
+# Three runs, zero trades: coin existed, hunger existed, and nobody had a
+# reason (or a counterparty, or a price) to sell. The post is the pack's
+# answer -- a BUSINESS market maker whose quotes ARE the price reference.
+# These tests pin its spawn and each haggling rule.
+
+def test_post_spawns_with_purse_larder_and_haggler(session):
+    create_content(session)
+    post = _post(session)
+    assert post.entity_type == EntityType.BUSINESS
+    # a BUSINESS draws no needs and no LABOR (engine rules): the post
+    # can neither starve nor freeze -- it is terrain, not a player
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    assert acc.balance == stone_age.POST_COIN
+    assert _hold(session, post.id, "BERRIES") == Decimal("60")
+    assert _hold(session, post.id, "COOKED_MEAT") == Decimal("20")
+    script = session.execute(
+        select(Script).where(Script.entity_id == post.id)).scalar_one()
+    assert script.script_type == ScriptType.BEHAVIOUR
+    assert script.state == {}          # fresh haggler, no prices yet
+
+
+def test_post_quotes_both_sides_on_its_first_tick(session):
+    create_content(session)
+    post = _post(session)
+    _run(session, 1)
+    sells = {o.market_id: o for o in _open_orders(session, post.id, side=OrderSide.SELL)}
+    assert sells                      # food on the ask, whole larder out
+    buys = _open_orders(session, post.id, side=OrderSide.BUY)
+    by_sym = {}
+    mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
+    for o in sells.values():
+        by_sym[("sell", mid[o.market_id])] = o
+    for o in buys:
+        by_sym[("buy", mid[o.market_id])] = o
+    assert by_sym[("sell", "BERRIES")].limit_price == Decimal("2.00")
+    assert by_sym[("sell", "BERRIES")].quantity == Decimal("60")
+    assert by_sym[("sell", "COOKED_MEAT")].limit_price == Decimal("3.00")
+    # bids on every raw good, sized to the purse (4 each: 24 of 30 coin);
+    # BERRIES itself is skipped -- the ladder is already stuffed (60 >= 20)
+    for sym in ("MEAT", "WOOD", "YARN", "FLINT"):
+        assert by_sym[("buy", sym)].quantity == Decimal("4")
+    assert ("buy", "BERRIES") not in by_sym
+    assert by_sym[("buy", "MEAT")].limit_price == Decimal("1.00")
+    assert by_sym[("buy", "YARN")].limit_price == Decimal("2.00")
+    # it never crosses itself: BERRIES ask stands even with no bid
+
+
+def test_post_ask_rises_when_food_sells(session):
+    """Demand moves the ask up 5% the tick after a fill."""
+    create_content(session)
+    post, buyer = _post(session), _biz(session, "Buyer")
+    _run(session, 1)
+    markets.place_order(session, buyer.id, "BERRIES", "buy",
+                        Decimal("2"), Decimal("2.00"),
+                        next(a.id for a in buyer.accounts if a.currency == COIN))
+    _run(session, 1)                    # the fill
+    trades = [e for e in _events(session, "trade")]
+    assert trades and Decimal(trades[-1]["quantity"]) == Decimal("2")
+    assert buyer.accounts[0].balance == SEAT_COIN - Decimal("4")
+    _run(session, 1)                    # the post reads its fill
+    ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
+    assert [o.limit_price for o in ask] == [Decimal("2.10")]
+
+
+def test_post_bid_falls_when_supply_arrives(session):
+    """Sellers filling the bid is supply: the bid eases 5% next tick."""
+    create_content(session)
+    post, seller = _post(session), _biz(session, "Seller")
+    markets.adjust_holding(session, seller, "WOOD", Decimal("10"))
+    _run(session, 1)
+    markets.place_order(session, seller.id, "WOOD", "sell",
+                        Decimal("3"), Decimal("1.00"),
+                        next(a.id for a in seller.accounts if a.currency == COIN))
+    _run(session, 1)                    # the fill
+    assert _hold(session, post.id, "WOOD") >= Decimal("3")
+    assert next(a for a in seller.accounts if a.currency == COIN).balance \
+        == SEAT_COIN + Decimal("3")
+    _run(session, 1)                    # the post reads its fill
+    bids = _open_orders(session, post.id, "WOOD", OrderSide.BUY)
+    assert [o.limit_price for o in bids] == [Decimal("0.95")]
+
+
+def test_post_prices_drift_toward_trade_when_quiet(session):
+    """3 quiet ticks: the ask eases down 5%, the bid creeps up 3%."""
+    create_content(session)
+    post = _post(session)
+    _run(session, 3)
+    ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
+    assert [o.limit_price for o in ask] == [Decimal("1.90")]   # 2.00*0.95
+    bid = _open_orders(session, post.id, "MEAT", OrderSide.BUY)
+    assert [o.limit_price for o in bid] == [Decimal("1.03")]   # 1.00*1.03
+
+
+def test_post_never_bids_beyond_its_coin(session):
+    """The purse runs out: bids shrink to what the balance covers and
+    never commit coin the post does not hold."""
+    create_content(session)
+    post = _post(session)
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    acc.balance = Decimal("5.5")       # a lean purse
+    _run(session, 1)
+    buys = _open_orders(session, post.id, side=OrderSide.BUY)
+    committed = sum(o.quantity * o.limit_price for o in buys)
+    assert committed <= Decimal("5.5")
+    mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
+    by_sym = {mid[o.market_id]: o for o in buys}
+    # the purse covers MEAT fully (4 @1.00) and one WOOD (1 @1.00); the
+    # YARN/FLINT/BERRIES bids are skipped -- floor(0.5/2) == 0
+    assert by_sym["MEAT"].quantity == Decimal("4")
+    assert by_sym["WOOD"].quantity == Decimal("1")
+    assert "YARN" not in by_sym and "FLINT" not in by_sym
