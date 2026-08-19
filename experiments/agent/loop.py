@@ -211,6 +211,30 @@ _PATCH_RE = re.compile(
     re.DOTALL)
 
 
+# The lint's refusal strings come from the Lua loader and our strict-globals
+# pass; a model reading "syntax error near 'are'" has no way to know the fix
+# is "don't open with prose". Hints translate engine-speak into the one move
+# that addresses each class (the stone-run2/3 postmortems: every refusal was
+# either a format slip or a near miss, and the retry often landed once the
+# model knew what had actually gone wrong).
+_PROSE_HINT = ("Your reply must be ONLY a Lua program: the error is on "
+                "line 1 because your answer began with prose (or the Lua "
+                "parser hit an English word). Resend the code alone — no "
+                "introduction, no ``` fence, no trailing commentary.")
+_GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
+                "refused. Add `local` at the first use of that name (or "
+                "capture ctx.state in a local at the top of the script).")
+
+
+def _refusal_hint(error: str) -> str | None:
+    """One actionable sentence per refusal class; None = no known class."""
+    if "syntax error near" in error or "unexpected symbol" in error:
+        return _PROSE_HINT
+    if "undeclared global" in error:
+        return _GLOBAL_HINT
+    return None
+
+
 def _parse_patches(text: str) -> list[tuple[str, str]]:
     """All (search, replace) blocks in a raw completion; [] when the reply
     isn't in block form (a full rewrite or KEEP — the other two actions)."""
@@ -396,9 +420,15 @@ class AgentLoop:
                 break
             except McpError as exc:
                 last_error = str(exc)
-                feedback.append(f"submission refused by lint: {last_error}")
-                transcript.append(
-                    {"platform": f"submission refused by lint: {last_error}"})
+                hint = _refusal_hint(last_error)
+                if hint:
+                    feedback.append(f"submission refused by lint: {last_error}. {hint}")
+                    transcript.append(
+                        {"platform": f"submission refused by lint: {last_error}. {hint}"})
+                else:
+                    feedback.append(f"submission refused by lint: {last_error}")
+                    transcript.append(
+                        {"platform": f"submission refused by lint: {last_error}"})
 
         # The strategy diary: one extra short call, same mind, after the
         # decision stands. Failure degrades to silence — the diary must

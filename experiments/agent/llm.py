@@ -205,6 +205,21 @@ class OpenAIModel:
 
 NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
 
+# Reasoning models whose thinking channel reliably eats a default-sized
+# completion budget before the answer starts (observed: GPT-OSS,
+# finish_reason=length with empty content, 7 stone-run3 rounds).
+_REASONING_TOKEN_DEFAULTS: dict[str, int] = {
+    "gpt-oss": 32768,
+}
+
+
+def _default_max_tokens(model: str) -> int:
+    """Completion budget by slug family; plain instruct default 8192."""
+    for family, budget in _REASONING_TOKEN_DEFAULTS.items():
+        if family in model:
+            return budget
+    return 8192
+
 
 def nim_key(env: dict[str, str] | None = None) -> str | None:
     """The NVIDIA NIM key: NVIDIA_API_KEY / NIM_API_KEY from the env, or
@@ -280,12 +295,17 @@ class NimModel(OpenAIModel):
     def __init__(self, api_key: str, model: str,
                  timeout: float = 120.0,
                  base_url: str = NIM_DEFAULT_BASE,
-                 temperature: float = 0.3, max_tokens: int = 8192):
+                 temperature: float = 0.3, max_tokens: int | None = None):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
         self._temperature = temperature
-        self._max_tokens = max_tokens
+        # Per-model defaults, overridable by argument: reasoning models
+        # (the stone-run3 GPT-OSS evidence) spend the completion budget
+        # thinking and finish_reason=length with an empty final channel --
+        # `raise max_tokens` -- so they get a bigger default than the
+        # 8192 a plain instruct model is fine with.
+        self._max_tokens = max_tokens or _default_max_tokens(model)
 
     def complete(self, system: str, user: str) -> str:
         import httpx
