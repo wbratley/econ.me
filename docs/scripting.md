@@ -118,7 +118,10 @@ Two axes — environment hardening (mostly exists) and library provenance
 fresh `LuaRuntime` per tick; module system and `io`/`os`/`debug` nil'd;
 16MB memory cap; in-VM instruction watchdog enforcing `timeout_ms`;
 query callables wrapped and inerted the moment `run()` returns (an
-abandoned script cannot reach the session); and the deep one — scripts
+abandoned script cannot reach the session); crash-revert — a BEHAVIOUR
+script that errors 3 ticks in a row is deactivated and its lineage
+ancestor re-activated, so a compiling-but-broken submission paralyzes
+an entity for ticks, not rounds; and the deep one — scripts
 only ever *request*. Every intent is validated and applied by Python
 with the money-scope invariant, so no Lua can spend money its entity
 does not have, whatever it calls.

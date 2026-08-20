@@ -158,7 +158,23 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
                     "script_id": script.id,
                     "error": result.error,
                 })
+                # A compiling-but-broken submission paralyzes the entity
+                # every tick with no fallback — stone-run6 death: 28 straight
+                # nil-index crashes while HUNGER crossed the threshold. At
+                # CRASH_REVERT_TICKS the engine falls back to the lineage
+                # ancestor, so the entity keeps living (and the model gets
+                # the error + a translation next round).
+                if script_type == ScriptType.BEHAVIOUR:
+                    fallback = _record_crash(session, script)
+                    if fallback is not None:
+                        events.append({
+                            "type": "script_reverted",
+                            "entity_id": entity.id,
+                            "from_script_id": script.id,
+                            "to_script_id": fallback.id,
+                        })
                 continue
+            script.consecutive_errors = 0
             script.state = dict(result.state_updates)
             intents.extend(result.intents)
 
@@ -229,6 +245,39 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     session.add(tick)
     session.flush()
     return tick
+
+
+# How many consecutive runtime crashes before the engine gives up on a
+# behaviour and falls back to its ancestor. 3 = one full round of the
+# agent loop (stone worlds run 20 ticks/round) is enough signal the
+# submission is broken, not unlucky.
+CRASH_REVERT_TICKS = 3
+
+
+def _record_crash(session: Session, script: Script) -> Script | None:
+    """Count the crash streak; at CRASH_REVERT_TICKS deactivate the
+    crasher and re-activate the entity's most recent other behaviour
+    script (lineage ancestor), fresh-streaked. None = no revert (streak
+    under threshold, or nothing to fall back to — keep limping along)."""
+    script.consecutive_errors = (script.consecutive_errors or 0) + 1
+    if script.consecutive_errors < CRASH_REVERT_TICKS:
+        return None
+    fallback = session.execute(
+        select(Script)
+        .where(
+            Script.entity_id == script.entity_id,
+            Script.id != script.id,
+            Script.script_type == ScriptType.BEHAVIOUR,
+        )
+        .order_by(Script.created_at.desc(), Script.id.desc())
+    ).scalars().first()
+    if fallback is None:
+        return None
+    script.is_active = False
+    script.consecutive_errors = 0          # fresh streak if re-activated
+    fallback.is_active = True
+    fallback.consecutive_errors = 0         # fresh window on re-activation
+    return fallback
 
 
 def _tick_scripts(session: Session, script_type: ScriptType):

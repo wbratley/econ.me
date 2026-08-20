@@ -600,3 +600,51 @@ def test_journal_records_the_refused_reply_head(client):
     ok = lp.cycle.__self__  # sanity: accepted rounds journal None instead
     lp2, _ = loop(client, [CLEAN])
     assert lp2.cycle()["reply_head"] is None
+
+
+# ===========================================================================
+# Crash feedback: deduped, translated runtime errors (the stone-run6
+# lesson — a raw Lua error string is a riddle; the "fix" was identical)
+# ===========================================================================
+
+def test_crash_feedback_dedups_and_translates():
+    from experiments.agent.loop import _crash_feedback
+    err = ("[string \"<python>\"]:38: attempt to index a nil value "
+           "(field 'integer index')")
+    ticks = [{"tick": t, "events": [{"type": "script_error",
+                                     "error": err}]}
+             for t in range(21, 41)]          # 20 identical crashes
+    lines = _crash_feedback(ticks)
+    assert len(lines) == 1                     # one line, not twenty
+    assert "x20 ticks" in lines[0]
+    assert "1-indexed" in lines[0]             # the [0] -> [1] translation
+    assert "ctx.accounts[1]" in lines[0]
+
+
+def test_crash_feedback_general_nil_guard_hint():
+    from experiments.agent.loop import _crash_feedback
+    ticks = [{"tick": 1, "events": [
+        {"type": "script_error",
+         "error": "[string \"<python>\"]:5: attempt to index a nil value "
+                  "(field 'outputs')"}]}]
+    line = _crash_feedback(ticks)[0]
+    assert "nil at that moment" in line
+    assert "if t and t.field" in line
+
+
+def test_crash_feedback_reports_the_revert():
+    from experiments.agent.loop import _crash_feedback
+    ticks = [{"tick": 30, "events": [
+        {"type": "script_error", "error": "boom"},
+        {"type": "script_reverted", "from_script_id": "x", "to_script_id": "y"},
+    ]}]
+    lines = _crash_feedback(ticks)
+    assert any("reverted" in l for l in lines)
+    assert any(l.startswith("script_error x1") for l in lines)
+
+
+def test_crash_feedback_no_hint_for_unknown_error():
+    from experiments.agent.loop import _crash_feedback
+    lines = _crash_feedback([{"tick": 1, "events": [
+        {"type": "script_error", "error": "something exotic"}]}])
+    assert lines == ["script_error x1 ticks: something exotic"]

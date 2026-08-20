@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 from econengine.models import Base, EntityType, Script, ScriptType
 from econengine.services import create_account, create_entity
-from econengine.tick import get_compute_budget_ms, run_tick, set_compute_budget_ms
+from econengine.tick import (
+    CRASH_REVERT_TICKS, get_compute_budget_ms, run_tick, set_compute_budget_ms,
+)
 
 
 @pytest.fixture
@@ -293,3 +295,70 @@ def test_compute_budget_is_isolated_per_entity(world):
     applied = {(e["entity_id"], e["type"]) for e in tick.events if e.get("status") == "applied"}
     assert (cb.id, "issue_money") in applied
     assert c.balance == Decimal("10")
+
+
+# ===========================================================================
+# Crash-revert: a compiling-but-broken behaviour must not paralyze the
+# entity forever (stone-run6: 28 straight nil-index crashes -> HUNGER death)
+# ===========================================================================
+
+def test_crashing_script_reverts_to_ancestor_after_three_ticks(world):
+    session, alice, bob, cb, a, b, c = world
+    good = make_script(session, "good",
+                       f"ctx.action.transfer('{a.id}', '{b.id}', '1', 'x')", alice)
+    bad = make_script(session, "bad", "error('boom')", alice)
+    good.is_active = False            # superseded by the (broken) rewrite
+    session.flush()
+
+    run_tick(session)
+    run_tick(session)
+    assert bad.is_active and bad.consecutive_errors == 2
+    assert good.is_active is False
+
+    tick3 = run_tick(session)         # third crash: the engine steps in
+
+    assert bad.is_active is False and good.is_active is True
+    rev = [e for e in tick3.events if e["type"] == "script_reverted"]
+    assert rev and rev[0]["from_script_id"] == bad.id \
+        and rev[0]["to_script_id"] == good.id
+
+    run_tick(session)                 # the ancestor runs again: life goes on
+    assert b.balance == Decimal("1")
+
+
+def test_success_resets_streak_then_sustained_crash_reverts(world):
+    """Error, success, error...: a success resets the streak — the bar is
+    three crashes IN A ROW, not three crashes ever. But sustained
+    crashing still reverts, just later."""
+    session, alice, bob, cb, a, b, c = world
+    # errors until its state says otherwise; state persists only on
+    # success, so: tick1 error, tick2 error-with-flag... use tick parity
+    # via ctx.state written on the successful run instead.
+    good = make_script(session, "g", "ctx.state.ok = true", alice)
+    good.is_active = False
+    bad = make_script(
+        session, "b",
+        "if ctx.state.b == 'armed' then error('boom') end\n"
+        "ctx.state.b = 'armed'", alice)   # succeeds once, crashes after
+    session.flush()
+
+    run_tick(session)                 # success (arms), streak 0
+    run_tick(session)                 # crash, streak 1
+    run_tick(session)                 # crash, streak 2
+    assert bad.is_active and bad.consecutive_errors == 2
+
+    run_tick(session)                 # crash 3 -> revert to good
+    assert bad.is_active is False and good.is_active is True
+
+
+def test_no_ancestor_keeps_limping(world):
+    session, alice, bob, cb, a, b, c = world
+    solo = make_script(session, "solo", "error('boom')", alice)
+    session.flush()
+
+    for _ in range(5):
+        run_tick(session)
+
+    assert solo.is_active and solo.consecutive_errors >= CRASH_REVERT_TICKS
+    types = [e["type"] for e in run_tick(session).events]
+    assert "script_reverted" not in types     # nothing to fall back to
