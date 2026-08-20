@@ -33,6 +33,13 @@ class Script(Base):
     entity_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("entities.id"), nullable=True)
     # persistent ctx.state, updated after each successful run
     state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # runtime-crash streak: how many ticks in a row this script errored.
+    # At CRASH_REVERT_TICKS the engine deactivates it and re-activates its
+    # lineage ancestor — a compiling-but-broken submission paralyzes the
+    # entity for ticks, not rounds (stone-run6: 28 straight nil-index
+    # crashes while HUNGER crossed the death threshold).
+    consecutive_errors: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

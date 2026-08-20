@@ -233,6 +233,57 @@ _EOF_HINT = ("Your script has more `end`s than block openers — or "
              "commentary merged into the code. Every function/if/for/"
              "while/do needs exactly one matching `end`; count them, and "
              "resend the code alone.")
+
+# Runtime-crash translations. A raw Lua error string is a riddle to a
+# model that just wrote the line (stone-run6: `attempt to index a nil
+# value (field 'integer index')` fed back twice; the round-3 "fix" was
+# byte-identical). First matching hint wins, so order specific-to-general.
+_RUNTIME_HINTS = (
+    ("attempt to index a nil value (field 'integer index'",
+     "Lua is 1-indexed: the first element is t[1] — t[0] is nil. "
+     "ctx.accounts[1] is your first account, not ctx.accounts[0]."),
+    ("attempt to index a nil value",
+     "that table or field is nil at that moment — guard before indexing: "
+     "`if t and t.field then ... end`."),
+    ("attempt to call a nil value",
+     "that name is nil — it is not a library function; check the manual "
+     "for the exact name."),
+    ("attempt to perform arithmetic on a nil value",
+     "a nil reached arithmetic — initialize the local before use, or "
+     "nil-check it first."),
+    ("attempt to compare nil with number",
+     "a nil reached a comparison — nil-check before comparing."),
+)
+
+
+def _runtime_hint(error: str) -> str:
+    for needle, hint in _RUNTIME_HINTS:
+        if needle in error:
+            return f" ({hint})"
+    return ""
+
+
+def _crash_feedback(ticks: list[dict]) -> list[str]:
+    """Feedback lines from per-tick script events: errors deduped by
+    message (a crashing script fires once per tick — 20 identical lines
+    is prompt spam, not information), each with its translation; a revert
+    gets its own line, because 'the engine fell back for you' changes
+    what the model should do next round."""
+    lines: list[str] = []
+    counts: dict[str, int] = {}
+    for tick in ticks:
+        for ev in tick.get("events", []):
+            if ev.get("type") == "script_error":
+                err = ev.get("error") or ""
+                counts[err] = counts.get(err, 0) + 1
+            elif ev.get("type") == "script_reverted":
+                lines.append(
+                    "your behaviour crashed every tick and the engine "
+                    "reverted to your previous working behaviour — fix "
+                    "the error and resubmit")
+    for err, n in counts.items():
+        lines.append(f"script_error x{n} ticks: {err}{_runtime_hint(err)}")
+    return lines
 _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
                 "refused. Add `local` at the first use of that name (or "
                 "capture ctx.state in a local at the top of the script).")
@@ -332,12 +383,10 @@ class AgentLoop:
         }
         # Per-tick script errors are the loudest finding there is: the
         # behaviour is broken in play (lint cannot catch state-dependent
-        # failures). Feed them forward like warnings.
-        for tick in obs["events"].get("ticks", []):
-            for ev in tick.get("events", []):
-                if ev.get("type") == "script_error":
-                    self._feedback.append(
-                        f"script_error at tick {tick['tick']}: {ev.get('error')}")
+        # failures). Feed them forward like warnings — deduped and
+        # translated (a raw Lua error is a riddle; the run-6 "fix" was
+        # byte-identical to the crasher).
+        self._feedback.extend(_crash_feedback(obs["events"].get("ticks", [])))
         return obs
 
     def cycle(self) -> dict:
