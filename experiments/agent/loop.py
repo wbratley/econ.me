@@ -251,8 +251,9 @@ _RUNTIME_HINTS = (
     ("attempt to perform arithmetic on a nil value",
      "a nil reached arithmetic — initialize the local before use, or "
      "nil-check it first."),
-    ("attempt to compare nil with number",
-     "a nil reached a comparison — nil-check before comparing."),
+    ("attempt to compare",
+     "a nil or a string reached a comparison — need and price fields "
+     "arrive as strings or nil: `tonumber(a or 0) < tonumber(b or 0)`."),
 )
 
 

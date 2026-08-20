@@ -632,6 +632,19 @@ def test_crash_feedback_general_nil_guard_hint():
     assert "if t and t.field" in line
 
 
+def test_crash_feedback_string_compare_hint():
+    """Llama's run-6 death: `hunger.satisfaction < hunger.required` --
+    need fields are strings, required was nil. The translation must
+    name tonumber, not just nil-guarding."""
+    from experiments.agent.loop import _crash_feedback
+    ticks = [{"tick": 81, "events": [
+        {"type": "script_error",
+         "error": "[string \"<python>\"]:76: attempt to compare string with nil"}]}]
+    line = _crash_feedback(ticks)[0]
+    assert "tonumber" in line
+    assert "strings or nil" in line
+
+
 def test_crash_feedback_reports_the_revert():
     from experiments.agent.loop import _crash_feedback
     ticks = [{"tick": 30, "events": [
