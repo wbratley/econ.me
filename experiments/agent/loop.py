@@ -37,7 +37,7 @@ import hashlib
 import json
 import re
 
-from .llm import ScriptedModelEmpty, strip_fences
+from .llm import ScriptedModelEmpty, extract_script, strip_fences, strip_think
 
 # ---------------------------------------------------------------------------
 # MCP client (transport-free: tests inject a TestClient adapter, run.py an
@@ -229,6 +229,10 @@ _PROSE_HINT = ("Your reply must be ONLY a Lua program: the error is on "
                 "line 1 because your answer began with prose (or the Lua "
                 "parser hit an English word). Resend the code alone — no "
                 "introduction, no ``` fence, no trailing commentary.")
+_EOF_HINT = ("Your script has more `end`s than block openers — or "
+             "commentary merged into the code. Every function/if/for/"
+             "while/do needs exactly one matching `end`; count them, and "
+             "resend the code alone.")
 _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
                 "refused. Add `local` at the first use of that name (or "
                 "capture ctx.state in a local at the top of the script).")
@@ -236,6 +240,8 @@ _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
 
 def _refusal_hint(error: str) -> str | None:
     """One actionable sentence per refusal class; None = no known class."""
+    if "<eof> expected" in error or "expected near 'end'" in error:
+        return _EOF_HINT
     if "syntax error near" in error or "unexpected symbol" in error:
         return _PROSE_HINT
     if "undeclared global" in error:
@@ -353,7 +359,7 @@ class AgentLoop:
         has_current = current.get("id") is not None
 
         attempts, accepted, warnings, last_error = 0, False, [], None
-        source, action = "", "rewrite"
+        source, action, raw = "", "rewrite", ""
         sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
                                 manual=self.manual)
         transcript: list[dict] = []      # prompts + replies + platform
@@ -373,12 +379,17 @@ class AgentLoop:
                     {"platform": f"the model call failed: {exc}"})
                 continue
             transcript.append({"user": usr_text, "reply": raw})
+            # The action channel is the post-deliberation text: reasoning
+            # models that embed <think> blocks in content get them peeled
+            # before KEEP/patch/rewrite parsing (stone-run5: the separator
+            # must be structural — the diary prompt could not stop it).
+            body = strip_think(raw)
 
             # action 1: KEEP — carry the behaviour forward verbatim, no
             # submission at all. Readying up without gambling a rewrite.
             # Bare KEEP only: prose around it ("I would KEEP") is the
             # model talking, and a talking response is a rewrite attempt.
-            if raw.strip().upper() == "KEEP":
+            if body.strip().upper() == "KEEP":
                 if has_current:
                     source, action = current["source"], "keep"
                     break
@@ -392,7 +403,7 @@ class AgentLoop:
 
             # action 2: edit blocks — patch the current behaviour, then
             # through the same lint gate as a full rewrite
-            patches = _parse_patches(raw)
+            patches = _parse_patches(body)
             if patches:
                 if not has_current:
                     last_error = "patch refused: no previous behaviour to patch"
@@ -412,7 +423,7 @@ class AgentLoop:
                     continue
                 source, action = patched, "edit"
             else:                     # action 3: the full rewrite
-                source, action = strip_fences(raw), "rewrite"
+                source, action = extract_script(raw), "rewrite"
 
             try:
                 result = self.mcp.call(
@@ -444,9 +455,9 @@ class AgentLoop:
         thoughts = ""
         if self.diary:
             try:
-                thoughts = self.model.complete(
+                thoughts = strip_think(self.model.complete(
                     *diary_prompt(sys_text, transcript,
-                                  action, last_error)).strip()
+                                  action, last_error))).strip()
             except ScriptedModelEmpty:
                 raise                 # a missing fixture, not a provider hiccup
             except Exception:
@@ -464,6 +475,7 @@ class AgentLoop:
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],
+            "reply_head": None if accepted else raw[:800],
             "thoughts": thoughts,
             "prompt_bytes": next((len(s["user"]) for s in reversed(transcript)
                                   if "user" in s), 0),

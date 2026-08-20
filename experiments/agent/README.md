@@ -41,12 +41,19 @@ It is also the payoff of the scripting arc (docs/scripting.md):
    `epoch_state`, and, when the pack ships one, its manual in the system
    prompt (see experiments/world/README.md, "three pack fixes")
 2. **think** — model completes: system = identity + tier sources; user =
-   observation digest + current behaviour + findings since last time
+   observation digest + current behaviour + findings since last time.
+   The reply goes through a reasoning/code separator (`extract_script`):
+   `<think>` blocks are peeled, then the first fenced block, the last
+   fenced block, and the longest Lua-looking line island compete — the
+   first candidate that *compiles* wins (stone-run5: 15 of Nemotron's
+   16 refusal classes were prose/code separation failures). Nothing
+   compiles → the raw text submits unchanged and lint judges.
 3. **submit** — `set_behaviour`; `isError` (lint refusal) appends the
    finding to the feedback and re-thinks (≤ `max_attempts`, default 3);
    exhaustion keeps the old behaviour — never destructive
 4. **journal** — one JSONL line per cycle (attempts, accepted,
-   warnings, source sha, model)
+   warnings, source sha, model, and — on a refused round — the head of
+   the last raw reply: failed attempts stopped evaporating)
 
 ## Running
 

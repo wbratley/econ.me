@@ -26,7 +26,7 @@ from econengine.models import Base, User, WorldSetting
 
 from experiments.agent.llm import (
     AnthropicModel, OpenAIModel, ScriptedModel, ScriptedModelEmpty,
-    model_from_env, strip_fences,
+    extract_script, model_from_env, strip_fences, strip_think,
 )
 from experiments.agent.loop import (
     AgentLoop, McpClient, McpError, system_prompt, user_prompt,
@@ -172,17 +172,48 @@ def test_syntax_refusal_hints_against_prose(client):
     """The stone-run2 failure mode: a reply that opens with English dies
     as `syntax error near 'are'`. The retry prompt must say WHAT to do —
     resend code alone — not just parrot the loader's error."""
-    # NOTE: strip_fences now extracts the code from inside the prose+
-    # fence wrapper, so this reply ACCEPTS on attempt 1 — the hint fires
-    # only when no fence exists at all. Test that class directly instead:
-    unfenced_prose = "I would make these changes: " + CLEAN
-    lp, model = loop(client, [unfenced_prose, CLEAN])
+    # NOTE: extract_script now recovers code from prose (island scan),
+    # so the hint fires only when there is NO code to recover: pure
+    # deliberation, no fence, no Lua-looking line anywhere.
+    pure_prose = ("I would keep gathering berries this round and cook "
+                  "the meat before rot sets in, then reconsider the spear.")
+    lp, model = loop(client, [pure_prose, CLEAN])
     entry = lp.cycle()
     assert entry["accepted"] and entry["attempts"] == 2
     retry = model.calls[1]["user"]
     assert "syntax error near" in retry
     assert "prose" in retry
     assert "code alone" in retry
+
+
+def test_extract_script_recovers_unfenced_code_from_prose(client):
+    """The stone-run5 failure: 9 Nemotron rounds died as `syntax error
+    near 'are'` because the reply had prose around code and NO fence —
+    the one-shot extractor fell back to the raw text. The island scan
+    plus compile check now recovers the program."""
+    raw = ("We are given the current behaviour. My plan:\n"
+           "cook first, then gather.\n\n"
+           + CLEAN + "\n\n"
+           "This should keep the house fed through the round.")
+    lp, _ = loop(client, [raw])
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 1
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+def test_think_block_is_peeled_before_the_action_is_read(client):
+    """A reasoning model that deliberates in <think> tags then decides
+    KEEP: the decision is the post-deliberation text, the deliberation
+    is not prose-around-KEEP."""
+    lp, _ = loop(client, ["<think>\nthe firewood plan holds another round\n</think>\nKEEP"])
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert entry["action"] == "keep" and entry["attempts"] == 1
+    assert entry["refusal"] is None
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["id"] == good["id"]
 
 
 def test_exhausted_attempts_keep_the_working_behaviour(client):
@@ -513,3 +544,59 @@ def test_run_cycles_operator_between_never_after_last(client):
     assert seen == [0, 1]
     assert ready_log == []
     assert all(e["accepted"] for e in entries)
+
+
+# ===========================================================================
+# Reasoning/code separation (the stone-run5 lesson): extraction candidates,
+# think-block peeling, eof hints, reply forensics
+# ===========================================================================
+
+def test_strip_think_drops_deliberation_blocks():
+    raw = ("<think>\nconsider fire, then food\n</think>\n"
+           "-- the decision\nctx.state.plan = 'fire'")
+    assert strip_think(raw) == "-- the decision\nctx.state.plan = 'fire'"
+    # no tags: unchanged
+    assert strip_think("-- plain") == "-- plain"
+
+
+def test_extract_script_takes_last_fence_when_first_is_prose():
+    """A model that fences its REASONING first and its ANSWER second: the
+    first fence does not compile, the last one does — the Lua parser
+    arbitrates, not the position."""
+    raw = ("Reasoning about the round:\n"
+           "```python\nthis is not lua at all\n```\n"
+           "The behaviour:\n"
+           "```lua\nctx.state.plan = std.amount_str(1)\n```")
+    assert extract_script(raw) == "ctx.state.plan = std.amount_str(1)"
+
+
+def test_extract_script_falls_back_verbatim_when_nothing_compiles():
+    # nothing recoverable: today's behavior, verbatim (lint judges)
+    raw = "Just words about the round, no code anywhere."
+    assert extract_script(raw) == raw
+
+
+def test_eof_refusal_hints_at_unbalanced_blocks(client):
+    """The other run-5 mask: `<eof> expected near 'end'` matched NO hint
+    class (not 'syntax error near', not 'unexpected symbol') — the model
+    got the bare loader error with no translation."""
+    unbalanced = "local function plan()\n  ctx.state.x = 1\nend\nend"
+    lp, model = loop(client, [unbalanced, CLEAN])
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    retry = model.calls[1]["user"]
+    assert "expected near 'end'" in retry
+    assert "matching `end`" in retry
+
+
+def test_journal_records_the_refused_reply_head(client):
+    """Failed attempts stopped evaporating: the journal keeps the head of
+    the last raw reply when a round exhausts its attempts, so a
+    postmortem can read what the model actually sent (run 5 had to guess)."""
+    lp, _ = loop(client, [TRAP, TRAP, TRAP], max_attempts=3)
+    entry = lp.cycle()
+    assert not entry["accepted"]
+    assert entry["reply_head"].startswith("local fills")
+    ok = lp.cycle.__self__  # sanity: accepted rounds journal None instead
+    lp2, _ = loop(client, [CLEAN])
+    assert lp2.cycle()["reply_head"] is None
