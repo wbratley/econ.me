@@ -26,7 +26,8 @@ from econengine.models import Base, User, WorldSetting
 
 from experiments.agent.llm import (
     AnthropicModel, OpenAIModel, ScriptedModel, ScriptedModelEmpty,
-    extract_script, model_from_env, strip_fences, strip_think,
+    extract_script, extract_script_detailed, model_from_env, strip_fences,
+    strip_think,
 )
 from experiments.agent.loop import (
     AgentLoop, McpClient, McpError, system_prompt, user_prompt,
@@ -36,6 +37,30 @@ from experiments.agent.run import run_cycles
 TRAP = "local fills = settle_last_orders()"          # the nil-call zombie
 CLEAN = "ctx.state.plan = std.amount_str(1)"         # legal, tiered, clean
 STATEDEP = "ctx.state.hunger = ctx.state.hunger + 1"  # warns on synthetic ctx
+
+# The stone-run6 wrong-candidate shape: Nemotron's round-3 script still
+# indexed ctx.accounts[0] (Lua lists are 1-indexed — the runtime crash),
+# differing from the round-2 crasher by ONE leading space per line: the
+# reply quoted the old script in an indented fence before the fix.
+CRASHER = ("local account_id = ctx.accounts[0].id\n"
+           "ctx.action.place_order('JERKY', 'buy', std.amount_str(2), "
+           "std.amount_str(2.21), account_id, 30)\n")
+FIXED_IDX = CRASHER.replace("accounts[0]", "accounts[1]")
+
+
+def _quote(src: str, indent: str = " ") -> str:
+    """Re-emit a script one indent deeper — what a model does when it
+    quotes the running behaviour inside a fenced block."""
+    return "\n".join(indent + ln if ln.strip() else ln
+                      for ln in src.splitlines())
+
+
+QUOTED_REPLY = (
+    "The current behaviour for reference:\n"
+    "    ```lua\n" + _quote(CRASHER) + "\n    ```\n"
+    "And the corrected behaviour:\n"
+    "```lua\n" + FIXED_IDX + "```"
+)
 
 
 @pytest.fixture
@@ -104,6 +129,9 @@ def test_first_cycle_joins_and_accepts_clean_rewrite(client):
     entry = lp.cycle()
     assert entry["accepted"] and entry["attempts"] == 1
     assert entry["warnings"] == [] and entry["refusal"] is None
+    # a single-candidate accepted round journals the choice but not a
+    # reply head — forensics only where there was a choice to get wrong
+    assert entry["extractor"]["n"] == 1 and entry["reply_head"] is None
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == CLEAN
 
@@ -574,6 +602,62 @@ def test_extract_script_falls_back_verbatim_when_nothing_compiles():
     # nothing recoverable: today's behavior, verbatim (lint judges)
     raw = "Just words about the round, no code anywhere."
     assert extract_script(raw) == raw
+
+
+def test_extract_script_bypasses_the_quoted_current_script():
+    """The stone-run6 wrong-candidate: the reply quotes the CURRENT
+    (crashing) script in an indented fence before the corrected code.
+    Both compile, so first-that-compiles picked the quote — the
+    "fix" differed from the crasher by one leading space per line
+    while the diary described the real fix. With `current` in hand the
+    quote is recognized and bypassed; without it, yesterday's pick
+    stands (no behavior change for callers that pass nothing)."""
+    quoted_pick = extract_script(QUOTED_REPLY)          # the quote wins
+    assert "accounts[0]" in quoted_pick
+    assert "accounts[1]" not in quoted_pick
+    fixed = extract_script(QUOTED_REPLY, CRASHER)       # the intent wins
+    assert fixed.strip() == FIXED_IDX.strip()
+
+
+def test_extract_script_resubmits_verbatim_when_no_alternative():
+    """A genuine verbatim resubmission — one candidate, nothing
+    different on offer — must stand: the guard bypasses a quote only
+    when a differing candidate exists in the same reply."""
+    raw = "```lua\n" + CRASHER + "```"
+    source, info = extract_script_detailed(raw, CRASHER)
+    assert source.strip() == CRASHER.strip()
+    assert info["n"] == 1 and info["winner"] == 0
+    assert info["ws_skip"] is None
+
+
+def test_extract_script_detailed_reports_the_choice():
+    """Forensics: the extractor names its candidates, the winner, and
+    any quote it bypassed — the run-6 blind spot was an ACCEPTED round
+    whose submission nobody could explain after the fact."""
+    source, info = extract_script_detailed(QUOTED_REPLY, CRASHER)
+    assert source.strip() == FIXED_IDX.strip()
+    assert info["n"] >= 2
+    assert info["winner"] > 0                    # not the first candidate
+    assert 0 in info["ws_skip"]                 # the quote, named
+    assert len(info["shas"]) == info["n"]
+    assert all(len(s) == 8 for s in info["shas"])
+
+
+def test_cycle_journals_extractor_forensics_on_accepted_rounds(client):
+    """The loop-level contract: an accepted multi-candidate rewrite
+    journals the extractor's decision AND a 200-char head of the raw
+    reply, and the FIXED program — not the quote — goes live."""
+    lp, _ = loop(client, [QUOTED_REPLY])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CRASHER})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["action"] == "rewrite"
+    assert entry["attempts"] == 1
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"].strip() == FIXED_IDX.strip()   # the fix, not the quote
+    assert entry["extractor"]["winner"] > 0
+    assert entry["extractor"]["ws_skip"]
+    assert entry["reply_head"] == QUOTED_REPLY[:200]
 
 
 def test_eof_refusal_hints_at_unbalanced_blocks(client):

@@ -37,7 +37,8 @@ import hashlib
 import json
 import re
 
-from .llm import ScriptedModelEmpty, extract_script, strip_fences, strip_think
+from .llm import (ScriptedModelEmpty, extract_script_detailed,
+                  strip_fences, strip_think)
 
 # ---------------------------------------------------------------------------
 # MCP client (transport-free: tests inject a TestClient adapter, run.py an
@@ -409,7 +410,7 @@ class AgentLoop:
         has_current = current.get("id") is not None
 
         attempts, accepted, warnings, last_error = 0, False, [], None
-        source, action, raw = "", "rewrite", ""
+        source, action, raw, extractor = "", "rewrite", "", None
         sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
                                 manual=self.manual)
         transcript: list[dict] = []      # prompts + replies + platform
@@ -473,7 +474,12 @@ class AgentLoop:
                     continue
                 source, action = patched, "edit"
             else:                     # action 3: the full rewrite
-                source, action = extract_script(raw), "rewrite"
+                # `current` rides along: a compiling candidate that is
+                # the running script re-indented is a quote, not intent
+                # (stone-run6's wrong-candidate round).
+                source, extractor = extract_script_detailed(
+                    raw, current["source"] if has_current else None)
+                action = "rewrite"
 
             try:
                 result = self.mcp.call(
@@ -513,6 +519,19 @@ class AgentLoop:
             except Exception:
                 thoughts = ""
 
+        # Forensics: a refused round journals the last raw reply's head
+        # in full (800 chars — the retry loop's evidence); an ACCEPTED
+        # round journals a 200-char head only when the extractor had a
+        # choice to make. The run-6 wrong-candidate round looked like a
+        # successful fix precisely because accepted rounds journaled
+        # nothing about the reply.
+        if not accepted:
+            reply_head = raw[:800]
+        elif extractor and extractor["n"] > 1:
+            reply_head = raw[:200]
+        else:
+            reply_head = None
+
         entry = {
             "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
             "entity": eid,
@@ -525,7 +544,8 @@ class AgentLoop:
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],
-            "reply_head": None if accepted else raw[:800],
+            "extractor": extractor,
+            "reply_head": reply_head,
             "thoughts": thoughts,
             "prompt_bytes": next((len(s["user"]) for s in reversed(transcript)
                                   if "user" in s), 0),
