@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -108,6 +109,130 @@ def strip_fences(text: str) -> str:
             body.append(ln)
         stripped = "\n".join(body).strip()
     return stripped
+
+
+# ===========================================================================
+# Separating reasoning from script intent (the stone-run5 lesson)
+# ===========================================================================
+# Nemotron's run-5 refusals were almost all ONE failure wearing two masks:
+# the model reasons in prose around its code, and the extractor is
+# one-shot -- first fence or raw text, no deliberation stripped, no
+# sanity check. 9 rounds died as `syntax error near 'are'` (line 1 =
+# prose: no usable fence anywhere in the reply), 6 as `<eof> expected
+# near 'end'` (code and trailing commentary merged, or genuinely
+# unbalanced). The fix is structural, not prompt-shaped -- prompts
+# cannot stop a model that opens its DIARY with "We are given":
+#
+#   1. drop <think>...</think> deliberation blocks (reasoning models
+#      that embed CoT in the content channel);
+#   2. candidates -- the classic first-fence body, the LAST fence body
+#      (a model that fences its reasoning first and its answer second),
+#      and the longest contiguous run of Lua-looking lines (no fences
+#      at all);
+#   3. let the Lua parser arbitrate: the first candidate that COMPILES
+#      is the script. If nothing compiles, fall back to today's
+#      behavior unchanged -- lint reports, the retry loop hints.
+
+_THINK_RE = re.compile(r"(?is)<think>.*?</think>")
+_FENCE_RE = re.compile(r"(?s)```[a-zA-Z0-9_-]*[ \t]*\n(.*?)```")
+
+# A line that looks like Lua, not English. Strong openers and strong
+# tokens; an occasional prose line slipping in is fine -- the compile
+# check is the arbiter, this only has to find the island.
+_LUA_LINE_RE = re.compile(
+    r"""^\s*(?:
+        local\s|function\b|for\s|while\s|if\s|repeat\b|until\b|
+        return\b|end\b|else\b|elseif\b|then\b|do\b|--|\[\[|\]\]|
+        ctx\.|std\.|world\.|pack\.|\)|\}|
+        [\w.\"'\[]+\s*[,=\(
+]
+    )""",
+    re.X,
+)
+
+
+def _is_lua_line(ln: str) -> bool:
+    if _LUA_LINE_RE.match(ln):
+        return True
+    stripped = ln.strip()
+    return " = " in ln or stripped.endswith((")", "}", ",", "then"))
+
+
+def strip_think(text: str) -> str:
+    """Drop <think>...</think> deliberation a reasoning model embedded in
+    the content channel (the separate reasoning_content channel is already
+    ignored by _final_content). No tags: text unchanged."""
+    return _THINK_RE.sub("", text).strip()
+
+
+def _lua_compiles(source: str) -> bool:
+    """Syntax-only arbitration: lupa's compile runs nothing, it parses.
+    The check is the extractor's ground truth for 'this is the script'."""
+    try:
+        from lupa import LuaRuntime
+        LuaRuntime().compile(source)
+        return True
+    except Exception:
+        return False
+
+
+def _last_fence(text: str) -> str | None:
+    fences = _FENCE_RE.findall(text)
+    if not fences:
+        return None
+    return fences[-1].strip()
+
+
+def _code_island(text: str) -> str | None:
+    """The longest contiguous run of Lua-looking lines -- the no-fence
+    reply: prose, code, trailing prose. Blank lines may sit inside a run
+    (code breathes); they never anchor one."""
+    best: list[str] = []
+    run: list[str] = []
+    for ln in text.splitlines():
+        if not ln.strip():
+            if run:
+                run.append(ln)          # a breath inside the island
+            continue
+        if _is_lua_line(ln):
+            run.append(ln)
+        else:
+            if len(run) > len(best):
+                best = run
+            run = []
+    if len(run) > len(best):
+        best = run
+    while best and not best[0].strip():
+        best.pop(0)
+    while best and not best[-1].strip():
+        best.pop()
+    return "\n".join(best) or None
+
+
+def extract_script(raw: str) -> str:
+    """The script inside a raw reply, whatever the model wrapped it in.
+
+    Candidates, first-that-compiles: the first fenced block (yesterday's
+    strip_fences, still the workhorse), the last fenced block, the
+    longest Lua-looking island of the think-stripped text. Nothing
+    compiles -> strip_fences(raw) verbatim, so behavior degrades to
+    exactly today's (lint refuses, the loop hints, the model retries).
+    """
+    body = strip_think(raw)
+    candidates = [strip_fences(body)]
+    tail = _last_fence(body)
+    if tail:
+        candidates.append(tail)
+    island = _code_island(body)
+    if island:
+        candidates.append(island)
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand and cand not in seen:
+            seen.add(cand)
+            if _lua_compiles(cand):
+                return cand
+    return candidates[0]
 
 
 def _final_content(data: dict) -> str:
