@@ -167,6 +167,28 @@ function std.market_price(symbol, fallback)
   return fallback
 end
 
+-- Top of the public book (docs/scripting.md): the best OPEN limit resting
+-- on that side right now, nil (or `fallback`) when the side is bare.
+-- market_price is HISTORY (the last print); these are the PRESENT -- what
+-- you must cross to trade. Price only; depth beyond the touch is private.
+function std.best_bid(symbol, fallback)
+  local p = ctx.query.best_bid(symbol)
+  if p then
+    p = tonumber(p)
+    if p and p > 0 then return p end
+  end
+  return fallback
+end
+
+function std.best_ask(symbol, fallback)
+  local p = ctx.query.best_ask(symbol)
+  if p then
+    p = tonumber(p)
+    if p and p > 0 then return p end
+  end
+  return fallback
+end
+
 function std.has_unlock(code)
   for _, u in ipairs(ctx.unlocks) do
     if u == code then return true end

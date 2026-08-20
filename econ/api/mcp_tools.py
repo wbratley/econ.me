@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from econengine import scripting, services, tech
@@ -39,6 +39,7 @@ from econengine.models import (
     Entity, EntityType, Holding, Market, NeedState, Parcel, Process,
     ProcessStatus, Script, ScriptType, Tick, User,
 )
+from econengine.models.order import Order, OrderSide, OrderStatus
 from econengine.services import ServerCapExceededError
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
@@ -269,13 +270,30 @@ def tool_leaderboard(session: Session, user: User, args: dict[str, Any]) -> dict
 
 
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
-    """Last-trade price for every active market (public, posted facts)."""
+    """The public book for every active market: last trade (history) plus
+    the touch (present) -- best_bid/best_ask are the best OPEN limits
+    resting right now, the prices an order must cross to trade. None on a
+    bare side; depth beyond the touch is not public."""
     markets = session.execute(
         select(Market).where(Market.is_active.is_(True)).order_by(Market.symbol)
     ).scalars().all()
+    best = {}  # (market_id, side) -> best OPEN limit price
+    for side, agg in ((OrderSide.BUY, func.max), (OrderSide.SELL, func.min)):
+        rows = session.execute(
+            select(Order.market_id, agg(Order.limit_price))
+            .where(
+                Order.status == OrderStatus.OPEN,
+                Order.remaining > 0,
+                Order.side == side,
+            )
+            .group_by(Order.market_id)
+        ).all()
+        best.update({(mid, side): price for mid, price in rows})
     return [
         {"symbol": m.symbol, "currency": m.currency,
-         "last_price": str(m.last_price) if m.last_price is not None else None}
+         "last_price": str(m.last_price) if m.last_price is not None else None,
+         "best_bid": str(p) if (p := best.get((m.id, OrderSide.BUY))) is not None else None,
+         "best_ask": str(p) if (p := best.get((m.id, OrderSide.SELL))) is not None else None}
         for m in markets
     ]
 

@@ -316,6 +316,32 @@ def test_market_prices_reports_last_trade(client):
     assert prices["WHEAT"]["currency"] == "USD"
 
 
+def test_market_prices_reports_the_touch(client):
+    """The observation must carry both sides of the book: best_bid/
+    best_ask are the best OPEN limits resting right now (run 5: agents
+    starved beside sellable inventory because the only visible price was
+    the wrong side of the spread)."""
+    from econengine.markets import adjust_holding, place_order
+    from econengine.services import create_account, create_entity
+    from econengine.models import EntityType
+    engine = app.state._test_engine
+    with Session(engine) as session:
+        market = Market(symbol="OATS", currency="USD")
+        session.add(market)
+        session.commit()
+        maker = create_entity(session, "Maker", EntityType.BUSINESS)
+        cash = create_account(session, maker, "USD", initial_balance=Decimal("100"))
+        adjust_holding(session, maker, "OATS", Decimal("10"))
+        place_order(session, maker.id, "OATS", "buy", Decimal("4"), Decimal("1.50"), cash.id)
+        place_order(session, maker.id, "OATS", "sell", Decimal("4"), Decimal("2.00"), cash.id)
+        session.commit()
+    prices = {m["symbol"]: m for m in call_json(client, "market_prices")}
+    oats = prices["OATS"]
+    assert oats["last_price"] is None          # nothing has printed
+    assert oats["best_bid"] == "1.5000"        # but the book is public
+    assert oats["best_ask"] == "2.0000"
+
+
 # ===========================================================================
 # §6: the script vocabulary tiers -- agent-authorable behaviours
 # ===========================================================================

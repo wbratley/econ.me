@@ -194,8 +194,13 @@ and COIN becomes food when your own gathering fails. Its prices
 haggle: each sale raises its ask 5%, each purchase it fills lowers its
 bid 5%, and 3 quiet ticks move prices the other way (ask -5%, bid
 +3%). Its bids are small (4 units, and never more than its COIN
-covers) and it stops bidding for a good it holds 20 of. Read its
-standing orders before you quote.
+covers) and it stops bidding for a good it holds 20 of. The book is
+public: std.best_ask(symbol) and std.best_bid(symbol) read the best
+resting price on each side of any market -- the ask is what you must
+pay to buy NOW, the bid is what you beat to sell NOW. Read both
+before you quote: buying blind above the ask or selling below the
+bid is coin left on the table (std.market_price is only the LAST
+trade -- history, not the shelf in front of you).
 
 == PRIVACY ==
 You see your own holdings, needs, and accounts. You CANNOT see any

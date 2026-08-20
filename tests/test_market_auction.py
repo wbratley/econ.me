@@ -391,3 +391,42 @@ def test_wash_order_steps_aside_for_a_real_counterparty(world):
     assert bo.status == OrderStatus.FILLED
     assert so.status == OrderStatus.OPEN and so.remaining == Decimal("2")
     assert real.status == OrderStatus.FILLED
+
+
+# --- the public book (ctx.query.best_bid / best_ask) ---
+
+def test_best_bid_and_ask_read_top_of_book(world):
+    """The touch is the best OPEN limit per side: max of resting bids, min
+    of resting asks. Price only -- the book tells you what you must cross,
+    last_price tells you what already printed."""
+    session, buyer, seller, b, s, market = world
+    from econengine.scripting import build_queries
+    q = build_queries(session)
+    # bare book: no prices at all
+    assert q["best_bid"]("WHEAT") is None and q["best_ask"]("WHEAT") is None
+    buy(session, buyer, b, 5, "2.00")
+    buy(session, buyer, b, 5, "2.50")   # best bid
+    sell(session, seller, s, 5, "3.50")
+    sell(session, seller, s, 5, "3.00")  # best ask
+    assert q["best_bid"]("WHEAT") == "2.5000"
+    assert q["best_ask"]("WHEAT") == "3.0000"
+    assert q["best_bid"]("NOPE") is None  # no such market
+
+
+def test_best_bid_ignores_dead_orders(world):
+    """Only OPEN orders with remaining size are the book: cancelled and
+    filled orders are history, not the touch."""
+    session, buyer, seller, b, s, market = world
+    from econengine.markets import cancel_order
+    from econengine.scripting import build_queries
+    q = build_queries(session)
+    dead_bid = buy(session, buyer, b, 5, "9.00")   # will cross and fill
+    resting = buy(session, buyer, b, 5, "2.00")
+    sell(session, seller, s, 5, "2.00")            # crosses -> auction prints
+    run_auctions(session, tick_number=1)
+    # the 9.00 print is gone (filled): the touch is what still rests
+    assert dead_bid.status == OrderStatus.FILLED
+    assert q["best_bid"]("WHEAT") == "2.0000"
+    assert q["best_ask"]("WHEAT") is None
+    cancel_order(session, resting.id, buyer.id)
+    assert q["best_bid"]("WHEAT") is None
