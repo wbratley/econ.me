@@ -209,7 +209,11 @@ _LIB_CTX = {
     "parcels": [{"id": "p1", "facilities": ["FARM"], "deposits": {"ORE": 5}}],
     "events": [],
     "state": {},
-    "queries": {"market_price": lambda symbol: "0.75" if symbol == "GRAIN" else None},
+    "queries": {
+        "market_price": lambda symbol: "0.75" if symbol == "GRAIN" else None,
+        "best_bid": lambda symbol: "0.70" if symbol == "GRAIN" else None,
+        "best_ask": lambda symbol: "0.80" if symbol == "GRAIN" else None,
+    },
 }
 
 
@@ -224,6 +228,9 @@ def test_stdlib_pure_helpers_work():
         "missing_holding": "return std.holding_qty('ORE')",
         "market_price_query": "return std.market_price('GRAIN', 9.9)",
         "market_price_fallback": "return std.market_price('NOPE', 1.25)",
+        "best_bid_query": "return std.best_bid('GRAIN', 9.9)",
+        "best_ask_query": "return std.best_ask('GRAIN', 9.9)",
+        "book_fallback": "return std.best_bid('NOPE', 1.25)",
         "has_unlock": "return std.has_unlock('FARMING')",
         "need_by_code": "return std.need_by_code('FOOD').code",
         "running_recipe": "return std.running_recipe('FARM_GRAIN')",
@@ -235,6 +242,9 @@ def test_stdlib_pure_helpers_work():
         "missing_holding": 0,
         "market_price_query": 0.75,
         "market_price_fallback": 1.25,
+        "best_bid_query": 0.70,
+        "best_ask_query": 0.80,
+        "book_fallback": 1.25,
         "has_unlock": True,
         "need_by_code": "FOOD",
         "running_recipe": True,

@@ -178,6 +178,8 @@ def synthetic_queries() -> dict:
         "balance": lambda account_id: None,
         "total_supply": lambda currency: None,
         "market_price": lambda symbol: None,
+        "best_bid": lambda symbol: None,
+        "best_ask": lambda symbol: None,
         "holding": lambda entity_id, symbol: None,
         "has_unlock": lambda entity_id, code: False,
         "holders": lambda symbol: [],
@@ -629,6 +631,33 @@ def build_queries(session: Session, tick_number: int | None = None,
             return None
         return str(market.last_price)
 
+    def _book_top(symbol, side):
+        """Top of the public book: the best OPEN limit on `side` ("buy"/
+        "sell"), or None when nothing rests. Price only -- depth beyond
+        the touch stays private, last_price stays the historical record."""
+        from .models.order import Order, OrderSide, OrderStatus
+        market = markets.get_market(session, str(symbol))
+        if market is None:
+            return None
+        side = OrderSide.BUY if str(side).lower() == "buy" else OrderSide.SELL
+        agg = func.max(Order.limit_price) if side == OrderSide.BUY \
+            else func.min(Order.limit_price)
+        price = session.execute(
+            select(agg).where(
+                Order.market_id == market.id,
+                Order.side == side,
+                Order.status == OrderStatus.OPEN,
+                Order.remaining > 0,
+            )
+        ).scalar_one()
+        return str(price) if price is not None else None
+
+    def best_bid(symbol):
+        return _book_top(symbol, "buy")
+
+    def best_ask(symbol):
+        return _book_top(symbol, "sell")
+
     def holding(entity_id, symbol):
         if _private and str(entity_id) != str(owner_id):
             return None
@@ -934,6 +963,8 @@ def build_queries(session: Session, tick_number: int | None = None,
         "balance": balance,
         "total_supply": total_supply,
         "market_price": market_price,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
         "holding": holding,
         "has_unlock": has_unlock,
         "holders": holders,
