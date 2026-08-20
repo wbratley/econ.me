@@ -18,6 +18,7 @@ holding up to 1 first -- the between-tick stand-in for the mid-tick
 window scripts act in.
 """
 
+import json
 from decimal import Decimal
 
 import pytest
@@ -33,7 +34,8 @@ from econengine.tick import run_tick
 
 from experiments.world import stone_age
 from experiments.world.stone_age import (
-    BERRY_BUFFER, COIN, SEAT_COIN, WARMTH_BUFFER, create_content, make_house,
+    BERRY_BUFFER, COIN, POST_FOOD, SEAT_COIN, WARMTH_BUFFER, create_content,
+    make_house,
 )
 
 
@@ -56,6 +58,16 @@ def _hold(session, entity_id, symbol):
 def _post(session):
     return session.execute(
         select(Entity).where(Entity.name == "Trading Post")
+    ).scalar_one()
+
+
+def _post_script(session):
+    return session.execute(
+        select(Script).where(
+            Script.entity_id == _post(session).id,
+            Script.script_type == ScriptType.BEHAVIOUR,
+            Script.is_active.is_(True),
+        )
     ).scalar_one()
 
 
@@ -136,8 +148,8 @@ def test_content_and_coin_markets(session):
     create_content(session)
     rows = list(session.execute(select(markets.Market)).scalars())
     assert {m.symbol for m in rows} == {
-        "LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "WOOD", "YARN", "FLINT",
-        "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"}
+        "LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD", "YARN",
+        "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -487,10 +499,16 @@ def test_post_bid_falls_when_supply_arrives(session):
 
 
 def test_post_prices_drift_toward_trade_when_quiet(session):
-    """3 quiet ticks: the ask eases down 5%, the bid creeps up 3%."""
+    """3 LIVE ticks with no fills: the ask eases down 5%, the bid creeps
+    up 3%. Quiet is counted from the tick after placement (an order
+    cannot be quiet before it exists), so the drift lands on tick 4."""
     create_content(session)
     post = _post(session)
     _run(session, 3)
+    # three ticks of resting, only two aged: prices hold
+    ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
+    assert [o.limit_price for o in ask] == [Decimal("2.00")]
+    _run(session, 1)
     ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
     assert [o.limit_price for o in ask] == [Decimal("1.90")]   # 2.00*0.95
     bid = _open_orders(session, post.id, "MEAT", OrderSide.BUY)
@@ -498,8 +516,11 @@ def test_post_prices_drift_toward_trade_when_quiet(session):
 
 
 def test_post_never_bids_beyond_its_coin(session):
-    """The purse runs out: bids shrink to what the balance covers and
-    never commit coin the post does not hold."""
+    """The purse runs out: the coin is split pro-rata across every good
+    the post wants -- a lean budget shrinks all bids together instead
+    of letting the head of the list eat the coin and starve the tail
+    (run 4: MEAT/WOOD bids at the 5.00 cap consumed the purse; YARN and
+    FLINT never quoted, so 57 FLINT of surplus found no bid)."""
     create_content(session)
     post = _post(session)
     acc = next(a for a in post.accounts if a.currency == COIN)
@@ -510,8 +531,61 @@ def test_post_never_bids_beyond_its_coin(session):
     assert committed <= Decimal("5.5")
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     by_sym = {mid[o.market_id]: o for o in buys}
-    # the purse covers MEAT fully (4 @1.00) and one WOOD (1 @1.00); the
-    # YARN/FLINT/BERRIES bids are skipped -- floor(0.5/2) == 0
-    assert by_sym["MEAT"].quantity == Decimal("4")
+    # too thin to spread 4 each: one unit of the cheapest three fits
+    # (MEAT 1.00 + WOOD 1.00 + YARN 2.00 = 4.00 <= 5.5); FLINT's 2.00
+    # does not -- and NO good hoards the purse
+    assert by_sym["MEAT"].quantity == Decimal("1")
     assert by_sym["WOOD"].quantity == Decimal("1")
-    assert "YARN" not in by_sym and "FLINT" not in by_sym
+    assert by_sym["YARN"].quantity == Decimal("1")
+    assert "FLINT" not in by_sym
+
+
+def test_post_dark_bids_freeze_instead_of_drifting(session):
+    """A bid that cannot afford to stand (purse drained) goes DARK --
+    and a dark order does not drift. Run 4 walked dark bids to the 5.00
+    cap for nothing; the frozen price returns the moment coin does."""
+    create_content(session)
+    post = _post(session)
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    acc.balance = Decimal("0.10")      # nothing is affordable
+    _run(session, 8)
+    assert _open_orders(session, post.id, side=OrderSide.BUY) == []
+    state = _post_script(session).state or {}
+    assert Decimal(str(state["bid"]["MEAT"])) == Decimal("1.00")  # frozen
+    assert Decimal(str(state["bid"]["YARN"])) == Decimal("2.00")
+    # coin returns: the bids come back at the frozen prices
+    acc.balance = Decimal("12")
+    _run(session, 1)
+    mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
+    buys = {mid[o.market_id]: o for o in
+            _open_orders(session, post.id, side=OrderSide.BUY)}
+    assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("1.00")
+    # five wants now (the rotted larder re-opened the BERRIES appetite):
+    # 12 coin against a 28-coin want -- every bid comes back, pro-rated
+    assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "BERRIES"}
+    assert all(o.quantity == Decimal("1") for o in buys.values())
+
+
+def test_post_jerky_never_rots_and_feeds(session):
+    """JERKY is the salted shelf: it does not decay, it satisfies FOOD,
+    and the post spawns stocking it -- late coin always has something
+    to buy (run 4: OSS died holding 17 COIN beside a rotted-empty
+    larder)."""
+    create_content(session)
+    post = _post(session)
+    assert markets.get_holding(session, post.id, "JERKY").quantity \
+        == Decimal("30")
+    # BERRIES and COOKED_MEAT rot beside an untouched JERKY stack
+    _run(session, 10)
+    assert markets.get_holding(session, post.id, "JERKY").quantity \
+        == Decimal("30")
+    assert markets.get_holding(session, post.id, "BERRIES").quantity \
+        < POST_FOOD["BERRIES"]
+    # and it feeds: a seat whose only food is JERKY draws FOOD from it
+    seat = _seat(session, "JerkyEater")
+    markets.adjust_holding(session, seat, "BERRIES", -BERRY_BUFFER)
+    markets.adjust_holding(session, seat, "JERKY", Decimal("5"))
+    before = markets.get_holding(session, seat.id, "JERKY").quantity
+    _run(session, 1)
+    after = markets.get_holding(session, seat.id, "JERKY").quantity
+    assert after < before                    # eaten, not rotted (0 decay)

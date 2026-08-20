@@ -132,8 +132,10 @@ threshold you DIE -- estate burned) ==
 - DISEASE: +1 per raw meal (25% chance when eating raw meat); dies at
   2.5 -- THREE raw meals in quick succession kill.
 
-== FOOD (need: 1.0/tick; drawn BERRIES then COOKED_MEAT then SATIETY) ==
+== FOOD (need: 1.0/tick; drawn BERRIES then COOKED_MEAT then JERKY
+   then SATIETY) ==
 - BERRIES: found by gathering; rot 25%/tick. COOKED_MEAT: rot 25%/tick.
+- JERKY: salted meat -- NEVER rots. Only the Trading Post sells it.
 - EAT_RAW (1 MEAT, no LABOR, instant): feeds 1 now, 25% chance of
   DISEASE. Desperation only.
 
@@ -168,8 +170,8 @@ per tick) ==
   HUDDLE).
 - MAKE_BED [L + 2 WOOD + 3 YARN] 2 ticks -> 1 BED. Comfort, someday.
 - place_order / cancel_order / transfer: trade any good for COIN on the
-  12 markets (BERRIES, WOOD, YARN, FLINT, MEAT, COOKED_MEAT, WARMTH,
-  SPEAR, BAG, TRAP, CLOTHES, BED).
+  13 markets (BERRIES, WOOD, YARN, FLINT, MEAT, COOKED_MEAT, JERKY,
+  WARMTH, SPEAR, BAG, TRAP, CLOTHES, BED).
 
 == THE LADDER (rough costs; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + a tick): cooking + warmth. Do not sleep fireless.
@@ -184,15 +186,16 @@ this: it is the floor you inherit, not the ceiling.
 
 == THE TRADING POST ==
 A BUSINESS entity, THE TRADING POST, stands in every market with its own
-COIN. It SELLS safe food (BERRIES, COOKED_MEAT) while its larder lasts
--- food rots, so the post's supply is finite -- and it BUYS raw goods
-(MEAT, WOOD, YARN, FLINT, BERRIES). Its prices haggle: each sale raises
-its ask 5%, each purchase it fills lowers its bid 5%, and 3 quiet ticks
-move prices the other way (ask -5%, bid +3%). Its bids are small (4
-units, and never more than its COIN covers) and it stops bidding for a
-good it holds 20 of. Your surplus MEAT, WOOD, YARN, FLINT can always
-become COIN at the post's bid -- and its ask is the price of food when
-your own gathering fails. Read its standing orders before you quote.
+COIN. It SELLS safe food (BERRIES, COOKED_MEAT while they last, and
+JERKY -- salted meat that never rots, so the shop always has food)
+and it BUYS raw goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN:
+your surplus MEAT, WOOD, YARN or FLINT sold to the post becomes COIN,
+and COIN becomes food when your own gathering fails. Its prices
+haggle: each sale raises its ask 5%, each purchase it fills lowers its
+bid 5%, and 3 quiet ticks move prices the other way (ask -5%, bid
++3%). Its bids are small (4 units, and never more than its COIN
+covers) and it stops bidding for a good it holds 20 of. Read its
+standing orders before you quote.
 
 == PRIVACY ==
 You see your own holdings, needs, and accounts. You CANNOT see any
@@ -207,7 +210,12 @@ POST_COIN = Decimal("30")       # a small purse: price discovery, not a
                                  # bottomless buyer -- houses earn coin
                                  # by selling to it, and the coin supply
                                  # stays what seats minted
-POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20")}
+POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
+             "JERKY": Decimal("30")}   # the salted shelf: JERKY never
+                                    # rots, so late-arriving coin always
+                                    # has something to buy (run 4: OSS
+                                    # died holding 17 COIN beside an
+                                    # empty, rotted larder)
 
 
 def spawn_trading_post(session: Session) -> Entity:
@@ -265,6 +273,11 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "MEAT", decay_per_tick=Decimal("0.30"))
     goods.create_good(session, "BERRIES", decay_per_tick=Decimal("0.25"))
     goods.create_good(session, "COOKED_MEAT", decay_per_tick=Decimal("0.25"))
+    # ...except JERKY: salted meat keeps forever. Only the Trading Post
+    # stocks it -- the shop shelf that is never bare (run 4's timing
+    # gap: agents arrive coin-poor early and coin-rich late, so the
+    # late coin needs something to buy that rot did not eat).
+    goods.create_good(session, "JERKY")
     # Gathered materials -- durable.
     goods.create_good(session, "WOOD")
     goods.create_good(session, "YARN")
@@ -443,7 +456,7 @@ def _create_recipes(session: Session) -> None:
 def _create_needs(session: Session) -> None:
     # FOOD: berries, cooked meat, or desperate SATIETY. Unmet -> HUNGER.
     needs.create_need(
-        session, "FOOD", FOOD_PER_TICK, ["BERRIES", "COOKED_MEAT", "SATIETY"],
+        session, "FOOD", FOOD_PER_TICK, ["BERRIES", "COOKED_MEAT", "JERKY", "SATIETY"],
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
@@ -458,8 +471,8 @@ def _create_needs(session: Session) -> None:
 
 
 def _create_markets(session: Session) -> None:
-    for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "WOOD", "YARN",
-                   "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"):
+    for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
+                   "YARN", "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"):
         markets.create_market(session, symbol, COIN)
 
 

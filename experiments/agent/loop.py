@@ -183,7 +183,15 @@ def diary_prompt(system_text: str, transcript: list[dict],
         "markdown, no code, no quotes — on what you changed or kept and "
         "why, your read of the world (markets, food, rivals), and your "
         "intent for next round. Ground it strictly in the record: it is "
-        "the authority on what you actually did.")
+        "the authority on what you actually did."
+        "\n\nThis is a DIARY, not a transcript of your thinking. Do not "
+        "reproduce, continue, or summarize your reasoning process, and "
+        "never open with meta-commentary about the prompt or the task "
+        "(phrases like 'We are given', 'We need to', 'Let us', 'The "
+        "current behavior is...' are notes, not a diary — run 4's "
+        "worst entries were exactly these). Write in the first person, "
+        "past tense, starting directly with the decision: 'I kept...' / "
+        "'I rewrote...' / 'I spent the round...'.")
     parts = ["THE COMPLETE RECORD OF THIS ROUND (your own chat, verbatim):",
              "", "===== RULES YOU PLAYED UNDER (system prompt) =====",
              system_text]

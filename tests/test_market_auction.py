@@ -346,3 +346,48 @@ ctx.state.first_holding = ctx.holdings[1] and ctx.holdings[1].symbol or 'none'
     assert reader.state.get("nothing") is None
     assert Decimal(reader.state["mine"]) == Decimal("10")
     assert reader.state["first_holding"] == "WHEAT"
+
+
+# --- self-matches are not trades ---
+
+def test_entity_cannot_trade_with_itself(world):
+    """stone-run4: quoting both legs off one reference crossed an entity
+    with itself 360 times -- wash volume pinning the price at its own
+    anchor. The auction is between counterparties: same-entity orders
+    never settle against each other, and both stay resting."""
+    session, buyer, seller, b, s, market = world
+    adjust_holding(session, buyer, "WHEAT", Decimal("50"))
+    bo = buy(session, buyer, b, "10", "12.5")
+    so = sell(session, buyer, b, "10", "1.0")
+    events = run_auctions(session, 1)
+
+    assert not [e for e in events if e["type"] == "trade"]
+    assert session.query(Trade).count() == 0
+    assert bo.status == OrderStatus.OPEN and bo.remaining == Decimal("10")
+    assert so.status == OrderStatus.OPEN and so.remaining == Decimal("10")
+    assert holding_qty(session, buyer) == Decimal("50")
+
+
+def test_wash_order_steps_aside_for_a_real_counterparty(world):
+    """The younger of two colliding same-entity orders steps aside, so a
+    counterparty's order still fills against the older one."""
+    session, buyer, seller, b, s, market = world
+    adjust_holding(session, buyer, "WHEAT", Decimal("50"))
+    bo = buy(session, buyer, b, "10", "12.5")          # older, rests
+    so = sell(session, buyer, b, "2", "1.0")           # younger, steps aside
+    real = sell(session, seller, s, "10", "2.0")
+    events = run_auctions(session, 1)
+
+    trades = [e for e in events if e["type"] == "trade"]
+    # exactly the counterparty fill: buyer bought 10 from seller @ 2.0
+    fills = [t for t in trades if t["entity_id"] == seller.id]
+    assert len(fills) == 1
+    assert Decimal(fills[0]["quantity"]) == Decimal("10")
+    assert Decimal(fills[0]["price"]) == Decimal("2.0")
+    assert session.query(Trade).filter(
+        Trade.buyer_entity_id == buyer.id,
+        Trade.seller_entity_id == buyer.id).count() == 0
+    # the wash order survives the encounter, still resting
+    assert bo.status == OrderStatus.FILLED
+    assert so.status == OrderStatus.OPEN and so.remaining == Decimal("2")
+    assert real.status == OrderStatus.FILLED
