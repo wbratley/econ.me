@@ -1,31 +1,41 @@
 -- trading_post.lua  (BEHAVIOUR) -- the market maker of the stone age.
 --
--- The post SELLS safe food (BERRIES, COOKED_MEAT) and BUYS raw goods
--- (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN. Three runs showed why
--- it must exist: houses with coin and hunger found no seller, hunters
--- with meat found no buyer, and "the price is unknown" froze the one
--- agent that tried to trade. A standing counterparty IS the fix: every
--- order the post quotes is a price reference the whole world can read.
+-- The post SELLS safe food (BERRIES, COOKED_MEAT, JERKY) and BUYS raw
+-- goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN. Three runs showed
+-- why it must exist: houses with coin and hunger found no seller,
+-- hunters with meat found no buyer, and "the price is unknown" froze
+-- the one agent that tried to trade. A standing counterparty IS the
+-- fix: every order the post quotes is a price reference the whole
+-- world can read. JERKY is salted meat: it never rots, so the shop
+-- always has SOMETHING to sell, however late the customer arrives
+-- (run 4: OSS died with 17 COIN in a world whose larder had rotted).
 --
 -- It haggles like a person would:
 --   sold food            -> ask +5%          (demand is real, charge it)
 --   bought goods         -> bid -5%          (sellers are eager, pay less)
---   3 ticks, no fills    -> ask -5% / bid +3% (move the price toward the
---                                              market instead of waiting)
--- Bids never commit more COIN than the post holds (quantity shrinks to
--- fit the balance), and it stops bidding for any good it already holds
--- 20 of -- a larder, not a landfill. Prices and standing order ids live
--- in ctx.state, so the haggling persists across ticks.
+--   3 ticks LIVE, no fills -> ask -5% / bid +3% (move the price toward
+--                          the market instead of waiting). Quiet is
+--                          counted only while an order actually rests:
+--                          a bid gone dark (no budget for it) freezes
+--                          its price instead of walking it to the cap
+--                          (run 4: dark bids drifted to 5.00 for nothing).
+-- The purse is split pro-rata across every good it wants: a lean
+-- budget shrinks all bids together instead of letting the head of the
+-- line (MEAT, WOOD) eat the coin and starve the tail (run 4 again).
+-- Bids never commit more COIN than the post holds, and it stops
+-- bidding for any good it already holds 20 of -- a larder, not a
+-- landfill. Prices and standing order ids live in ctx.state, so the
+-- haggling persists across ticks.
 --
 -- Vocabulary: std.* (engine), ctx.action.place_order / cancel_order,
 -- ctx.events (the post's own fills and applied orders from last tick).
 
 local S = ctx.state
 if not S.ask then
-  S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00 }
+  S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00, JERKY = 3.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
             YARN = 2.00, FLINT = 2.00 }
-  S.quiet = {}   -- ticks since the last fill, per "side_SYMBOL" key
+  S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
   S.live = {}    -- the (qty, price) placed per key, to spot drift
   S.ids = {}     -- order id per key, from applied place_order events
 end
@@ -36,11 +46,9 @@ local APPETITE = 20        -- stop bidding for a good held past this
 
 local function r2(x) return string.format("%.2f", x) end
 
--- 1. Age every quiet counter first, so a fill this tick resets it to 0
---    and the drift below fires only on genuinely quiet runs.
-for _, key in ipairs({ "sell_BERRIES", "sell_COOKED_MEAT",
-                       "buy_BERRIES", "buy_MEAT", "buy_WOOD",
-                       "buy_YARN", "buy_FLINT" }) do
+-- 1. Age only the orders that are actually resting. A dark key (no
+--    budget, no larder) keeps its price frozen, ready to return.
+for key in pairs(S.live) do
   S.quiet[key] = (S.quiet[key] or 0) + 1
 end
 
@@ -60,15 +68,16 @@ for _, e in ipairs(ctx.events or {}) do
   end
 end
 
--- 3. Quiet drift: 3 ticks without a fill eases the price toward trade.
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT" }) do
-  if S.quiet["sell_" .. sym] >= 3 then
+-- 3. Quiet drift: 3 live ticks without a fill eases the price toward
+--    trade.
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
+  if (S.quiet["sell_" .. sym] or 0) >= 3 then
     S.ask[sym] = math.max(S.ask[sym] * 0.95, ASK_FLOOR)
     S.quiet["sell_" .. sym] = 0
   end
 end
 for sym in pairs(S.bid) do
-  if S.quiet["buy_" .. sym] >= 3 then
+  if (S.quiet["buy_" .. sym] or 0) >= 3 then
     S.bid[sym] = math.min(S.bid[sym] * 1.03, BID_CAP)
     S.quiet["buy_" .. sym] = 0
   end
@@ -82,32 +91,73 @@ for _, a in ipairs(ctx.accounts) do
 end
 
 local want = {}
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT" }) do
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
   local qty = math.floor(std.holding_qty(sym))
   if qty > 0 then
     want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),
                              symbol = sym, side = "sell" }
   end
 end
-local budget = coin
+
+-- The purse is split pro-rata: every affordable bid shares the lean
+-- years. Desired qty 4 each; if the total exceeds the coin on hand,
+-- ALL quantities shrink by the same ratio -- no head-of-line feeding.
+local desired, total_cost = {}, 0
 for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES" }) do
   local price = S.bid[sym]
   -- never cross our own ask (the post will not trade with itself)
   if price and (not S.ask[sym] or price < S.ask[sym])
      and std.holding_qty(sym) < APPETITE then
-    local qty = math.min(4, math.floor(budget / price))
-    if qty > 0 then
-      want["buy_" .. sym] = { qty = qty, price = r2(price),
-                              symbol = sym, side = "buy" }
-      budget = budget - qty * price
+    desired[#desired + 1] = { key = "buy_" .. sym, symbol = sym,
+                              price = price, qty = 4 }
+    total_cost = total_cost + 4 * price
+  end
+end
+local scale = 1
+if total_cost > coin and total_cost > 0 then scale = coin / total_cost end
+local qtys, spread = {}, false
+for _, d in ipairs(desired) do
+  local q = math.floor(d.qty * scale + 0.000001)
+  qtys[d.key] = q
+  if q > 0 then spread = true end
+end
+if not spread and #desired > 0 then
+  -- Purse too thin to spread even one unit each: cheapest goods
+  -- first, one unit at a time, within the coin on hand.
+  table.sort(desired, function(a, b) return a.price < b.price end)
+  local spent = 0
+  for _, d in ipairs(desired) do
+    if spent + d.price <= coin + 0.000001 then
+      qtys[d.key] = 1
+      spent = spent + d.price
     end
   end
 end
+for _, d in ipairs(desired) do
+  local qty = qtys[d.key]
+  if qty > 0 then
+    want[d.key] = { qty = qty, price = r2(d.price), symbol = d.symbol,
+                    side = "buy" }
+  end
+end
 
--- 5. Reconcile: cancel + replace only where (qty, price) moved or the
---    order is gone; untouched orders keep their time priority in the
---    book. Cancelling an order that already filled is a harmless
---    rejection -- the engine just says no.
+-- Anything that stopped being wanted (larder empty, budget gone, hit
+-- appetite) must leave the book AND the aging rolls: freeze, don't
+-- drift in the dark.
+for key in pairs(S.live) do
+  if not want[key] then
+    local id = S.ids[key]
+    if id then ctx.action.cancel_order(id, 30) end
+    S.live[key] = nil
+    S.quiet[key] = nil
+    S.ids[key] = nil
+  end
+end
+
+-- 5. Reconcile: cancel + replace only where (qty, price) moved; new
+--    wants place directly. Untouched orders keep their time priority
+--    in the book. Cancelling an order that already filled is a
+--    harmless rejection -- the engine just says no.
 for key, w in pairs(want) do
   local cur = S.live[key]
   if not (cur and cur.qty == w.qty and cur.price == w.price) then

@@ -307,6 +307,18 @@ def _settle(
     bi = si = 0
     while bi < len(buys) and si < len(sells):
         buy, sell = buys[bi], sells[si]
+        if buy.entity_id == sell.entity_id:
+            # An auction is between counterparties. stone-run4: one
+            # entity quoting both legs off the same reference crossed
+            # itself 360 times -- wash volume that pinned the price at
+            # its own anchor. When both heads belong to one entity the
+            # YOUNGER order steps aside (time priority keeps the older
+            # resting); it can still match further down the other side.
+            if (sell.created_at, sell.id) > (buy.created_at, buy.id):
+                si += 1
+            else:
+                bi += 1
+            continue
         qty = min(buy.remaining, sell.remaining)
         cost = (qty * price).quantize(_QUANTUM, rounding=ROUND_HALF_UP)
 

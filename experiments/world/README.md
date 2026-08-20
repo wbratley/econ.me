@@ -171,16 +171,34 @@ change: `spawn_trading_post` (called by `create_content`, so every
 stone-age world has one) creates THE TRADING POST — a `BUSINESS`
 entity (no needs, no LABOR: it can neither starve nor freeze) with a
 small COIN purse (30), a finite larder of safe food (60 BERRIES, 20
-COOKED_MEAT — it rots like anyone's), and `lua/trading_post.lua`, a
+COOKED_MEAT — it rots like anyone's — plus 30 JERKY, salted meat
+that never rots: the shelf that is never bare, so late-arriving coin
+always has something to buy), and `lua/trading_post.lua`, a
 market-maker behaviour. It sells the whole larder at an ask and bids
-4 units for MEAT/WOOD/YARN/FLINT/BERRIES, never committing more than
-its balance covers, never crossing its own spread, and stopping at 20
-held of any good. Prices haggle from its own fills (own events feed
-`ctx.events`): each food sale raises the ask 5% (demand), each filled
-bid lowers it 5% (supply), and 3 quiet ticks move prices the other way
-(ask −5%, bid +3%), floored/capped at 1/8 and 0.50/5. The standing
+4 units for MEAT/WOOD/YARN/FLINT/BERRIES, never crossing its own
+spread, and stopping at 20 held of any good. The purse is split
+pro-rata across every good it wants — a lean budget shrinks all bids
+together instead of letting the head of the list eat the coin and
+starve the tail (run 4: MEAT/WOOD bids at the 5.00 cap consumed the
+purse; 57 FLINT of surplus found no bid). Prices haggle from its own
+fills (own events feed `ctx.events`): each food sale raises the ask
+5% (demand), each filled bid lowers it 5% (supply), and 3 quiet ticks
+move prices the other way (ask −5%, bid +3%), floored/capped at 1/8
+and 0.50/5. Quiet is counted only while an order actually rests — a
+bid gone dark (no budget for it) freezes its price instead of
+walking it to the cap for nothing (run 4 again). The standing
 orders are the world's first public price reference; the coin flows
-are the first circular income (houses sell surplus → coin → buy food).
+are the first circular income (houses sell surplus → coin → buy
+food).
+
+Run 4 then supplied two lessons the engine itself had to learn. First:
+an auction is between counterparties — one entity quoting both legs
+off the same reference crossed itself 360 times, wash volume that
+pinned the price at its own anchor, so `_settle` now bars same-entity
+matches (the younger order steps aside; both stay resting). Second:
+the diary is a diary — Nemotron's entries were leaked chain-of-thought
+("We are given the current behavior..."), so the diary prompt now
+forbids reasoning traces and demands first-person past tense.
 
 Agent runs pick it with `--scenario stone_age`:
 
