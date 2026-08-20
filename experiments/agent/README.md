@@ -53,7 +53,10 @@ It is also the payoff of the scripting arc (docs/scripting.md):
    exhaustion keeps the old behaviour — never destructive
 4. **journal** — one JSONL line per cycle (attempts, accepted,
    warnings, source sha, model, and — on a refused round — the head of
-   the last raw reply: failed attempts stopped evaporating)
+   the last raw reply: failed attempts stopped evaporating; on an
+   accepted round whose extraction had a choice to make, a 200-char
+   reply head plus the extractor's decision — candidate count, winner
+   index, per-candidate shas, quotes bypassed)
 
 ## Running
 

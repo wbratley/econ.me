@@ -20,6 +20,7 @@ agent loop are in the loop, not the transport.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -132,6 +133,14 @@ def strip_fences(text: str) -> str:
 #   3. let the Lua parser arbitrate: the first candidate that COMPILES
 #      is the script. If nothing compiles, fall back to today's
 #      behavior unchanged -- lint reports, the retry loop hints.
+#   4. identity guard (the stone-run6 lesson): a compiling candidate
+#      that is the CURRENT script re-indented is a quote, not intent --
+#      when the model's reply also offers a textually different
+#      candidate, that one wins. Nemotron's round-3 "fix" differed from
+#      the crashing round-2 script by one leading space per line: the
+#      diary said "changed ctx.accounts[0] to [1]", the submission
+#      still had [0], because the reply quoted the old script in an
+#      indented fence BEFORE the corrected code.
 
 _THINK_RE = re.compile(r"(?is)<think>.*?</think>")
 _FENCE_RE = re.compile(r"(?s)```[a-zA-Z0-9_-]*[ \t]*\n(.*?)```")
@@ -209,30 +218,82 @@ def _code_island(text: str) -> str | None:
     return "\n".join(best) or None
 
 
-def extract_script(raw: str) -> str:
-    """The script inside a raw reply, whatever the model wrapped it in.
+def _ws_same(a: str, b: str) -> bool:
+    """Same program modulo whitespace: line indentation and blank
+    lines are formatting, not semantics (Lua does not care). Used to
+    spot a candidate that is merely the current script re-quoted."""
+    ka = [ln.strip() for ln in a.splitlines() if ln.strip()]
+    kb = [ln.strip() for ln in b.splitlines() if ln.strip()]
+    return ka == kb
 
-    Candidates, first-that-compiles: the first fenced block (yesterday's
-    strip_fences, still the workhorse), the last fenced block, the
-    longest Lua-looking island of the think-stripped text. Nothing
-    compiles -> strip_fences(raw) verbatim, so behavior degrades to
-    exactly today's (lint refuses, the loop hints, the model retries).
-    """
+
+def _candidates(raw: str) -> list[str]:
+    """The extraction candidates in arbitration order: the first fenced
+    block (yesterday's strip_fences, still the workhorse), the last
+    fenced block, the longest Lua-looking island. Deduped, empties
+    dropped — each is a script the reply might have meant."""
     body = strip_think(raw)
-    candidates = [strip_fences(body)]
+    out = [strip_fences(body)]
     tail = _last_fence(body)
     if tail:
-        candidates.append(tail)
+        out.append(tail)
     island = _code_island(body)
     if island:
-        candidates.append(island)
+        out.append(island)
     seen: set[str] = set()
-    for cand in candidates:
+    uniq: list[str] = []
+    for cand in out:
         if cand and cand not in seen:
             seen.add(cand)
-            if _lua_compiles(cand):
-                return cand
-    return candidates[0]
+            uniq.append(cand)
+    return uniq
+
+
+def extract_script_detailed(
+        raw: str, current: str | None = None) -> tuple[str, dict]:
+    """The script inside a raw reply, plus the extractor's forensics.
+
+    First candidate that COMPILES wins; nothing compiles -> the first
+    candidate verbatim, so behavior degrades to exactly the one-shot
+    extractor's (lint refuses, the loop hints, the model retries).
+
+    `current` is the behaviour the entity runs right now. When given,
+    a whitespace-identical resubmission is bypassed if any compiling
+    candidate textually differs: after a failing round, re-sending the
+    same program is never intent — the model that "fixed" nothing is
+    the one that quoted its old script before the corrected code. When
+    every compiling candidate is the current script (or there is only
+    one), first-that-compiles stands: a genuine verbatim resubmit, or
+    a reply with nothing better to say, is the model's answer.
+
+    Returns `(source, info)`; `info` names the choice — candidate
+    count, winner index, per-candidate sha[:8], and the indices
+    bypassed for whitespace-identity — so accepted rounds are no
+    longer a forensic blind spot.
+    """
+    cands = _candidates(raw)
+    ok = [i for i, c in enumerate(cands) if _lua_compiles(c)]
+    winner = ok[0] if ok else 0
+    ws_skip: list[int] | None = None
+    if current and current.strip() and ok:
+        differing = [i for i in ok if not _ws_same(cands[i], current)]
+        if differing:
+            ws_skip = [i for i in ok if _ws_same(cands[i], current)]
+            winner = differing[0]
+    info = {
+        "n": len(cands),
+        "winner": winner,
+        "shas": [hashlib.sha256(c.encode()).hexdigest()[:8] for c in cands],
+        "ws_skip": ws_skip,
+    }
+    return cands[winner], info
+
+
+def extract_script(raw: str, current: str | None = None) -> str:
+    """The script inside a raw reply, whatever the model wrapped it in
+    (see extract_script_detailed for the full arbitration and the
+    `current` identity guard)."""
+    return extract_script_detailed(raw, current)[0]
 
 
 def _final_content(data: dict) -> str:
