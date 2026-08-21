@@ -2,7 +2,11 @@
 Commodity markets — holdings, limit orders, and the per-tick call auction.
 
 Orders are limit-only and good-til-cancelled; partial fills stay OPEN with
-`remaining` decremented. There is no escrow: funds and holdings are checked
+`remaining` decremented. Re-quoting your own resting price level (same
+market, side, and limit price) cancel-replaces: the stale orders are
+superseded and the new one carries the level -- a script that runs every
+tick can re-assert its quotes without stacking duplicates (see
+`place_order`, the stone-run7 lesson). There is no escrow: funds and holdings are checked
 live at settlement, and an order that cannot cover a fill is CANCELLED with
 a reason. Holdings reserved as good-requirements of running processes
 (reserved_quantity) are unavailable to settlement — you cannot sell the
@@ -174,6 +178,27 @@ def place_order(
         raise CurrencyMismatchError(
             f"account currency {account.currency} does not match market currency {market.currency}"
         )
+
+    # Cancel-replace at the price level. A behaviour script runs every
+    # tick and re-asserts the quotes it wants ("buy 1 BERRIES at 1.00",
+    # "sell my surplus YARN at 2.39"), and under plain good-til-cancelled
+    # each re-assertion stacked one more OPEN order on the book -- a
+    # stone-run7 house left 878, ~240 of them the SAME order. Re-quoting
+    # your own price level now supersedes what rests there; the quantity
+    # just placed carries the level. Different prices stack freely: a
+    # ladder is intent, depth at one printed price is a re-assertion.
+    stale = session.execute(
+        select(Order).where(
+            Order.entity_id == entity_id,
+            Order.market_id == market.id,
+            Order.side == side,
+            Order.limit_price == limit_price,
+            Order.status == OrderStatus.OPEN,
+        )
+    ).scalars().all()
+    for old in stale:
+        old.status = OrderStatus.CANCELLED
+        old.cancel_reason = "superseded at price level"
 
     order = Order(
         market_id=market.id,

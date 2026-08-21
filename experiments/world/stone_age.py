@@ -171,7 +171,10 @@ per tick) ==
 - MAKE_BED [L + 2 WOOD + 3 YARN] 2 ticks -> 1 BED. Comfort, someday.
 - place_order / cancel_order / transfer: trade any good for COIN on the
   13 markets (BERRIES, WOOD, YARN, FLINT, MEAT, COOKED_MEAT, JERKY,
-  WARMTH, SPEAR, BAG, TRAP, CLOTHES, BED).
+  WARMTH, SPEAR, BAG, TRAP, CLOTHES, BED). Re-quoting a price level you
+  already occupy REPLACES your resting order there: your script runs
+  every tick, so re-asserting the same quote is maintenance, not
+  stacking -- ladder different prices if you want depth.
 
 == THE LADDER (rough costs; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + a tick): cooking + warmth. Do not sleep fireless.

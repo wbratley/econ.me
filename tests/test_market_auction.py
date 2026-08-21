@@ -146,8 +146,12 @@ def test_price_tie_breaks_toward_last_price(world):
 
 def test_price_time_priority_at_margin(world):
     session, buyer, seller, b, s, market = world
+    # two TRADERS at one price (same-trader re-quotes now consolidate at
+    # placement): the earlier bid fills first, the later one partials.
+    late_buyer = create_entity(session, "Late Buyer", EntityType.INDIVIDUAL)
+    lb = create_account(session, late_buyer, "USD", initial_balance=Decimal("1000"))
     first = buy(session, buyer, b, "6", "10")
-    second = buy(session, buyer, b, "6", "10")
+    second = buy(session, late_buyer, lb, "6", "10")
     sell(session, seller, s, "8", "10")
 
     run_auctions(session, tick_number=1)
@@ -155,7 +159,8 @@ def test_price_time_priority_at_margin(world):
     assert first.status == OrderStatus.FILLED
     assert second.status == OrderStatus.OPEN     # partial: 2 of 6
     assert second.remaining == Decimal("4")
-    assert holding_qty(session, buyer) == Decimal("8")
+    assert holding_qty(session, buyer) == Decimal("6")
+    assert holding_qty(session, late_buyer) == Decimal("2")
 
 
 def test_partial_order_fills_next_tick(world):
@@ -194,18 +199,21 @@ def test_buyer_insufficient_funds_cancelled(world):
 
 def test_seller_double_spend_within_auction(world):
     session, buyer, seller, b, s, market = world
-    # seller holds 100 WHEAT but offers 100 twice; demand covers both, so
-    # the second order is reached at settlement and must cancel
-    first = sell(session, seller, s, "100", "10")
-    second = sell(session, seller, s, "100", "10")
+    # seller holds 100 WHEAT but ladders it twice (100 @9 and 100 @10 --
+    # different price levels, so placement lets both rest); demand covers
+    # both, so the deeper level is reached at settlement and must cancel.
+    # (Same-price stacking is no longer reachable: re-quoting a level
+    # cancel-replaces -- see test_markets.py.)
+    low = sell(session, seller, s, "100", "9")
+    high = sell(session, seller, s, "100", "10")
     b.balance = Decimal("2000")  # enough for 200 if the check were broken
     bo = buy(session, buyer, b, "200", "10")
 
     run_auctions(session, tick_number=1)
 
-    assert first.status == OrderStatus.FILLED
-    assert second.status == OrderStatus.CANCELLED
-    assert "insufficient holdings" in second.cancel_reason
+    assert low.status == OrderStatus.FILLED
+    assert high.status == OrderStatus.CANCELLED
+    assert "insufficient holdings" in high.cancel_reason
     assert holding_qty(session, seller) == Decimal("0")
     assert holding_qty(session, buyer) == Decimal("100")
     assert bo.status == OrderStatus.OPEN          # unfilled remainder is GTC
@@ -267,6 +275,34 @@ def test_script_places_order_and_trades_same_tick(world):
     assert holding_qty(session, buyer) == Decimal("10")
     trade_events = [e for e in tick.events if e["type"] == "trade"]
     assert len(trade_events) == 2  # one per side
+
+
+def test_behaviour_requote_leaves_one_order_per_level(world):
+    """The stone-run7 shape: a behaviour re-asserts the same quote every
+    tick (no world.settle_last_orders discipline, no cancel). The engine's
+    cancel-replace keeps the book at ONE order per price level -- 600
+    ticks of this must not stack 600 orders."""
+    session, buyer, seller, b, s, market = world
+    session.add(Script(
+        name="sticky-bid",
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=buyer.id,
+        source=(f"ctx.action.place_order('WHEAT', 'buy', '1', '5', '{b.id}')\n"
+                f"ctx.action.place_order('WHEAT', 'buy', '1', '4', '{b.id}')"),
+    ))
+    session.flush()
+    for _ in range(3):
+        run_tick(session)
+    from sqlalchemy import select as sa_select
+    from econengine.models import Order as OrderModel
+    open_orders = session.execute(
+        sa_select(OrderModel).where(
+            OrderModel.entity_id == buyer.id,
+            OrderModel.status == OrderStatus.OPEN,
+        )
+    ).scalars().all()
+    # one order per price level: the 5.00 bid and the 4.00 bid, not six
+    assert sorted(o.limit_price for o in open_orders) == [Decimal("4"), Decimal("5")]
 
 
 def test_both_sides_see_trade_events_next_tick(world):
