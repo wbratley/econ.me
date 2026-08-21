@@ -714,6 +714,32 @@ generic-`parents` provenance + `owner_id` (defaults to caller's owner) +
   transfers starting wealth — all no engine change); 6d stays independent and
   optional. Interests and political leaning remain explicitly *not* engine
   concepts.
+- Beyond Step 6 — **three mechanisms the agent campaign forced**
+  (unnumbered; recorded here because each is an engine change no roadmap
+  step had named). Phase 0's proving experiment (`experiments/world`)
+  grew into the LLM dynasty campaign (`experiments/agent`, game.md
+  §12.7): NIM-hosted models playing `stone_age` as dynasties that
+  rewrite their own BEHAVIOUR between rounds. Nine postmortemed runs
+  surfaced:
+  **Crash-revert** (#101, `tick.py` `_record_crash` +
+  `CRASH_REVERT_TICKS=3`, migration `c7d9e1f3a5b2`) — a behaviour whose
+  runtime errors persist across 3 straight ticks is reverted engine-side
+  to its last working version, with the crash translated into retry
+  feedback (#102). The never-destructive submission principle (`agent`
+  loop: exhaustion keeps the old behaviour) extended from submission time
+  to runtime: a broken rewrite paralyzes for ticks, not rounds.
+  **Order-book visibility** (#99, `scripting.py`/`lua_engine.py`) —
+  `std.best_bid`/`std.best_ask`: the top-of-book *price only* (nil on an
+  empty side; depth stays private — the §13 parity cut applied to the
+  book), plus the touch rendered in `market_prices`. A script can see
+  enough to re-quote rather than stack blindly.
+  **Re-quote consolidation** (#104, `markets.py`) — placing an order at
+  a price level the placing entity already occupies cancel-replaces its
+  resting order there (`cancel_reason: "superseded at price level"`);
+  orders at *distinct* prices from the same trader still ladder and
+  stack. Price-time priority untouched. Verified live: run-9's three
+  churning dynasties ended at 0 OPEN orders across 417 superseded
+  cancels (run-7, pre-fix, stacked 878 OPEN orders).
 
 ## Step 5 design: the financial substrate
 
