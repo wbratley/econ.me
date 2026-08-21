@@ -51,8 +51,8 @@ class MarketInactiveError(ValueError):
 # Services
 # ---------------------------------------------------------------------------
 
-def create_market(session: Session, symbol: str, currency: str, name: str = "") -> Market:
-    market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name)
+def create_market(session: Session, symbol: str, currency: str, name: str = "", description: str = "") -> Market:
+    market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name, description=description)
     session.add(market)
     session.flush()
     session.info.setdefault(_MARKET_CACHE, {})[market.symbol] = market

@@ -261,30 +261,46 @@ def _create_goods(session: Session) -> None:
     # pattern). Partial decay lets a market-bought unit survive long enough
     # for the buyer's next script to use it.
     goods.create_good(
-        session, "LABOR",
+        session, "LABOR", name="Labor",
+        description="One unit of action per tick, auto-issued to every "
+                    "individual. Unspent labor fades fast: use it or lose it.",
         decay_per_tick=Decimal("0.5"),
         auto_issue_quantity=Decimal("1"),
         auto_issue_entity_type=EntityType.INDIVIDUAL,
     )
     # Food chain (all perishable; all satisfy FOOD).
-    goods.create_good(session, "GRAIN", decay_per_tick=Decimal("0.2"))
-    goods.create_good(session, "FLOUR", decay_per_tick=Decimal("0.2"))
-    goods.create_good(session, "BREAD", decay_per_tick=Decimal("0.15"))
+    goods.create_good(session, "GRAIN", name="Grain",
+                      description="The farm's yield and the food chain's root.",
+                      decay_per_tick=Decimal("0.2"))
+    goods.create_good(session, "FLOUR", name="Flour",
+                      description="Milled grain, halfway to bread.",
+                      decay_per_tick=Decimal("0.2"))
+    goods.create_good(session, "BREAD", name="Bread",
+                      description="Baked food; the chain's finished good.",
+                      decay_per_tick=Decimal("0.15"))
     # Industrial minerals (from deposits) -- do not perish.
-    goods.create_good(session, "ORE")
-    goods.create_good(session, "COAL")
-    goods.create_good(session, "STONE")
+    goods.create_good(session, "ORE", name="Iron Ore",
+                      description="Raw ore drawn from a seam; smelt it into iron.")
+    goods.create_good(session, "COAL", name="Coal",
+                      description="Mined fuel for steel.")
+    goods.create_good(session, "STONE", name="Stone",
+                      description="Quarried rock for construction.")
     # Industrial intermediates and capital -- do not perish.
-    goods.create_good(session, "IRON")
-    goods.create_good(session, "STEEL")
-    goods.create_good(session, "TOOLS")
+    goods.create_good(session, "IRON", name="Iron",
+                      description="Smelted iron: upkeep's satisfier and the "
+                                  "root of every industrial chain.")
+    goods.create_good(session, "STEEL", name="Steel",
+                      description="Alloyed iron; tools are made of it.")
+    goods.create_good(session, "TOOLS", name="Tools",
+                      description="Capital held while building — kept, not consumed.")
     # HUNGER: the deprivation counter. Proportional decay against a constant
     # grant converges to grant/decay, so the incapacitation threshold must sit
     # below that equilibrium or chronic hunger never bites. Grant is 1 per
     # hungry tick, decay 0.05 -> equilibrium 20 at permanent famine, below the
     # threshold of 30: a real famine kills, an intermittent miss does not.
     goods.create_good(
-        session, "HUNGER",
+        session, "HUNGER", name="Hunger",
+        description="The memory of missed meals.",
         incapacitates_at=Decimal("30"),
         decay_per_tick=Decimal("0.05"),
     )
@@ -293,7 +309,9 @@ def _create_goods(session: Session) -> None:
     # at 30) -- chronic neglect eventually seizes the entity, an
     # intermittent miss does not.
     goods.create_good(
-        session, "DISREPAIR",
+        session, "DISREPAIR", name="Disrepair",
+        description="The memory of neglected upkeep: tools and works "
+                    "wearing out.",
         incapacitates_at=Decimal("30"),
         decay_per_tick=Decimal("0.05"),
     )
@@ -302,19 +320,31 @@ def _create_goods(session: Session) -> None:
 def _create_tech(session: Session) -> None:
     # Food skills are per-person (ENTITY scope): each farmer/miller/baker
     # learns them for themselves.
-    tech.create_technology(session, "FARMING", scope=TechScope.ENTITY)
-    tech.create_technology(session, "MILLING", scope=TechScope.ENTITY)
-    tech.create_technology(session, "BAKING", scope=TechScope.ENTITY)
+    tech.create_technology(session, "FARMING", name="Farming",
+                           description="Per-person skill: run FARM_GRAIN at a farm.",
+                           scope=TechScope.ENTITY)
+    tech.create_technology(session, "MILLING", name="Milling",
+                           description="Per-person skill: run MILL_FLOUR at a mill.",
+                           scope=TechScope.ENTITY)
+    tech.create_technology(session, "BAKING", name="Baking",
+                           description="Per-person skill: run BAKE_BREAD at a bakery.",
+                           scope=TechScope.ENTITY)
     # Smelting is "known physics" (WORLD scope): once anyone knows it,
     # everyone does. STEELMAKING builds on it.
-    tech.create_technology(session, "SMELTING", scope=TechScope.WORLD)
+    tech.create_technology(session, "SMELTING", name="Smelting",
+                           description="Known physics: once anyone unlocks it, "
+                                       "everyone can smelt.", scope=TechScope.WORLD)
     tech.create_technology(
-        session, "STEELMAKING", prerequisites=["SMELTING"], scope=TechScope.WORLD,
+        session, "STEELMAKING", name="Steelmaking",
+        description="Known physics, built on smelting: the MAKE_STEEL recipe.",
+        prerequisites=["SMELTING"], scope=TechScope.WORLD,
     )
     # Toolmaking is a per-person skill that presupposes the world knows how
     # to smelt.
     tech.create_technology(
-        session, "TOOLMAKING", prerequisites=["SMELTING"], scope=TechScope.ENTITY,
+        session, "TOOLMAKING", name="Toolmaking",
+        description="Per-person skill built on smelting: the MAKE_TOOLS recipe.",
+        prerequisites=["SMELTING"], scope=TechScope.ENTITY,
     )
 
 
@@ -324,19 +354,25 @@ def _create_recipes(session: Session) -> None:
     # --- The LIVE chain (exercised by the proving run) ---------------------
     # Farmer's food engine. Yields 4: eat 1, sell the surplus to both buyers.
     production.create_recipe(
-        session, "FARM_GRAIN",
+        session, "FARM_GRAIN", name="Farm Grain",
+        description="The farmer's food engine: one labor, four grain — eat "
+                    "one, sell the surplus.",
         inputs={"LABOR": D("1")}, outputs={"GRAIN": D("4")},
         duration_ticks=1, requires_facility="FARM", requires=["FARMING"],
     )
     # Miner's extraction. 1 LABOR draws 2 ORE from the seam -> 2 ORE.
     production.create_recipe(
-        session, "MINE_ORE",
+        session, "MINE_ORE", name="Mine Ore",
+        description="The miner's extraction: one labor draws two ore from "
+                    "the seam.",
         inputs={"LABOR": D("1")}, outputs={"ORE": D("2")},
         duration_ticks=1, deposit_inputs={"ORE": D("2")},
     )
     # Smith's tech-gated smelt. Consumes exactly what the Miner produces.
     production.create_recipe(
-        session, "SMELT_IRON",
+        session, "SMELT_IRON", name="Smelt Iron",
+        description="The tech-gated smelt at a forge: consumes exactly what "
+                    "the miner produces.",
         inputs={"ORE": D("2"), "LABOR": D("1")}, outputs={"IRON": D("2")},
         duration_ticks=1, requires_facility="FORGE", requires=["SMELTING"],
     )
@@ -344,43 +380,54 @@ def _create_recipes(session: Session) -> None:
     # --- DECLARED recipes (exercised by the focused feature tests) ---------
     # Food value-add chain.
     production.create_recipe(
-        session, "MILL_FLOUR",
+        session, "MILL_FLOUR", name="Mill Flour",
+        description="Value-add: two grain into two flour at a mill.",
         inputs={"GRAIN": D("2")}, outputs={"FLOUR": D("2")},
         duration_ticks=1, requires_facility="MILL", requires=["MILLING"],
     )
     production.create_recipe(
-        session, "BAKE_BREAD",
+        session, "BAKE_BREAD", name="Bake Bread",
+        description="The chain's finish: one flour into two loaves at a "
+                    "bakery.",
         inputs={"FLOUR": D("1")}, outputs={"BREAD": D("2")},
         duration_ticks=1, requires_facility="BAKERY", requires=["BAKING"],
     )
     # Further extraction (coal for steel, stone for construction).
     production.create_recipe(
-        session, "MINE_COAL",
+        session, "MINE_COAL", name="Mine Coal",
+        description="One labor draws two coal from the seam.",
         inputs={"LABOR": D("1")}, outputs={"COAL": D("2")},
         duration_ticks=1, deposit_inputs={"COAL": D("2")},
     )
     production.create_recipe(
-        session, "QUARRY_STONE",
+        session, "QUARRY_STONE", name="Quarry Stone",
+        description="One labor draws four stone from the seam.",
         inputs={"LABOR": D("1")}, outputs={"STONE": D("4")},
         duration_ticks=1, deposit_inputs={"STONE": D("4")},
     )
     # Multi-tick, flow-fed steel (per_tick LABOR paid each of 2 ticks).
     production.create_recipe(
-        session, "MAKE_STEEL",
+        session, "MAKE_STEEL", name="Make Steel",
+        description="Multi-tick and flow-fed: iron and coal up front, a "
+                    "labor paid each tick it runs.",
         inputs={"IRON": D("2"), "COAL": D("1")}, outputs={"STEEL": D("2")},
         per_tick_inputs={"LABOR": D("1")},
         duration_ticks=2, requires_facility="FORGE", requires=["STEELMAKING"],
     )
     # Capital-good output.
     production.create_recipe(
-        session, "MAKE_TOOLS",
+        session, "MAKE_TOOLS", name="Make Tools",
+        description="The capital good: iron and steel into one TOOLS.",
         inputs={"IRON": D("1"), "STEEL": D("1")}, outputs={"TOOLS": D("1")},
         duration_ticks=2, requires=["TOOLMAKING"],
     )
     # Construction: erects a FORGE on the bound parcel. good_requirements
     # shows the hold-not-consume feature (you must HOLD a TOOLS, kept after).
     production.create_recipe(
-        session, "BUILD_FORGE",
+        session, "BUILD_FORGE", name="Build Forge",
+        description="Construction: stone up front, a labor each tick, and "
+                    "TOOLS held throughout (kept, not consumed) — erects a "
+                    "forge on your parcel.",
         inputs={"STONE": D("4")}, outputs={},
         good_requirements={"TOOLS": D("1")},
         per_tick_inputs={"LABOR": D("1")},
@@ -389,7 +436,9 @@ def _create_recipes(session: Session) -> None:
     # Research: the output is an unlock, not goods. Prereq SMELTING; grants
     # STEELMAKING (world-scope -> first discovery unlocks for everyone).
     production.create_recipe(
-        session, "RESEARCH_STEEL",
+        session, "RESEARCH_STEEL", name="Research Steel",
+        description="Research: a labor each tick for five ticks, and the "
+                    "output is the world's knowledge of steelmaking.",
         inputs={}, outputs={},
         per_tick_inputs={"LABOR": D("1")},
         duration_ticks=5, requires=["SMELTING"], unlocks=["STEELMAKING"],
@@ -400,6 +449,9 @@ def _create_needs(session: Session) -> None:
     # FOOD: 1 unit/tick, met by any of GRAIN/FLOUR/BREAD. Unmet -> HUNGER.
     needs.create_need(
         session, "FOOD", Decimal("1"), ["GRAIN", "FLOUR", "BREAD"],
+        name="Food",
+        description="One unit per tick, drawn in order: grain, flour, then "
+                    "bread. Miss it and hunger accrues.",
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
@@ -411,15 +463,24 @@ def _create_needs(session: Session) -> None:
     # good the need never eats.
     needs.create_need(
         session, "UPKEEP", UPKEEP_RATE, ["IRON"],
+        name="Upkeep",
+        description="The industrial demand sink: iron burned per tick as "
+                    "tools wear. Miss it and disrepair accrues.",
         entity_type=EntityType.INDIVIDUAL, priority=1,
         condition_symbol="DISREPAIR", condition_quantity=Decimal("1"),
     )
 
 
 def _create_markets(session: Session) -> None:
+    _NAMES = {
+        "LABOR": "Labor", "GRAIN": "Grain", "FLOUR": "Flour",
+        "BREAD": "Bread", "ORE": "Iron Ore", "COAL": "Coal",
+        "STONE": "Stone", "IRON": "Iron", "STEEL": "Steel",
+        "TOOLS": "Tools",
+    }
     for symbol in ("LABOR", "GRAIN", "FLOUR", "BREAD", "ORE", "COAL",
                     "STONE", "IRON", "STEEL", "TOOLS"):
-        markets.create_market(session, symbol, "USD")
+        markets.create_market(session, symbol, "USD", name=_NAMES[symbol])
 
 
 # ---------------------------------------------------------------------------

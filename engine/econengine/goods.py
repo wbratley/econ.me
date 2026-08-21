@@ -42,6 +42,7 @@ def create_good(
     session: Session,
     symbol: str,
     name: str = "",
+    description: str = "",
     decay_per_tick: Decimal = Decimal("0"),
     auto_issue_quantity: Decimal = Decimal("0"),
     auto_issue_entity_type: EntityType | None = None,
@@ -69,6 +70,7 @@ def create_good(
     good = Good(
         symbol=symbol.upper(),
         name=name,
+        description=description,
         decay_per_tick=decay_per_tick,
         auto_issue_quantity=auto_issue_quantity,
         auto_issue_entity_type=auto_issue_entity_type,

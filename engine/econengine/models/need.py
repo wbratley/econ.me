@@ -18,6 +18,9 @@ class Need(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. FOOD
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(
+        String(1000), nullable=False, default=""
+    )  # authored catalog text (Phase 3a)
     entity_type: Mapped[EntityType | None] = mapped_column(
         SAEnum(EntityType), nullable=True
     )  # NULL = every entity

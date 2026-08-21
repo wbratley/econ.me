@@ -54,6 +54,7 @@ def create_need(
     entity_type: EntityType | None = None,
     priority: int = 0,
     name: str = "",
+    description: str = "",
     condition_symbol: str | None = None,
     condition_quantity: Decimal = Decimal("0"),
 ) -> Need:
@@ -72,6 +73,7 @@ def create_need(
     need = Need(
         code=code.upper(),
         name=name,
+        description=description,
         entity_type=entity_type,
         quantity_per_tick=quantity_per_tick,
         priority=priority,
