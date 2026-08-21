@@ -387,8 +387,11 @@ def test_money_comes_from_the_ground(session):
 
 
 def test_world_ships_a_legible_manual(session):
-    """The manual WorldSetting carries the whole action space: the
-    recipes, the death conditions, the ladder."""
+    """The 3a fold: the manual WorldSetting keeps only the authored
+    notes (the ladder, the post, privacy) -- the tables of goods,
+    actions and death thresholds are now GENERATED, rendered from the
+    installed content by catalog_text."""
+    from econengine.catalog import catalog_state, catalog_text
     from econengine.models import WorldSetting
 
     create_content(session)
@@ -396,10 +399,16 @@ def test_world_ships_a_legible_manual(session):
     assert row is not None
     text = row.value["text"]
     flat = " ".join(text.split()).lower()   # needles must survive line wraps
-    for needle in ("GATHER_BAG", "HUNT_SPEAR", "MAKE_SHELTER", "EAT_RAW",
-                   "dies at 15", "dies at 2.5", "SPEAR", "BAG", "the ladder",
-                   "PRIVACY"):
-        assert needle.lower() in flat, needle
+    for needle in ("the ladder", "trading post", "privacy", "scarcity"):
+        assert needle in flat, needle
+
+    # The derived numbers moved to the generated catalog -- and they are
+    # all there: actions, tools, conditions, thresholds.
+    cat = " ".join(catalog_text(catalog_state(session)).split()).lower()
+    for needle in ("gather_bag", "hunt_spear", "make_shelter", "eat_raw",
+                   "spear", "bag", "incapacitates at 15",
+                   "incapacitates at 2.5", "== needs", "== markets"):
+        assert needle in cat, needle
 
 
 def test_pack_sets_rival_privacy(session):

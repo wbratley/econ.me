@@ -70,7 +70,7 @@ class McpClient:
 
 
 def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False,
-                 manual: str | None = None) -> str:
+                 manual: str | None = None, catalog: str | None = None) -> str:
     """Identity + the tier vocabulary, verbatim. The std/world/pack sources
     go in whole: a model that has read them cannot honestly hallucinate a
     helper, and the lint backstops the ones that do anyway. `manual` -- the
@@ -143,9 +143,21 @@ for arithmetic, pass strings to intents.
 ----- pack.* (content pack opinions) -----
 {pack}
 """
+    if catalog:
+        # The prompt fold (3a tail): the readable world, GENERATED from
+        # the installed content -- every good, need, recipe, tech and
+        # market with its derived numbers (costs, odds, durations, gates,
+        # death thresholds). The hand-written tables are retired; what
+        # the numbers cannot spell stays in the authored notes below.
+        text += f"""
+----- THE WORLD CATALOG (generated from this world's content: every
+number below is derived from what is installed) -----
+{catalog}
+"""
     if manual:
         text += f"""
------ THE WORLD MANUAL (this world's rules, in numbers) -----
+----- WORLD NOTES (authored guidance: strategy and seams the numbers
+cannot spell) -----
 {manual}
 """
     return text
@@ -349,7 +361,8 @@ class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
                  last_ticks: int = 8, edit_mode: bool = False,
-                 diary: bool = False, manual: str | None = None):
+                 diary: bool = False, manual: str | None = None,
+                 catalog: str | None = None):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
@@ -358,7 +371,8 @@ class AgentLoop:
         self.last_ticks = last_ticks
         self.edit_mode = edit_mode
         self.diary = diary
-        self.manual = manual              # the pack's legible rules, if any
+        self.manual = manual              # authored notes, if the pack ships any
+        self.catalog = catalog            # generated readable world (3a fold)
         self._feedback: list[str] = []          # rides into the next prompt
         self.journal_lines: list[dict] = []
 
@@ -429,7 +443,7 @@ class AgentLoop:
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action, raw, extractor = "", "rewrite", "", None
         sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
-                                manual=self.manual)
+                                manual=self.manual, catalog=self.catalog)
         transcript: list[dict] = []      # prompts + replies + platform
         # responses: the diary's ground truth, captured as it happens
         while attempts < self.max_attempts:

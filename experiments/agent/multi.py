@@ -34,6 +34,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from .loop import AgentLoop, McpClient, McpError
+from econengine.catalog import catalog_state, catalog_text
 
 # ---------------------------------------------------------------------------
 # The dynasties and their world
@@ -97,11 +98,18 @@ def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "fronti
     session.commit()
 
     # The pack's MANUAL (world.manual WorldSetting), if it ships one: the
-    # legible rules -- tech tree, conditions, effects -- that the agent
-    # loop folds into every system prompt. Rival privacy (multi's own
-    # read below) is a pack decision, not an agent-client one.
+    # authored notes -- strategy and seams -- that ride under the
+    # generated catalog (the 3a prompt fold: tables derive, meaning
+    # stays authored). Rival privacy (multi's own read below) is a pack
+    # decision, not an agent-client one.
     manual_row = session.get(WorldSetting, getattr(pack, "MANUAL_KEY", "world.manual"))
-    return {"manual": (manual_row.value or {}).get("text") if manual_row else None}
+    return {
+        "manual": (manual_row.value or {}).get("text") if manual_row else None,
+        # The readable world, rendered at read time from the same shared
+        # read the REST catalog and MCP surface serve (never stored, so
+        # it can never drift from the physics it renders).
+        "catalog": catalog_text(catalog_state(session)),
+    }
 
 
 # ---------------------------------------------------------------------------

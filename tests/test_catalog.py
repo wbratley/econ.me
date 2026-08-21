@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from econengine import goods, markets, needs, production, tech
-from econengine.catalog import catalog_state
+from econengine.catalog import catalog_state, catalog_text
 from econengine.models import Base, EntityType
 from econengine.tech import TechScope
 
@@ -212,3 +212,21 @@ def test_mcp_world_catalog_is_the_same_read(api_client, session):
 def test_catalog_requires_auth(api_client):
     r = api_client.get("/catalog")
     assert r.status_code in (401, 403)
+
+
+def test_catalog_text_is_the_prompt_fold(session):
+    """The compact prose render: every section present, derived numbers
+    carried through (costs, odds, gates, death thresholds) — the same
+    shared read the REST catalog serves, as plain text for prompts."""
+    _seed(session)
+    state = catalog_state(session)
+    text = catalog_text(state)
+    assert "== GOODS (what exists; what holding or issuing it does) ==" in text
+    assert "- BERRIES (Berries)" in text          # name rides
+    assert "decays 25%/tick" in text              # derived effect
+    assert "== NEEDS (drawn every tick; shortfalls bite) ==" in text
+    assert "per tick from" in text                 # the draw line renders
+    assert "== THE ACTION SPACE (recipes: inputs -> outputs) ==" in text
+    assert "GATHER" in text
+    assert "== MARKETS (order books; quote currencies) ==" in text
+    assert "BERRIES/COIN" in text
