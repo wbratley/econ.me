@@ -798,7 +798,9 @@ pin.
 1. **3a — catalog:** name/description columns + fills for both packs +
    `GET /catalog` + MCP `world_catalog`; the stone_age manual becomes
    a generated artifact. *(one additive migration; data + platform
-   read)*
+   read)* — **core landed** (`econengine.catalog`, migration
+   `b3e8d1f6a9c4`, both packs filled; the agent-loop prompt fold follows
+   before 3b).**
 2. **3b — registry + audit trail:** `econengine.describe` (pure) + the
    total-coverage test + `/activity` reads + MCP `entity_activity`.
 3. **3c — dashboard:** the world-log section on the live dashboard.

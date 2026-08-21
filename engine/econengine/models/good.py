@@ -17,6 +17,9 @@ class Good(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     symbol: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. LABOR-SMITH
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(
+        String(1000), nullable=False, default=""
+    )  # authored catalog text (Phase 3a); derived physics renders from the row
     decay_per_tick: Mapped[Decimal] = mapped_column(
         Numeric(precision=5, scale=4), nullable=False, default=Decimal("0")
     )  # fraction of every holding lost at end of tick, 0..1

@@ -33,6 +33,7 @@ def create_technology(
     prerequisites: list[str] | None = None,
     scope: TechScope = TechScope.ENTITY,
     name: str = "",
+    description: str = "",
 ) -> Technology:
     prereq_rows = []
     for prereq_code in sorted({str(c).upper() for c in (prerequisites or [])}):
@@ -44,6 +45,7 @@ def create_technology(
     technology = Technology(
         code=code.upper(),
         name=name,
+        description=description,
         scope=scope,
         prerequisites=prereq_rows,
     )

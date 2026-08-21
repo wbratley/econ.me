@@ -86,6 +86,7 @@ def create_recipe(
     outputs: dict[str, Decimal],
     duration_ticks: int,
     name: str = "",
+    description: str = "",
     requires: list[str] | None = None,
     unlocks: list[str] | None = None,
     branches: list[dict] | None = None,
@@ -141,6 +142,7 @@ def create_recipe(
     recipe = Recipe(
         code=code.upper(),
         name=name,
+        description=description,
         duration_ticks=duration_ticks,
         requires_facility=requires_facility.upper() if requires_facility else None,
         builds_facility=builds_facility.upper() if builds_facility else None,

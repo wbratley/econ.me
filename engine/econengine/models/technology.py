@@ -23,6 +23,9 @@ class Technology(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # uppercase, e.g. SMELTING
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(
+        String(1000), nullable=False, default=""
+    )  # authored catalog text (Phase 3a)
     scope: Mapped[TechScope] = mapped_column(SAEnum(TechScope), nullable=False, default=TechScope.ENTITY)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

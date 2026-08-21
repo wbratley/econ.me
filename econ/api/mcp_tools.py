@@ -34,6 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from econengine import scripting, services, tech
+from econengine.catalog import catalog_state
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
 from econengine.models import (
     Entity, EntityType, Holding, Market, NeedState, Parcel, Process,
@@ -44,6 +45,7 @@ from econengine.services import ServerCapExceededError
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
+from econengine.catalog import catalog_state
 from econ.api.onboarding import get_join_config
 from econ.api.rounds import (
     NotEligibleError, current_round_state, set_user_ready, unset_user_ready,
@@ -267,6 +269,14 @@ def tool_leaderboard(session: Session, user: User, args: dict[str, Any]) -> dict
     lineage age, tech unlocks, epoch wins, status), ranked by epoch wins
     then money. Public facts only -- no dynasty's private affairs (§13)."""
     return leaderboard_state(session)
+
+
+def tool_world_catalog(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The readable world (Phase 3a, game.md §15.1): names, descriptions,
+    and derived effect lines for every good, recipe, technology, need, and
+    market. The §13 parity doctrine extended from script vocabulary to
+    world vocabulary: the prompt and the script read the same catalog."""
+    return catalog_state(session)
 
 
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
@@ -532,6 +542,16 @@ TOOLS: list[Tool] = [
         "description": "Last-trade price for every active market (public facts).",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_market_prices,
+    },
+    {
+        "name": "world_catalog",
+        "description": "The readable world: every good (name, description, "
+                       "derived effect line — decay, conditions, auto-issue), "
+                       "every recipe (inputs → outputs, duration, gates, branch "
+                       "odds), the tech tree, needs (draw order), and markets. "
+                       "The world's vocabulary, public facts only.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_world_catalog,
     },
 ]
 

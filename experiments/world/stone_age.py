@@ -270,7 +270,9 @@ def create_content(session: Session) -> None:
 def _create_goods(session: Session) -> None:
     # The action ration: one auto-issued LABOR per INDIVIDUAL per tick.
     goods.create_good(
-        session, "LABOR",
+        session, "LABOR", name="Labor",
+        description="One unit of action per tick, auto-issued to every "
+                    "individual. Unspent labor fades fast: use it or lose it.",
         decay_per_tick=Decimal("0.5"),
         auto_issue_quantity=Decimal("1"),
         auto_issue_entity_type=EntityType.INDIVIDUAL,
@@ -278,41 +280,81 @@ def _create_goods(session: Session) -> None:
     # Food -- everything edible rots. MEAT fastest (raw), COOKED slightly
     # slower, BERRIES in between: preserving food is a real problem, and
     # selling surplus before it rots is the trader's edge.
-    goods.create_good(session, "MEAT", decay_per_tick=Decimal("0.30"))
-    goods.create_good(session, "BERRIES", decay_per_tick=Decimal("0.25"))
-    goods.create_good(session, "COOKED_MEAT", decay_per_tick=Decimal("0.25"))
+    goods.create_good(session, "MEAT", name="Raw Meat",
+                      description="Raw flesh from the hunt. Rots fast; cook it "
+                                  "at a fire or eat it raw at your own risk.",
+                      decay_per_tick=Decimal("0.30"))
+    goods.create_good(session, "BERRIES", name="Berries",
+                      description="Foraged food; the staple of the early game "
+                                  "and the market's most-traded good.",
+                      decay_per_tick=Decimal("0.25"))
+    goods.create_good(session, "COOKED_MEAT", name="Cooked Meat",
+                      description="Fire-cooked meat: keeps a little better than "
+                                  "raw and feeds you without disease risk.",
+                      decay_per_tick=Decimal("0.25"))
     # ...except JERKY: salted meat keeps forever. Only the Trading Post
     # stocks it -- the shop shelf that is never bare (run 4's timing
     # gap: agents arrive coin-poor early and coin-rich late, so the
     # late coin needs something to buy that rot did not eat).
-    goods.create_good(session, "JERKY")
+    goods.create_good(session, "JERKY", name="Jerky",
+                      description="Salted meat that never rots. Stocked only by "
+                                  "the Trading Post — the shelf that is never bare.")
     # Gathered materials -- durable.
-    goods.create_good(session, "WOOD")
-    goods.create_good(session, "YARN")
-    goods.create_good(session, "FLINT")
+    goods.create_good(session, "WOOD", name="Wood",
+                      description="Gathered timber: the fuel of fires and the "
+                                  "frame of spears, traps, and shelters.")
+    goods.create_good(session, "YARN", name="Yarn",
+                      description="Gathered cord; binds spearheads, weaves "
+                                  "clothes and beds.")
+    goods.create_good(session, "FLINT", name="Flint",
+                      description="Sharp stone for spearheads and cutting tools.")
     # Capital -- durable, never consumed by use (traps are the exception:
     # a consumed input of HUNT_TRAPS, the one-shot technology).
-    goods.create_good(session, "SPEAR")
-    goods.create_good(session, "BAG")
-    goods.create_good(session, "TRAP")
-    goods.create_good(session, "CLOTHES")
-    goods.create_good(session, "BED")
+    goods.create_good(session, "SPEAR", name="Spear",
+                      description="Held while hunting, never consumed: turns a "
+                                  "desperate hunt into a living.")
+    goods.create_good(session, "BAG", name="Bag",
+                      description="Held while gathering, never consumed: "
+                                  "doubles the day's find.")
+    goods.create_good(session, "TRAP", name="Trap",
+                      description="One-shot hunting ammunition — consumed by "
+                                  "the traps hunt, the best odds craft can buy.")
+    goods.create_good(session, "CLOTHES", name="Clothes",
+                      description="Worn warmth: with a shelter, covers the whole "
+                                  "WARMTH need forever, free.")
+    goods.create_good(session, "BED", name="Bed",
+                      description="Craftable comfort, mechanically idle — "
+                                  "the expansion hook.")
     # Flows. WARMTH fades (0.2/tick): a tended fire warms you for a few
     # ticks, not forever. SATIETY is instant (1.0 decay): eat-now food
     # from the desperate EAT_RAW path, consumed the same tick.
-    goods.create_good(session, "WARMTH", decay_per_tick=Decimal("0.2"))
-    goods.create_good(session, "SATIETY", decay_per_tick=Decimal("1"))
+    goods.create_good(session, "WARMTH", name="Warmth",
+                      description="A flow, not a stock to hoard: made by fires, "
+                                  "shelter and clothes, fades fast. The WARMTH "
+                                  "need drinks it every tick.",
+                      decay_per_tick=Decimal("0.2"))
+    goods.create_good(session, "SATIETY", name="Satiety",
+                      description="Instant food from eating raw meat: lands and "
+                                  "is consumed the same tick.",
+                      decay_per_tick=Decimal("1"))
     # Conditions. See the equilibrium notes in the module docstring.
     goods.create_good(
-        session, "HUNGER", decay_per_tick=Decimal("0.05"),
+        session, "HUNGER", name="Hunger",
+        description="The memory of missed meals.",
+        decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("15"),
     )
     goods.create_good(
-        session, "EXPOSURE", decay_per_tick=Decimal("0.05"),
+        session, "EXPOSURE", name="Exposure",
+        description="The memory of cold nights.",
+        decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("18"),
     )
     goods.create_good(
-        session, "DISEASE", decay_per_tick=Decimal("0.05"),
+        session, "DISEASE", name="Disease",
+        description="Raw meat's price: one bad meal can be a death sentence "
+                    "at this threshold.",
+        decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
     )
 
@@ -330,7 +372,10 @@ def _create_recipes(session: Session) -> None:
     # Expected food value 1.35/tick against a need of 1.0 -- bare
     # subsistence spends ~3/4 of the LABOR budget on food.
     production.create_recipe(
-        session, "GATHER", inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
+        session, "GATHER", name="Gather",
+        description="One loot-table roll of a single resource: you find what "
+                    "you find. Bare-handed subsistence.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         branches=[
             {"weight": D("45"), "outputs": {"BERRIES": D("3")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"WOOD": D("2")}, "label": "wood"},
@@ -339,7 +384,10 @@ def _create_recipes(session: Session) -> None:
         ],
     )
     production.create_recipe(
-        session, "GATHER_BAG", inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
+        session, "GATHER_BAG", name="Gather with a Bag",
+        description="The doubled table — and a small chance the ground itself "
+                    "has minted a coin.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         good_requirements={"BAG": D("1")},
         branches=[
             {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
@@ -354,7 +402,9 @@ def _create_recipes(session: Session) -> None:
     # with a SPEAR held (never consumed) and best with TRAPs (consumed --
     # the supply chain: wood+yarn per hunt).
     production.create_recipe(
-        session, "HUNT", inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        session, "HUNT", name="Hunt",
+        description="Slow, and bare-handed: mostly nothing, sometimes dinner.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         branches=[
             {"weight": D("55"), "outputs": {}, "label": "nothing"},
             {"weight": D("35"), "outputs": {"MEAT": D("2")}, "label": "small"},
@@ -362,7 +412,10 @@ def _create_recipes(session: Session) -> None:
         ],
     )
     production.create_recipe(
-        session, "HUNT_SPEAR", inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        session, "HUNT_SPEAR", name="Hunt with a Spear",
+        description="A held spear (never consumed) turns a desperate hunt "
+                    "into a living.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         good_requirements={"SPEAR": D("1")},
         branches=[
             {"weight": D("25"), "outputs": {}, "label": "nothing"},
@@ -371,7 +424,10 @@ def _create_recipes(session: Session) -> None:
         ],
     )
     production.create_recipe(
-        session, "HUNT_TRAPS", inputs={"LABOR": D("1"), "TRAP": D("1")},
+        session, "HUNT_TRAPS", name="Hunt with Traps",
+        description="The best odds craft can buy, at the price of a consumed "
+                    "trap per hunt.",
+        inputs={"LABOR": D("1"), "TRAP": D("1")},
         outputs={}, duration_ticks=3,
         branches=[
             {"weight": D("15"), "outputs": {}, "label": "nothing"},
@@ -386,15 +442,23 @@ def _create_recipes(session: Session) -> None:
     # needs the fire. Fire is the bootstrap technology: cheap, immediate,
     # and superseded for warmth (not for cooking) by clothes + shelter.
     production.create_recipe(
-        session, "MAKE_FIRE", inputs={"LABOR": D("1"), "WOOD": D("2")},
+        session, "MAKE_FIRE", name="Make Fire",
+        description="Erects the fire on your camp: the bootstrap technology — "
+                    "cheap, immediate, warm, and it cooks.",
+        inputs={"LABOR": D("1"), "WOOD": D("2")},
         outputs={}, duration_ticks=1, builds_facility="FIRE",
     )
     production.create_recipe(
-        session, "TEND_FIRE", inputs={"LABOR": D("1"), "WOOD": D("1")},
+        session, "TEND_FIRE", name="Tend Fire",
+        description="Burns a log into a warmth stock: a tended fire covers "
+                    "you for a few ticks, not forever.",
+        inputs={"LABOR": D("1"), "WOOD": D("1")},
         outputs={"WARMTH": D("8")}, duration_ticks=1, requires_facility="FIRE",
     )
     production.create_recipe(
-        session, "COOK_MEAT", inputs={"LABOR": D("1"), "MEAT": D("2")},
+        session, "COOK_MEAT", name="Cook Meat",
+        description="Fire-cooked meat: no disease, keeps a little better.",
+        inputs={"LABOR": D("1"), "MEAT": D("2")},
         outputs={"COOKED_MEAT": D("2")}, duration_ticks=1,
         requires_facility="FIRE",
     )
@@ -402,7 +466,10 @@ def _create_recipes(session: Session) -> None:
     # (duration 0: SATIETY lands before this tick's consumption pass), and
     # a 25% chance of DISEASE. The alternative to cooking, priced in risk.
     production.create_recipe(
-        session, "EAT_RAW", inputs={"MEAT": D("1")}, outputs={}, duration_ticks=0,
+        session, "EAT_RAW", name="Eat Raw Meat",
+        description="Desperation does not wait: free, instant — and a "
+                    "one-in-four chance of disease.",
+        inputs={"MEAT": D("1")}, outputs={}, duration_ticks=0,
         branches=[
             {"weight": D("75"), "outputs": {"SATIETY": D("1")}, "label": "fine"},
             {"weight": EAT_RAW_DISEASE_WEIGHT,
@@ -416,21 +483,31 @@ def _create_recipes(session: Session) -> None:
     # Either alone leaves a chronic 0.5/tick gap -- survivable (equilibrium
     # 10 < 18) but miserable: the graded ladder from misery to comfort.
     production.create_recipe(
-        session, "MAKE_SHELTER", inputs={"LABOR": D("1"), "WOOD": D("4"),
+        session, "MAKE_SHELTER", name="Build Shelter",
+        description="Warmth as capital: pays once, then drips forever — "
+                    "with clothes, the whole WARMTH need covered free.",
+        inputs={"LABOR": D("1"), "WOOD": D("4"),
                                           "YARN": D("2")},
         outputs={}, duration_ticks=3, builds_facility="SHELTER",
     )
     production.create_recipe(
-        session, "REST_SHELTERED", inputs={},
+        session, "REST_SHELTERED", name="Rest Sheltered",
+        description="Sleep warm under your own roof — no labor required.",
+        inputs={},
         outputs={"WARMTH": D("1")}, duration_ticks=1, requires_facility="SHELTER",
     )
     production.create_recipe(
-        session, "MAKE_CLOTHES", inputs={"LABOR": D("1"), "YARN": D("3"),
+        session, "MAKE_CLOTHES", name="Make Clothes",
+        description="Worn warmth: with a shelter, the whole WARMTH need "
+                    "covered free.",
+        inputs={"LABOR": D("1"), "YARN": D("3"),
                                           "FLINT": D("1")},
         outputs={"CLOTHES": D("1")}, duration_ticks=2,
     )
     production.create_recipe(
-        session, "HUDDLE", inputs={},
+        session, "HUDDLE", name="Huddle",
+        description="Clothed against the cold: half a warmth without a fire.",
+        inputs={},
         outputs={"WARMTH": D("0.5")}, duration_ticks=1,
         good_requirements={"CLOTHES": D("1")},
     )
@@ -440,22 +517,30 @@ def _create_recipes(session: Session) -> None:
     # TRAP is ammunition. BED is declared for the future REST mechanics --
     # craftable and tradeable now, mechanically idle (the expansion hook).
     production.create_recipe(
-        session, "MAKE_SPEAR", inputs={"LABOR": D("1"), "FLINT": D("1"),
+        session, "MAKE_SPEAR", name="Make Spear",
+        description="The hunter's upgrade: held, never worn.",
+        inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"SPEAR": D("1")}, duration_ticks=1,
     )
     production.create_recipe(
-        session, "MAKE_BAG", inputs={"LABOR": D("1"), "YARN": D("2"),
+        session, "MAKE_BAG", name="Make Bag",
+        description="The gatherer's upgrade: held, never worn.",
+        inputs={"LABOR": D("1"), "YARN": D("2"),
                                       "WOOD": D("1")},
         outputs={"BAG": D("1")}, duration_ticks=1,
     )
     production.create_recipe(
-        session, "MAKE_TRAP", inputs={"LABOR": D("1"), "WOOD": D("2"),
+        session, "MAKE_TRAP", name="Make Trap",
+        description="Hunting ammunition: consumed by the traps hunt.",
+        inputs={"LABOR": D("1"), "WOOD": D("2"),
                                        "YARN": D("1")},
         outputs={"TRAP": D("1")}, duration_ticks=1,
     )
     production.create_recipe(
-        session, "MAKE_BED", inputs={"LABOR": D("1"), "WOOD": D("2"),
+        session, "MAKE_BED", name="Make Bed",
+        description="Craftable comfort, mechanically idle — the expansion hook.",
+        inputs={"LABOR": D("1"), "WOOD": D("2"),
                                       "YARN": D("3")},
         outputs={"BED": D("1")}, duration_ticks=2,
     )
@@ -465,6 +550,10 @@ def _create_needs(session: Session) -> None:
     # FOOD: berries, cooked meat, or desperate SATIETY. Unmet -> HUNGER.
     needs.create_need(
         session, "FOOD", FOOD_PER_TICK, ["BERRIES", "COOKED_MEAT", "JERKY", "SATIETY"],
+        name="Food",
+        description="One meal a tick, drawn in order: berries, then cooked "
+                    "meat, then jerky, then raw satiety. Miss it and hunger "
+                    "accrues.",
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
@@ -473,15 +562,25 @@ def _create_needs(session: Session) -> None:
     # cover it: full capital coverage is achievable but requires BOTH.
     needs.create_need(
         session, "WARMTH", WARMTH_PER_TICK, ["WARMTH"],
+        name="Warmth",
+        description="Drawn from the WARMTH stock made by fires, shelter and "
+                    "clothes. Miss it and exposure accrues: clothes and "
+                    "shelter together cover it exactly.",
         entity_type=EntityType.INDIVIDUAL, priority=1,
         condition_symbol="EXPOSURE", condition_quantity=Decimal("1"),
     )
 
 
 def _create_markets(session: Session) -> None:
+    _NAMES = {
+        "LABOR": "Labor", "BERRIES": "Berries", "MEAT": "Raw Meat",
+        "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
+        "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "BAG": "Bag",
+        "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
+    }
     for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
                    "YARN", "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"):
-        markets.create_market(session, symbol, COIN)
+        markets.create_market(session, symbol, COIN, name=_NAMES[symbol])
 
 
 # ---------------------------------------------------------------------------
