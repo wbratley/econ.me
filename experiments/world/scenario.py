@@ -159,7 +159,12 @@ class World:
     clerk: Entity | None = None   # the polity (server-owned), Phase 2b
 
 
-def create_content(session: Session) -> None:
+def create_content(session: Session, verify: bool = True) -> None:
+    """Install the frontier pack content.
+
+    verify=False is the manifest's counting pass (regen): measurement,
+    not installation -- the shipped pins are stale by definition while
+    the author is regenerating them."""
     """Goods, tech, recipes, needs, markets -- the world's "physics".
 
     Separable from ``build_economy`` so the focused feature tests can stand
@@ -177,12 +182,16 @@ def create_content(session: Session) -> None:
     # a lua/ file edited without re-pinning. Then the versions this world's
     # replays depend on are recorded, and the tiers installed THROUGH the
     # gate (set_world_lib/set_pack_lib validate before writing).
-    manifest.verify_manifest()
+    if verify:
+        manifest.verify_manifest()
     scripting.pin_std_version(session)
     scripting.set_world_lib(session, _read_lua("world_lib.lua"))
     # The pack's own tier: the play opinions, injected as `pack`
     # (docs/scripting.md section 2, tier three).
     scripting.set_pack_lib(session, _read_lua("pack.lua"))
+    # 15.4: everything above was installed by this pack -- say so on
+    # every row (catalog attribution + installer conflict rules).
+    manifest.stamp_pack(session)
 
 
 def build_economy(session: Session) -> World:

@@ -58,6 +58,11 @@ def create_need(
     condition_symbol: str | None = None,
     condition_quantity: Decimal = Decimal("0"),
 ) -> Need:
+    existing = get_need(session, code)
+    if existing is not None:
+        raise ValueError(
+            f"need {str(code).upper()} already installed by "
+            f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
     quantity_per_tick = Decimal(quantity_per_tick).quantize(_QUANTUM)
     if quantity_per_tick <= 0:
         raise ValueError("quantity_per_tick must be positive")

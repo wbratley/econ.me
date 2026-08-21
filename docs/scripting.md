@@ -161,6 +161,12 @@ does not have, whatever it calls.
    it must be treated as replay-input, not incidental config); content
    pack manifests declare the engine + lib versions they target, and a
    world running a pack refuses a mismatch. Replays check all of it.
+   *(Phase 3d grew the manifest into an envelope: pack.json now ships
+   identity — name/pack_id/version — plus display, requires, and
+   `content` (per-scenario row counts, computed from real installs at
+   regen time so they cannot lie). Every content row carries its
+   `pack_id`; the create helpers refuse a key another installer owns
+   with a clean error naming it. See `experiments/world/manifest.py`.)*
 2. **World-lib authoring — operator at world creation, for now.**
    Deliberately open: whether world-lib changes can become votable is
    analyzed in §8 (recommendation: additive-only, at the constitutional

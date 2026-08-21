@@ -63,7 +63,9 @@ def test_recipe_validations(session):
 
 def test_duplicate_code_rejected(world):
     session, baker, recipe = world
-    with pytest.raises(IntegrityError):
+    # the 15.4 installer rule: a duplicate key is refused with a clean
+    # error naming the owner, not an IntegrityError from the constraint
+    with pytest.raises(ValueError, match="already installed by the platform"):
         create_recipe(session, "BAKE_BREAD", inputs={}, outputs={"X": Decimal("1")}, duration_ticks=1)
 
 

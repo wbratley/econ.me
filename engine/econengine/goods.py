@@ -50,7 +50,12 @@ def create_good(
     modifies_factor: Decimal | None = None,
     incapacitates_at: Decimal | None = None,
 ) -> Good:
-    decay_per_tick = Decimal(decay_per_tick).quantize(_QUANTUM)
+    existing = get_good(session, symbol)
+    if existing is not None:
+        raise ValueError(
+            f"good {str(symbol).upper()} already installed by "
+            f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
+
     auto_issue_quantity = Decimal(auto_issue_quantity).quantize(_QUANTUM)
     if not Decimal("0") <= decay_per_tick <= Decimal("1"):
         raise ValueError("decay_per_tick must be between 0 and 1")

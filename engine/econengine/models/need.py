@@ -21,6 +21,9 @@ class Need(Base):
     description: Mapped[str] = mapped_column(
         String(1000), nullable=False, default=""
     )  # authored catalog text (Phase 3a)
+    pack_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # the pack that installed this row (§15.4); NULL = platform/legacy
     entity_type: Mapped[EntityType | None] = mapped_column(
         SAEnum(EntityType), nullable=True
     )  # NULL = every entity

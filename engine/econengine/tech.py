@@ -35,6 +35,11 @@ def create_technology(
     name: str = "",
     description: str = "",
 ) -> Technology:
+    existing = get_technology(session, code)
+    if existing is not None:
+        raise ValueError(
+            f"technology {str(code).upper()} already installed by "
+            f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
     prereq_rows = []
     for prereq_code in sorted({str(c).upper() for c in (prerequisites or [])}):
         prereq = get_technology(session, prereq_code)
