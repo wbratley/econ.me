@@ -98,8 +98,8 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | join / onboarding | `POST /join` — founder entity + endowment + starter, config in `join.config` WorldSetting | ✅ done |
 | victory observer + epoch records | `WorldSetting` (readable via `ctx.query.world_setting`); ownership, balances, unlocks, ticks all queryable | ✅ done (platform observer, Phase 2a — §14) |
 | leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ✅ done (Phase 2a epochs, Phase 2c leaderboard — §14) |
-| readable catalog of the world | `name` columns on every content model (unfilled); `world.manual` precedent (stone_age); pack manifests | §15 — Phase 3, planned |
-| audit trail (per-entity readable action log) | events: per-tick, entity-attributed, status'd, hash-chained — the mechanism **already exists** | §15 — Phase 3, planned (render + surface) |
+| readable catalog of the world | `name` columns on every content model (filled); `world.manual` precedent (stone_age); pack manifests | ✅ done (Phase 3a — §15.5: catalog + prompt fold; prose derives from physics) |
+| audit trail (per-entity readable action log) | events: per-tick, entity-attributed, status'd, hash-chained — the mechanism **already exists** | ✅ done (Phase 3b/3c — §15.5: total render registry + activity reads + dashboard world-log) |
 | governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 
 ## 6. The control model and the one engine gap
@@ -714,7 +714,8 @@ knowledge from comment to generated output.
 grouped by pack — goods with condition effect lines, recipes
 (inputs → outputs, duration, gates, branches), the tech tree, needs,
 and actions (§15.2). The agent loop folds it into the system prompt
-where the hand-written manual sits today — the §13 parity doctrine
+(the landed 3a tail: `catalog_text`, under THE WORLD CATALOG, above the
+authored WORLD NOTES) — the §13 parity doctrine
 extended from script vocabulary to world vocabulary: the prompt and
 the script read the same catalog.
 
@@ -798,9 +799,12 @@ pin.
 1. **3a — catalog:** name/description columns + fills for both packs +
    `GET /catalog` + MCP `world_catalog`; the stone_age manual becomes
    a generated artifact. *(one additive migration; data + platform
-   read)* — **core landed** (`econengine.catalog`, migration
-   `b3e8d1f6a9c4`, both packs filled; the agent-loop prompt fold follows
-   before 3b).**
+   read)* — **landed complete** (`econengine.catalog`, migration
+   `b3e8d1f6a9c4`, both packs filled; the agent-loop prompt fold:
+   `catalog_text` renders the catalog as compact prose, `build_agent_world`
+   returns it, and the system prompt carries it under THE WORLD CATALOG
+   with the authored manual renamed WORLD NOTES — tables derive,
+   meaning stays authored).**
 2. **3b — registry + audit trail:** `econengine.describe` (pure) + the
    total-coverage test + `/activity` reads + MCP `entity_activity`. —
    **landed** (the registry is total by construction: a renderer covers

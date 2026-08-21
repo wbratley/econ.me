@@ -38,8 +38,9 @@ It is also the payoff of the scripting arc (docs/scripting.md):
 1. **observe** — `round_state`, `entity_state`, `entity_events` (own
    events only), `market_prices`, `leaderboard` (standings without the
    money column — rival privacy; own cash arrives via `entity_state`),
-   `epoch_state`, and, when the pack ships one, its manual in the system
-   prompt (see experiments/world/README.md, "three pack fixes")
+   `epoch_state`, and, when the pack ships them, the generated catalog
+   plus its authored notes in the system prompt (see
+   experiments/world/README.md, "three pack fixes")
 2. **think** — model completes: system = identity + tier sources; user =
    observation digest + current behaviour + findings since last time.
    The reply goes through a reasoning/code separator (`extract_script`):

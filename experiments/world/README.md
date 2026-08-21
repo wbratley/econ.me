@@ -221,12 +221,14 @@ conceived of selling. Three pack-level changes answer it:
    (`_credit_output`: a branch output whose symbol some account banks in
    credits the account and rides the ledger; anything else stays a good).
    A start-from-zero fortune now has a visible origin story.
-2. **A legible manual** (`world.manual` WorldSetting, shipped by
-   `create_content`, folded verbatim into every agent system prompt):
-   the whole action space with exact inputs, odds and durations, the
-   death thresholds, and the ladder — FIRE → BAG → SPEAR → SHELTER+
-   CLOTHES → TRAPs. The tech tree was always *visible*; now it is
-   *readable*.
+2. **A legible world** (the 3a fold): `world.manual` (WorldSetting,
+   shipped by `create_content`) now carries only the authored NOTES —
+   the ladder, the trading post, privacy — while every good, need,
+   recipe, technology and market rides the system prompt as a
+   GENERATED catalog (`catalog_text`, derived from the installed
+   content: inputs, odds, durations, gates, death thresholds). The tech
+   tree was always *visible*; now it is *readable*, and it can never
+   drift from the physics it renders.
 3. **Rival privacy** (`world.private_holdings`, enforced by the engine):
    `ctx.query.holding` of another entity returns nil, `holders()` is
    empty, and the agent loop's observation drops the leaderboard's money

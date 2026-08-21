@@ -225,3 +225,68 @@ def catalog_state(session: Session) -> dict:
             for m in markets
         ],
     }
+
+
+def catalog_text(state: dict) -> str:
+    """The catalog as compact prose: the prompt fold (3a tail, §15.5).
+
+    A pure render of catalog_state — the same derived numbers the REST
+    catalog and the MCP surface serve, as plain text for system prompts
+    (and any human reading a transcript). Derived where derivable: the
+    tables of the old hand-written manual are now generated from the
+    physics; the authored manual keeps only what the numbers cannot
+    spell (strategy, seams, flavor).
+
+    Stable section order — goods, needs, the action space, tech tree,
+    markets — so diffs between world versions read top to bottom.
+    """
+    out: list[str] = []
+
+    out.append("== GOODS (what exists; what holding or issuing it does) ==")
+    for g in state["goods"]:
+        bits = [g["symbol"]]
+        if g["name"] and g["name"] != g["symbol"]:
+            bits[0] += f" ({g['name']})"
+        if g["description"]:
+            bits.append(g["description"])
+        if g["effect"]:
+            bits.append(g["effect"])
+        out.append("- " + "; ".join(bits))
+
+    if state["needs"]:
+        out.append("")
+        out.append("== NEEDS (drawn every tick; shortfalls bite) ==")
+        for n in state["needs"]:
+            line = f"- {n['code']}: {n['draws']}"
+            if n["condition"]:
+                line += (f" -- while short, accumulates "
+                         f"{n['condition']['symbol']} "
+                         f"{n['condition']['quantity']}/tick")
+            out.append(line)
+
+    out.append("")
+    out.append("== THE ACTION SPACE (recipes: inputs -> outputs) ==")
+    for r in state["recipes"]:
+        head = f"- {r['code']}: {r['line']}"
+        if r["effects"]:
+            head += "  [" + "; ".join(r["effects"]) + "]"
+        if r["description"]:
+            out.append(f"{head} -- {r['description']}")
+        else:
+            out.append(head)
+
+    if state["technologies"]:
+        out.append("")
+        out.append("== TECHNOLOGIES ==")
+        for t in state["technologies"]:
+            reqs = (", ".join(t["requires"]) if t["requires"]
+                    else "no prerequisites")
+            out.append(f"- {t['code']} ({t['scope']}): {reqs}")
+
+    if state["markets"]:
+        out.append("")
+        out.append("== MARKETS (order books; quote currencies) ==")
+        out.append("- " + ", ".join(
+            f"{m['symbol']}/{m['currency']}" for m in state["markets"]))
+
+    return "\n".join(out)

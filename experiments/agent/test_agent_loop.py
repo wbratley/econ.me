@@ -422,18 +422,38 @@ def test_observation_hides_everyones_money(client):
 
 
 def test_manual_rides_in_the_system_prompt(client):
-    """A pack that ships a manual gets it into every system prompt,
-    verbatim — the world's numbers, stated plainly."""
+    """A pack that ships authored notes gets them into every system
+    prompt, verbatim — under the generated catalog (the 3a fold:
+    tables derive, meaning stays authored)."""
     lp, model = loop(client, [CLEAN], manual="FIRE FIRST: 2 WOOD. Then a BAG.")
     lp.cycle()
     assert "FIRE FIRST: 2 WOOD. Then a BAG." in model.calls[0]["system"]
-    assert "WORLD MANUAL" in model.calls[0]["system"]
+    assert "WORLD NOTES" in model.calls[0]["system"]
 
 
 def test_no_manual_no_section(client):
     lp, model = loop(client, [CLEAN])
     lp.cycle()
-    assert "WORLD MANUAL" not in model.calls[0]["system"]
+    assert "WORLD NOTES" not in model.calls[0]["system"]
+
+
+def test_catalog_rides_in_the_system_prompt(client):
+    """The prompt fold (3a tail): the generated readable world — derived
+    from the installed content — rides in every system prompt, above
+    the authored notes."""
+    lp, model = loop(
+        client, [CLEAN],
+        catalog=("== GOODS ==\n- LABOR: auto-issued up to 1/tick"))
+    lp.cycle()
+    system = model.calls[0]["system"]
+    assert "THE WORLD CATALOG" in system
+    assert "auto-issued up to 1/tick" in system
+
+
+def test_no_catalog_no_section(client):
+    lp, model = loop(client, [CLEAN])
+    lp.cycle()
+    assert "THE WORLD CATALOG" not in model.calls[0]["system"]
 
 
 def test_system_prompt_carries_the_tier_vocabulary(client):

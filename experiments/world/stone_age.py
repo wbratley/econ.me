@@ -24,9 +24,11 @@ conditions HUNGER/EXPOSURE/DISEASE. Money is COIN — found, not endowed:
 seats start with walking money, the bagged gather mints the rest, and
 food, materials, tools and spare LABOR all trade on COIN markets (no
 barter: the engine clears coin-denominated order books per tick). The
-world ships a MANUAL (world.manual) spelling out every action, condition
-and threshold for the agents, and runs rival-private: scripts and prompts
-see only their own pantry and purse (world.private_holdings).
+world ships WORLD NOTES (world.manual) -- the authored strategy and
+seams -- riding under the GENERATED catalog (the agent loop renders
+every action, cost, odd and threshold from the installed content), and
+runs rival-private: scripts and prompts see only their own pantry and
+purse (world.private_holdings).
 
 Balance doctrine (asserted by test_stone_age.py's policy tests):
   - a seat that does NOTHING dies inside two rounds (conditions bite);
@@ -65,9 +67,9 @@ SEAT_COIN = Decimal("10")
 #: gathers find a COIN: over a 200-tick run a house that gathers ~2/3 of
 #: its ticks mints ~6-7 -- money supply creeps from 30 toward ~50.
 COIN_WEIGHT = Decimal("5")
-#: WorldSetting key carrying the world MANUAL (the legible tech tree,
-#: conditions and effects); the agent loop folds it into the system
-#: prompt verbatim.
+#: WorldSetting key carrying the pack's authored NOTES (strategy and
+#: seams); the agent loop folds them into the system prompt under the
+#: generated catalog -- tables derive, meaning stays authored.
 MANUAL_KEY = "world.manual"
 
 # --- Genesis buffers --------------------------------------------------------
@@ -116,67 +118,19 @@ STARTER = "stone_age_starter.lua"
 
 
 MANUAL = """\
-THE STONE-AGE MANUAL -- every action, condition, and effect, in numbers.
+WORLD NOTES -- the strategy and the seams. The numbers live in the
+catalog above: every good, need, recipe (costs, odds, durations, gates)
+and death threshold, derived from this world's physics. What follows is
+what the numbers cannot spell.
 
 == SCARCITY ==
-LABOR is the ration: 1 per tick, unspent LABOR halves each tick (spare
-labor is nearly worthless -- spend it). Every recipe below with LABOR in
-its cost can run at most once per tick; you choose what each tick is for.
+LABOR is the ration: one recipe with LABOR in its cost per tick. You
+choose what each tick is for; unspent labor is nearly worthless. A fed
+entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
+on their own too, but thresholds are thresholds -- the catalog says
+where each one kills.
 
-== CONDITIONS (accumulate when a need is short; fade 5%/tick; at the
-threshold you DIE -- estate burned) ==
-- HUNGER: +1 per tick your FOOD need is unmet; dies at 15. A fully fed
-  entity heals ~0.95/tick.
-- EXPOSURE: +1 per tick of WARMTH shortfall (up to 1.5/tick if you are
-  totally unheated); dies at 18.
-- DISEASE: +1 per raw meal (25% chance when eating raw meat); dies at
-  2.5 -- THREE raw meals in quick succession kill.
-
-== FOOD (need: 1.0/tick; drawn BERRIES then COOKED_MEAT then JERKY
-   then SATIETY) ==
-- BERRIES: found by gathering; rot 25%/tick. COOKED_MEAT: rot 25%/tick.
-- JERKY: salted meat -- NEVER rots. Only the Trading Post sells it.
-- EAT_RAW (1 MEAT, no LABOR, instant): feeds 1 now, 25% chance of
-  DISEASE. Desperation only.
-
-== WARMTH (need: 1.5/tick; drawn from the WARMTH stock, which fades 20%
-per tick) ==
-- TEND_FIRE (1 LABOR + 1 WOOD, needs a FIRE): +8 WARMTH -- the workhorse.
-- REST_SHELTERED (free, needs a SHELTER): +1 WARMTH every tick it runs.
-- HUDDLE (free, needs CLOTHES worn): +0.5 WARMTH every tick.
-  SHELTER + CLOTHES together cover the full 1.5 forever, for ZERO labor:
-  that is what clothes are FOR. Fire+shelter = 1.5 too, saving wood.
-
-== ACTIONS (the whole action space; [L] marks LABOR cost) ==
-- GATHER [L] 1 tick: 45% 3 BERRIES / 25% 2 WOOD / 15% 1 YARN /
-  15% 1 FLINT. One roll, one resource.
-- GATHER_BAG [L] (must hold 1 BAG): 40% 6 BERRIES / 22% 4 WOOD /
-  13% 2 YARN / 13% 2 FLINT / 5% 1 COIN (shiny stone = money!) /
-  7% nothing. Roughly double the bare table -- the BAG is the single
-  best investment in this world: it also MINTS the money supply.
-- HUNT [L] 2 ticks: 55% nothing / 35% 2 MEAT / 10% 4 MEAT.
-- HUNT_SPEAR [L] (hold 1 SPEAR, not consumed) 2 ticks: 25% nothing /
-  55% 3 MEAT / 20% 6 MEAT.
-- HUNT_TRAPS [L + 1 TRAP consumed] 3 ticks: 15% nothing / 60% 4 MEAT /
-  25% 8 MEAT. Best table; ammunition economics.
-- COOK_MEAT [L + 2 MEAT -> 2 COOKED_MEAT] needs FIRE: safe food.
-- MAKE_FIRE [L + 2 WOOD] 1 tick: builds the FIRE facility (once).
-- TEND_FIRE, REST_SHELTERED, HUDDLE, EAT_RAW: see above.
-- MAKE_SPEAR [L + 1 FLINT + 2 WOOD + 1 YARN -> 1 SPEAR] 1 tick.
-- MAKE_BAG [L + 2 YARN + 1 WOOD -> 1 BAG] 1 tick.
-- MAKE_TRAP [L + 2 WOOD + 1 YARN -> 1 TRAP] 1 tick.
-- MAKE_SHELTER [L + 4 WOOD + 2 YARN] 3 ticks: builds SHELTER.
-- MAKE_CLOTHES [L + 3 YARN + 1 FLINT] 2 ticks -> 1 CLOTHES (wear to
-  HUDDLE).
-- MAKE_BED [L + 2 WOOD + 3 YARN] 2 ticks -> 1 BED. Comfort, someday.
-- place_order / cancel_order / transfer: trade any good for COIN on the
-  13 markets (BERRIES, WOOD, YARN, FLINT, MEAT, COOKED_MEAT, JERKY,
-  WARMTH, SPEAR, BAG, TRAP, CLOTHES, BED). Re-quoting a price level you
-  already occupy REPLACES your resting order there: your script runs
-  every tick, so re-asserting the same quote is maintenance, not
-  stacking -- ladder different prices if you want depth.
-
-== THE LADDER (rough costs; a gather averages ~0.75 of a needed food) ==
+== THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + a tick): cooking + warmth. Do not sleep fireless.
 2. BAG (3 YARN-ish, one tick): doubles EVERY future gather, finds COIN.
 3. SPEAR (flint+yarn): meat surplus -> COOKED_MEAT stock -> sell MEAT.
@@ -190,20 +144,25 @@ this: it is the floor you inherit, not the ceiling.
 == THE TRADING POST ==
 A BUSINESS entity, THE TRADING POST, stands in every market with its own
 COIN. It SELLS safe food (BERRIES, COOKED_MEAT while they last, and
-JERKY -- salted meat that never rots, so the shop always has food)
-and it BUYS raw goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN:
-your surplus MEAT, WOOD, YARN or FLINT sold to the post becomes COIN,
-and COIN becomes food when your own gathering fails. Its prices
-haggle: each sale raises its ask 5%, each purchase it fills lowers its
-bid 5%, and 3 quiet ticks move prices the other way (ask -5%, bid
-+3%). Its bids are small (4 units, and never more than its COIN
-covers) and it stops bidding for a good it holds 20 of. The book is
-public: std.best_ask(symbol) and std.best_bid(symbol) read the best
-resting price on each side of any market -- the ask is what you must
-pay to buy NOW, the bid is what you beat to sell NOW. Read both
-before you quote: buying blind above the ask or selling below the
-bid is coin left on the table (std.market_price is only the LAST
-trade -- history, not the shelf in front of you).
+JERKY -- salted meat that never rots, so the shop always has food) and
+it BUYS raw goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN: your
+surplus sold to the post becomes COIN, and COIN becomes food when your
+own gathering fails. Its prices haggle: each sale raises its ask 5%,
+each purchase it fills lowers its bid 5%, and 3 quiet ticks move prices
+the other way (ask -5%, bid +3%). Its bids are small (4 units, and
+never more than its COIN covers) and it stops bidding for a good it
+holds 20 of.
+
+== THE ORDER BOOK ==
+std.best_ask(symbol) and std.best_bid(symbol) read the best resting
+price on each side of any market -- the ask is what you must pay to buy
+NOW, the bid is what you beat to sell NOW. Read both before you quote:
+buying blind above the ask or selling below the bid is coin left on the
+table (std.market_price is only the LAST trade -- history, not the shelf
+in front of you). Re-quoting a price level you already occupy REPLACES
+your resting order there: your script runs every tick, so re-asserting
+the same quote is maintenance, not stacking -- ladder different prices
+if you want depth.
 
 == PRIVACY ==
 You see your own holdings, needs, and accounts. You CANNOT see any
