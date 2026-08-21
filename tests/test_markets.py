@@ -1,6 +1,6 @@
 import pytest
 from decimal import Decimal
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,9 @@ from econengine.markets import (
     create_market,
     place_order,
 )
-from econengine.models import Base, EntityType, OrderSide, OrderStatus
+from econengine.models import (
+    Base, EntityType, Order, OrderSide, OrderStatus,
+)
 from econengine.services import CurrencyMismatchError, create_account, create_entity
 
 
@@ -46,6 +48,59 @@ def test_duplicate_symbol_rejected(world):
     session, alice, a, market = world
     with pytest.raises(IntegrityError):
         create_market(session, "WHEAT", "USD")
+
+
+# --- re-quoting a price level (cancel-replace; the stone-run7 lesson) ---
+
+def test_requoting_price_level_supersedes(world):
+    """A script that runs every tick re-asserts its quotes; plain
+    good-til-cancelled stacked one more OPEN order per tick (a stone-run7
+    house left 878, ~240 of them the SAME order). Re-quoting your own
+    price level now cancel-replaces: the new order carries the level."""
+    session, alice, a, market = world
+    first = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("10"), a.id)
+    second = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("10"), a.id)
+    session.refresh(first)
+    assert first.status == OrderStatus.CANCELLED
+    assert first.cancel_reason == "superseded at price level"
+    assert second.status == OrderStatus.OPEN
+    assert second.remaining == Decimal("1")
+
+
+def test_requoting_with_new_quantity_carries_the_level(world):
+    """The every-tick surplus sell: holdings grew, the script re-quotes
+    the same ask with the new total. The level carries the quantity just
+    placed -- re-assertion, not accumulation."""
+    session, alice, a, market = world
+    place_order(session, alice.id, "WHEAT", "sell", Decimal("5"), Decimal("10"), a.id)
+    grown = place_order(session, alice.id, "WHEAT", "sell", Decimal("8"), Decimal("10"), a.id)
+    open_orders = session.execute(
+        select(Order).where(Order.status == OrderStatus.OPEN)
+    ).scalars().all()
+    assert [o.id for o in open_orders] == [grown.id]
+    assert grown.quantity == Decimal("8") and grown.remaining == Decimal("8")
+
+
+def test_ladder_prices_stack(world):
+    """Depth is intent when the prices differ: a ladder of bids is a
+    strategy, not a re-assertion."""
+    session, alice, a, market = world
+    deep = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("9"), a.id)
+    top = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("10"), a.id)
+    assert deep.status == OrderStatus.OPEN and top.status == OrderStatus.OPEN
+
+
+def test_requote_leaves_other_sides_and_traders_alone(world):
+    session, alice, a, market = world
+    bob = create_entity(session, "Bob", EntityType.INDIVIDUAL)
+    b = create_account(session, bob, "USD", initial_balance=Decimal("1000"))
+    alice_sell = place_order(session, alice.id, "WHEAT", "sell", Decimal("1"), Decimal("10"), a.id)
+    bob_bid = place_order(session, bob.id, "WHEAT", "buy", Decimal("1"), Decimal("10"), b.id)
+    place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("10"), a.id)
+    session.refresh(alice_sell)
+    session.refresh(bob_bid)
+    assert alice_sell.status == OrderStatus.OPEN   # other side: not my level
+    assert bob_bid.status == OrderStatus.OPEN      # other trader: not my level
 
 
 # --- adjust_holding ---
