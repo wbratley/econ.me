@@ -124,6 +124,7 @@ def test_tools_list_exposes_the_player_surface(client):
         "get_behaviour", "get_script_libraries", "set_behaviour",
         "round_state", "set_ready", "epoch_state", "governance_current",
         "market_prices", "leaderboard", "world_catalog", "entity_activity",
+        "world_activity",
     }
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object"

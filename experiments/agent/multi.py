@@ -118,6 +118,12 @@ class RoundSnapshot:
     dynasties: dict[str, dict]            # house name -> view (below)
     events_by_type: dict[str, int] = field(default_factory=dict)
     taken_at: str = ""
+    # The rendered audit-trail tail (§15.3): this round's readable world
+    # log — the unattributed public facts, plus each dynasty's own events
+    # as prose. Bounded by the round's own ticks; the dashboard renders
+    # it with a per-dynasty filter, so the artifact carries the round's
+    # whole story offline.
+    activity: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {
@@ -126,6 +132,7 @@ class RoundSnapshot:
             "events_by_type": self.events_by_type,
             "taken_at": self.taken_at,
             "dynasties": self.dynasties,
+            "activity": self.activity,
         }
 
 
@@ -162,6 +169,25 @@ def _dynasty_view(mcp: McpClient, d: Dynasty, entry: dict | None) -> dict:
 def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
               entries: dict[str, dict]) -> RoundSnapshot:
     market = mcps[0][1].call("market_prices")
+    # The audit-trail tail (§15.3): this round's rendered world log, read
+    # back through the very surfaces that serve it (GET /activity and
+    # entity_activity are the same render). Bounded by the round's own
+    # tick span, capped at the tool's 50-tick maximum.
+    tail = min(max(1, len(resolved.get("ticks") or [1])), 50)
+    try:
+        world = mcps[0][1].call(
+            "world_activity", {"last_ticks": tail}).get("activity", [])
+    except McpError:
+        world = []
+    dyn_activity: dict[str, list] = {}
+    for d, mcp in mcps:
+        try:
+            dyn_activity[d.name] = mcp.call(
+                "entity_activity",
+                {"entity_id": d.entity_id, "last_ticks": tail},
+            ).get("activity", [])
+        except McpError:
+            dyn_activity[d.name] = []
     snap = RoundSnapshot(
         round=resolved["round_number"], ticks=resolved.get("ticks", []),
         resolved=resolved, market=market,
@@ -169,6 +195,7 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
         taken_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         dynasties={d.name: _dynasty_view(mcp, d, entries.get(d.name))
                    for d, mcp in mcps},
+        activity={"world": world, "dynasties": dyn_activity},
     )
     return snap
 

@@ -43,7 +43,7 @@ from econengine.models import (
 )
 from econengine.models.order import Order, OrderSide, OrderStatus
 from econengine.services import ServerCapExceededError
-from econ.api.activity import activity_rows as entity_activity_rows
+from econ.api.activity import activity_rows
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
@@ -293,8 +293,21 @@ def tool_entity_activity(session: Session, user: User, args: dict[str, Any]) -> 
         raise ToolError("last_ticks must be an integer")
     if last_ticks < 1 or last_ticks > 50:
         raise ToolError("last_ticks must be between 1 and 50")
-    rows = entity_activity_rows(session, entity.id, last_ticks)
+    rows = activity_rows(session, entity.id, last_ticks)
     return {"entity_id": entity.id, "activity": rows}
+
+
+def tool_world_activity(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The world's log: the unattributed public facts (auction summaries,
+    decay, auto-issue) rendered as readable prose — the same §13 cut as
+    GET /activity. No dynasty's private affairs ride along."""
+    try:
+        last_ticks = int(args.get("last_ticks", 20))
+    except (TypeError, ValueError):
+        raise ToolError("last_ticks must be an integer")
+    if last_ticks < 1 or last_ticks > 50:
+        raise ToolError("last_ticks must be between 1 and 50")
+    return {"activity": activity_rows(session, None, last_ticks)}
 
 
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
@@ -586,6 +599,21 @@ TOOLS: list[Tool] = [
             "required": ["entity_id"],
         },
         "handler": tool_entity_activity,
+    },
+    {
+        "name": "world_activity",
+        "description": "The world's log: unattributed public facts (auction "
+                       "summaries, decay, auto-issue) as readable prose — the "
+                       "same public/private cut as GET /activity. No dynasty's "
+                       "private affairs ride along.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "last_ticks": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+            "required": [],
+        },
+        "handler": tool_world_activity,
     },
 ]
 

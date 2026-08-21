@@ -807,7 +807,12 @@ pin.
    every engine outcome type, a template every dispatched intent, and
    anything else falls back rather than raising; renders are pure
    functions of (event, catalog names) and never touch `events_hash`).**
-3. **3c — dashboard:** the world-log section on the live dashboard.
+3. **3c — dashboard:** the world-log section on the live dashboard. —
+   **landed** (each round snapshot carries its bounded rendered tail —
+   the public facts plus every dynasty's own events as prose, read back
+   through `world_activity`/`entity_activity` — and the dashboard
+   renders it with a per-round selector and per-dynasty filter, all
+   inline; the self-contained-HTML doctrine holds).**
 4. **3d — pack envelope v1:** identity/compat/provenance/conflict
    rules; migrate demo-world and stone_age; world-creation pack
    selection.
