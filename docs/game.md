@@ -337,7 +337,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 
 | phase | scope | engine change? |
 |---|---|---|
-| **0** | Content pack (goods/tech/recipes/needs/parcels) + starter BEHAVIOUR template + proving experiment | none — data + Lua |
+| **0** | Content pack (goods/tech/recipes/needs/parcels) ✅ (demo-world; `stone_age` — #91/#92/#96); starter BEHAVIOUR template ✅; proving experiment ✅ — **complete** (§12.7's ask answered and exceeded by the LLM dynasty campaign it grew into: `experiments/agent`, #77–#105, nine postmortemed stone-age runs; run-9 = zero deaths, seller/crafter/buyer specialisation from identical models) | none for the pack itself — data + Lua; the campaign later demanded three engine mechanisms (#99/#101/#104, recorded in actors.md Status) |
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
 | **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) ✅ — **complete** | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | The readable world — names/descriptions/effect docs for everything, readable text for every action, the per-entity audit trail on the dashboard, and the content-pack standard envelope (§15) | small additive engine surface (`describe` module + columns); rest platform + content |
@@ -438,6 +438,17 @@ R rounds of K ticks; assert the population survives (HUNGER bounded), markets
 clear, specialisation emerges (some entities farm, others smelt), and
 tech unlocks propagate by scope. **No engine change.** This is the fastest
 path to "something tangible" and the substrate Phase 1 needs.
+
+*Result:* answered emphatically. `experiments/agent` ran the proving
+experiment as the LLM dynasty campaign (#77–#105): dynasties driven by
+NIM-hosted models (Llama-3.3-70B, Nemotron, gpt-oss) rewrite their own
+BEHAVIOUR between readiness-gated rounds. Survival bounded ✅ (run-9:
+all three houses alive at tick 600), markets clear ✅ (post-intermediated
+plus the first house↔house trades — BERRIES at a 2× duress premium),
+specialisation emerges ✅ (seller/crafter/buyer forks from *identical*
+models). The pack shipped with a hand-written manual (`world.manual`,
+#92), a trading post (#96), and survival economics robust enough to
+postmortem nine runs on.
 
 ## 13. Open questions (decide as we hit them)
 
@@ -653,6 +664,11 @@ readable names and short descriptions for everything in the world,
 conditions named with their effects documented, all riding a standard
 content-pack format so packs compose and third parties can author them —
 are one thing under one principle:
+
+> **Status: design only (§15.5 build order: 3a catalog → 3b registry +
+> audit trail → 3c dashboard → 3d pack envelope; nothing landed yet).
+> The hand-written stone_age manual and pins-only `pack.json` are the
+> pre-Phase-3 state this section replaces.**
 
 **Legibility is a product surface.** The players are LLM agents and,
 soon, modders-by-pack. A world whose vocabulary is machine-shaped —
