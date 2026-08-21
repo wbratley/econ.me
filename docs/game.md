@@ -802,7 +802,11 @@ pin.
    `b3e8d1f6a9c4`, both packs filled; the agent-loop prompt fold follows
    before 3b).**
 2. **3b — registry + audit trail:** `econengine.describe` (pure) + the
-   total-coverage test + `/activity` reads + MCP `entity_activity`.
+   total-coverage test + `/activity` reads + MCP `entity_activity`. —
+   **landed** (the registry is total by construction: a renderer covers
+   every engine outcome type, a template every dispatched intent, and
+   anything else falls back rather than raising; renders are pure
+   functions of (event, catalog names) and never touch `events_hash`).**
 3. **3c — dashboard:** the world-log section on the live dashboard.
 4. **3d — pack envelope v1:** identity/compat/provenance/conflict
    rules; migrate demo-world and stone_age; world-creation pack

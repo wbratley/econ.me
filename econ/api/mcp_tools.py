@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from econengine import scripting, services, tech
 from econengine.catalog import catalog_state
+from econengine.describe import render_event, symbol_names
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
 from econengine.models import (
     Entity, EntityType, Holding, Market, NeedState, Parcel, Process,
@@ -42,6 +43,7 @@ from econengine.models import (
 )
 from econengine.models.order import Order, OrderSide, OrderStatus
 from econengine.services import ServerCapExceededError
+from econ.api.activity import activity_rows as entity_activity_rows
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
@@ -277,6 +279,22 @@ def tool_world_catalog(session: Session, user: User, args: dict[str, Any]) -> di
     market. The §13 parity doctrine extended from script vocabulary to
     world vocabulary: the prompt and the script read the same catalog."""
     return catalog_state(session)
+
+
+def tool_entity_activity(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The entity's own audit trail (Phase 3b, game.md §15.3): its recent
+    actions rendered as readable prose — trades, orders, processes, need
+    outcomes, crashes, refusals. An attempt is an action: rejections are
+    included. Own entity only (§13)."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    try:
+        last_ticks = int(args.get("last_ticks", 20))
+    except (TypeError, ValueError):
+        raise ToolError("last_ticks must be an integer")
+    if last_ticks < 1 or last_ticks > 50:
+        raise ToolError("last_ticks must be between 1 and 50")
+    rows = entity_activity_rows(session, entity.id, last_ticks)
+    return {"entity_id": entity.id, "activity": rows}
 
 
 def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> list[dict]:
@@ -552,6 +570,22 @@ TOOLS: list[Tool] = [
                        "The world's vocabulary, public facts only.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_world_catalog,
+    },
+    {
+        "name": "entity_activity",
+        "description": "Your entity's audit trail: its recent actions as "
+                       "readable prose — trades (\"sold 2 ORE for 10\"), orders, "
+                       "processes, need outcomes, crashes, refusals. An attempt "
+                       "is an action: rejections are included. Own entity only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "last_ticks": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+            "required": ["entity_id"],
+        },
+        "handler": tool_entity_activity,
     },
 ]
 
