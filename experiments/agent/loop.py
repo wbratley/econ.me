@@ -328,6 +328,23 @@ def _apply_edits(source: str,
 # ---------------------------------------------------------------------------
 
 
+# The diary-leak openers: phrases that begin a restatement of the
+# prompt/reasoning rather than a diary entry (run-7's one true leak of
+# 44 opened "We are given the current behavior..."). START-of-text only —
+# mid-sentence hits are natural English (run-7's false positives were
+# all "...adequately in the given scenario" mid-entry).
+_DIARY_LEAK_OPENERS = (
+    "we are given", "the current behavior is", "the current behaviour is",
+    "we need to", "let us", "let's",
+)
+
+
+def _diary_leak(text: str) -> bool:
+    """True when the diary opens with meta-commentary, not a diary."""
+    t = text.strip().lower()
+    return any(t.startswith(opener) for opener in _DIARY_LEAK_OPENERS)
+
+
 class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
@@ -547,6 +564,7 @@ class AgentLoop:
             "extractor": extractor,
             "reply_head": reply_head,
             "thoughts": thoughts,
+            "diary_leak": _diary_leak(thoughts),
             "prompt_bytes": next((len(s["user"]) for s in reversed(transcript)
                                   if "user" in s), 0),
         }
