@@ -404,6 +404,48 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert page.count("sha-") >= 2 * 3
 
 
+def test_snapshot_carries_the_audit_trail_tail(client, monkeypatch, tmp_path):
+    """Phase 3c (§15.3): each round snapshot carries the rendered world
+    log — the public facts and every dynasty's own events as prose — so
+    the dashboard's world-log section is a pure render of the artifact
+    and the self-contained-HTML doctrine holds."""
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
+    snapshots = run_rounds(loops, 1, tmp_path)
+
+    snap = snapshots[0]
+    assert set(snap["activity"]) == {"world", "dynasties"}
+    assert set(snap["activity"]["dynasties"]) == set(NAMES)
+    # the frontier world feeds LABOR each tick: the world log must say
+    # so in prose (the 3a catalog names render — "Labor")
+    world_text = " | ".join(r["text"] for r in snap["activity"]["world"])
+    assert "issued" in world_text and "Labor" in world_text
+    # every dynasty's log is its own events, rendered, newest first
+    for name, rows in snap["activity"]["dynasties"].items():
+        ticks = [r["tick"] for r in rows]
+        assert ticks == sorted(ticks, reverse=True)
+        assert all(r["text"] for r in rows)
+
+
+def test_dashboard_world_log_renders_with_filter(client, monkeypatch, tmp_path):
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
+    snapshots = run_rounds(loops, 2, tmp_path)
+
+    page = build_dashboard(snapshots, {
+        "title": "test run", "ticks_per_round": 2, "generated": "now"})
+    assert "World log — the audit trail" in page
+    # one collapsible block per round carrying a log, latest round open
+    assert page.count('class="wlog"') == 2
+    assert '<details class="wlog" data-round="2" open>' in page
+    # the per-dynasty filter: a button per house plus all/world, wired
+    # to the inline no-network script
+    for n in ["all", "world"] + list(NAMES):
+        assert f'data-who="{n}"' in page
+    assert "wlFilter" in page
+    # rows carry the rendered prose (not raw event JSON)
+    assert 'data-who="world"' in page
+    assert '"type":' not in page.split("World log")[1].split("</table>")[0]
+
+
 def test_price_table_and_assets_value_holdings(client, monkeypatch, tmp_path):
     loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
     snapshots = run_rounds(loops, 1, tmp_path)
@@ -412,3 +454,4 @@ def test_price_table_and_assets_value_holdings(client, monkeypatch, tmp_path):
     for view in snap["dynasties"].values():
         assets = dynasty_assets(view, prices)
         assert assets >= 0          # GRAIN buffers are valued once GRAIN trades
+

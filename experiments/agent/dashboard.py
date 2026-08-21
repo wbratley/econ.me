@@ -172,6 +172,64 @@ def _activity(snapshots: list[dict]) -> str:
     return "".join(parts)
 
 
+def _world_log(snapshots: list[dict]) -> str:
+    """The audit-trail section (§15.3): the world log as readable prose,
+    with a round selector and a per-dynasty filter — all inline, so the
+    self-contained-HTML doctrine holds (the artifact carries the whole
+    story offline). Each snapshot's tail is bounded by its own round."""
+    with_log = [s for s in snapshots if s.get("activity")]
+    if not with_log:
+        return ""
+    names = list(snapshots[0]["dynasties"].keys())
+
+    # One collapsible block per round carrying a log, newest first; the
+    # latest open. A block's rows merge the world's public facts with
+    # every dynasty's own events, newest tick first.
+    blocks = []
+    for snap in reversed(with_log):
+        act = snap["activity"]
+        rows = [(r["tick"], "world", r["text"]) for r in act.get("world", [])]
+        for name, rlist in act.get("dynasties", {}).items():
+            rows += [(r["tick"], name, r["text"]) for r in (rlist or [])]
+        rows.sort(key=lambda t: -t[0])
+        body = "".join(
+            f'<tr data-who="{_esc(who)}"><td class="num">{tick}</td>'
+            f'<td class="name">{_esc(who)}</td>'
+            f'<td>{_esc(text)}</td></tr>'
+            for tick, who, text in rows) or (
+                '<tr><td colspan=3 class="quiet">a quiet round — no events'
+                '</td></tr>')
+        blocks.append(
+            f'<details class="wlog" data-round="{snap["round"]}"'
+            f'{" open" if snap is with_log[-1] else ""}>'
+            f'<summary>Round {snap["round"]} world log '
+            f'<span class="quiet">({len(rows)} entries)</span></summary>'
+            f'<table class="grid wlog-table">'
+            f'<tr><th>Tick</th><th>Who</th><th>Action</th></tr>{body}'
+            f'</table></details>')
+
+    buttons = "".join(
+        f'<button class="wl-btn{" on" if n == "all" else ""}" data-who="{_esc(n)}" onclick="'
+        f'wlFilter(this)">{_esc(n)}</button>'
+        for n in ["all", "world"] + names)
+    script = """
+      function wlFilter(btn){
+        var who=btn.getAttribute('data-who');
+        document.querySelectorAll('.wl-btn').forEach(function(b){
+          b.classList.remove('on')});
+        btn.classList.add('on');
+        document.querySelectorAll('tr[data-who]').forEach(function(r){
+          r.style.display=(who==='all'||r.getAttribute('data-who')===who)
+            ? '' : 'none'})}
+    """
+    return ('<h2>World log — the audit trail</h2>'
+            '<p class="quiet">Every action rendered as prose (Phase 3b '
+            'registry): your log is your events, the world log is public '
+            'facts. Filter: '
+            f'<span class="wl">{buttons}</span></p>'
+            + "".join(blocks) + f'<script>{script}</script>')
+
+
 def _strategy(snapshots: list[dict]) -> str:
     parts = ["<h2>Strategy — the behaviour each house is running</h2>"]
     for name, view in snapshots[-1]["dynasties"].items():
@@ -294,6 +352,11 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       details{margin:12px 0;background:#141821;border:1px solid #2a2f3a;
            border-radius:8px;padding:10px 14px}
       summary{cursor:pointer}
+      .wl-btn{background:#171a21;border:1px solid #2a2f3a;border-radius:9px;
+           color:#c7cdd9;font-size:12px;padding:3px 10px;margin:0 4px 4px 0;
+           cursor:pointer}
+      .wl-btn.on{background:#12321f;color:#6ee7b7;border-color:#1d4d33}
+      .wlog-table td{font-size:12.5px}
       code{color:#93c5fd}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
@@ -312,6 +375,7 @@ generated {_esc(meta.get("generated", ""))}</p>
 {line_chart("Market prices over rounds", labels, prices)}
 {line_chart("FOOD satisfaction over rounds (1.0 = fed)", labels, needs)}
 {_activity(snapshots)}
+{_world_log(snapshots)}
 {_strategy(snapshots)}
 </body></html>"""
 
