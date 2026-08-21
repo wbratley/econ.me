@@ -165,6 +165,7 @@ def catalog_state(session: Session) -> dict:
                 "symbol": g.symbol,
                 "name": g.name,
                 "description": g.description,
+                "pack": g.pack_id,      # 15.4 provenance; None = platform
                 "effect": good_effect(g, needs_by_condition),
             }
             for g in goods
@@ -174,6 +175,7 @@ def catalog_state(session: Session) -> dict:
                 "code": n.code,
                 "name": n.name,
                 "description": n.description,
+                "pack": n.pack_id,      # 15.4 provenance; None = platform
                 "draws": (
                     f"{_num(n.quantity_per_tick)} {n.code} per tick from "
                     + ", ".join(s.symbol for s in n.satisfiers)
@@ -195,6 +197,7 @@ def catalog_state(session: Session) -> dict:
                 "code": r.code,
                 "name": r.name,
                 "description": r.description,
+                "pack": r.pack_id,      # 15.4 provenance; None = platform
                 "line": recipe_line(r),
                 "effects": recipe_effects(r),
             }
@@ -205,6 +208,7 @@ def catalog_state(session: Session) -> dict:
                 "code": t.code,
                 "name": t.name,
                 "description": t.description,
+                "pack": t.pack_id,      # 15.4 provenance; None = platform
                 "scope": t.scope.value,
                 "requires": [p.prerequisite.code for p in t.prerequisites],
             }
@@ -215,6 +219,7 @@ def catalog_state(session: Session) -> dict:
                 "symbol": m.symbol,
                 "name": m.name,
                 "description": m.description,
+                "pack": m.pack_id,      # 15.4 provenance; None = platform
                 "currency": m.currency,
             }
             for m in markets

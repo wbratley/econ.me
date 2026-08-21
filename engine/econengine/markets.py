@@ -52,6 +52,11 @@ class MarketInactiveError(ValueError):
 # ---------------------------------------------------------------------------
 
 def create_market(session: Session, symbol: str, currency: str, name: str = "", description: str = "") -> Market:
+    existing = get_market(session, symbol)
+    if existing is not None:
+        raise ValueError(
+            f"market {str(symbol).upper()} already installed by "
+            f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
     market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name, description=description)
     session.add(market)
     session.flush()

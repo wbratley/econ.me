@@ -100,6 +100,11 @@ def create_recipe(
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
     order. A branch's outputs may be empty (total loss). Mutually exclusive
     with plain outputs."""
+    existing = get_recipe(session, code)
+    if existing is not None:
+        raise ValueError(
+            f"recipe {str(code).upper()} already installed by "
+            f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
     if duration_ticks < 0:
         raise ValueError("duration_ticks must be >= 0")
     if branches and outputs:

@@ -3,11 +3,13 @@
 lua/ file. A world running this pack refuses drift at install time."""
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from econengine.models import Base
+from econengine.models import (
+    Base, Good, Market, Need, Recipe, Technology,
+)
 from experiments.world import manifest
 
 
@@ -78,3 +80,56 @@ def test_bootstrap_refuses_a_tampered_manifest(tmp_path, session, monkeypatch):
     # And nothing was installed -- the refusal came first.
     assert scripting.get_world_lib(session) is None
     assert scripting.get_pack_lib(session) is None
+
+
+# --- The envelope (v1, game.md 15.4): identity, display, requires, content --
+
+def test_shipped_envelope_is_complete_and_counted():
+    """The envelope ships identity + display + requires + content counts,
+    and the counts are the TRUTH: recounted from fresh installs they
+    match what pack.json declares (edited content cannot slip past an
+    unpinned regen -- this test is the pin)."""
+    shipped = manifest.read_manifest()
+    for key in ("name", "pack_id", "version", "display", "requires",
+                "content", "engine_std", "lua"):
+        assert key in shipped, f"envelope missing {key}"
+    assert shipped["pack_id"] == manifest.pack_id()
+    assert isinstance(shipped["requires"], list)
+    assert set(shipped["content"]) == {"frontier", "stone_age"}
+    assert manifest._content_counts() == shipped["content"]
+
+
+def test_create_content_stamps_pack_provenance(session):
+    """15.4: after install, every content row says which pack shipped it
+    (NULL means platform/legacy; a fresh install has none of those)."""
+    from experiments.world import stone_age
+
+    stone_age.create_content(session)
+    for model, label in (
+        (Good, "goods"), (Recipe, "recipes"), (Technology, "technologies"),
+        (Need, "needs"), (Market, "markets"),
+    ):
+        unstamped = session.execute(
+            select(func.count()).select_from(model)
+            .where(model.pack_id.is_(None))).scalar()
+        assert unstamped == 0, f"{label} rows without a pack"
+
+
+def test_a_pack_may_not_claim_another_installer_s_key(session):
+    """The installer conflict rule, end to end: a second install over a
+    stamped world is refused with a clean error naming the owner."""
+    from experiments.world import stone_age
+
+    stone_age.create_content(session)
+    with pytest.raises(ValueError, match="demo-world"):
+        stone_age.create_content(session)
+
+
+def test_catalog_attributes_rows_to_the_pack(session):
+    from econengine.catalog import catalog_state
+    from experiments.world import stone_age
+
+    stone_age.create_content(session)
+    state = catalog_state(session)
+    for row in state["goods"] + state["recipes"] + state["markets"]:
+        assert row["pack"] == manifest.pack_id()

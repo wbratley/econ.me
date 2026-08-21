@@ -19,6 +19,9 @@ class Recipe(Base):
     description: Mapped[str] = mapped_column(
         String(1000), nullable=False, default=""
     )  # authored catalog text (Phase 3a)
+    pack_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # the pack that installed this row (§15.4); NULL = platform/legacy
     duration_ticks: Mapped[int] = mapped_column(Integer, nullable=False)  # 0 = completes at start
     # parcel-bound production: the process must be bound to a controlled parcel
     # carrying a facility of this type ("smelt at a forge"); NULL = unlocated

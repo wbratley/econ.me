@@ -15,6 +15,9 @@ class Market(Base):
     description: Mapped[str] = mapped_column(
         String(1000), nullable=False, default=""
     )  # authored catalog text (Phase 3a)
+    pack_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # the pack that installed this row (§15.4); NULL = platform/legacy
     currency: Mapped[str] = mapped_column(String(8), nullable=False)  # quote currency, e.g. USD or COIN
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(precision=18, scale=4), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

@@ -46,7 +46,9 @@ def test_create_market_uppercases(world):
 
 def test_duplicate_symbol_rejected(world):
     session, alice, a, market = world
-    with pytest.raises(IntegrityError):
+    # the 15.4 installer rule: a duplicate key is refused with a clean
+    # error naming the owner, not an IntegrityError from the constraint
+    with pytest.raises(ValueError, match="already installed by the platform"):
         create_market(session, "WHEAT", "USD")
 
 

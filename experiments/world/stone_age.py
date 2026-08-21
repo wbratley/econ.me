@@ -247,14 +247,19 @@ def spawn_trading_post(session: Session) -> Entity:
     return post
 
 
-def create_content(session: Session) -> None:
-    """Goods, recipes, needs, markets -- the stone-age "physics"."""
+def create_content(session: Session, verify: bool = True) -> None:
+    """Goods, recipes, needs, markets -- the stone-age "physics".
+
+    verify=False is the manifest's counting pass (regen): measurement,
+    not installation -- the shipped pins are stale by definition while
+    the author is regenerating them."""
     _create_goods(session)
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
     spawn_trading_post(session)
-    manifest.verify_manifest()
+    if verify:
+        manifest.verify_manifest()
     scripting.pin_std_version(session)
     scripting.set_world_lib(session, _read_lua("world_lib.lua"))
     scripting.set_pack_lib(session, _read_lua("pack.lua"))
@@ -265,6 +270,10 @@ def create_content(session: Session) -> None:
                              value={"enabled": True}))
     # The legible manual (below): tech tree, conditions, effects.
     session.add(WorldSetting(key=MANUAL_KEY, value={"text": MANUAL}))
+    # 15.4: everything above was installed by this pack -- say so on
+    # every row, so the catalog attributes content and a later install
+    # attempt on a claimed key is refused with the owner's name.
+    manifest.stamp_pack(session)
 
 
 def _create_goods(session: Session) -> None:

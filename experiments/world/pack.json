@@ -1,4 +1,24 @@
 {
+ "content": {
+  "frontier": {
+   "goods": 12,
+   "markets": 10,
+   "needs": 2,
+   "recipes": 11,
+   "technologies": 6
+  },
+  "stone_age": {
+   "goods": 18,
+   "markets": 13,
+   "needs": 2,
+   "recipes": 17,
+   "technologies": 0
+  }
+ },
+ "display": {
+  "summary": "Two scenarios -- the frontier economy and the stone age -- plus the shared clerk, miner, smith and trading-post casts.",
+  "title": "The Demo World"
+ },
  "engine_std": "f3b57d78bbab3b95",
  "lua": {
   "clerk.lua": "999bf6c106578846",
@@ -10,5 +30,8 @@
   "trading_post.lua": "d14032ca59faaa64",
   "world_lib.lua": "07f75fcd3edae38f"
  },
- "name": "demo-world"
+ "name": "demo-world",
+ "pack_id": "demo-world",
+ "requires": [],
+ "version": "0.3.0"
 }

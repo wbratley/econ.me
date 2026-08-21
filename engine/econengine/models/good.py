@@ -20,6 +20,9 @@ class Good(Base):
     description: Mapped[str] = mapped_column(
         String(1000), nullable=False, default=""
     )  # authored catalog text (Phase 3a); derived physics renders from the row
+    pack_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # the pack that installed this row (§15.4); NULL = platform/legacy
     decay_per_tick: Mapped[Decimal] = mapped_column(
         Numeric(precision=5, scale=4), nullable=False, default=Decimal("0")
     )  # fraction of every holding lost at end of tick, 0..1

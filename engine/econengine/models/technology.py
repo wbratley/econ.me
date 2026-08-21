@@ -26,6 +26,9 @@ class Technology(Base):
     description: Mapped[str] = mapped_column(
         String(1000), nullable=False, default=""
     )  # authored catalog text (Phase 3a)
+    pack_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # the pack that installed this row (§15.4); NULL = platform/legacy
     scope: Mapped[TechScope] = mapped_column(SAEnum(TechScope), nullable=False, default=TechScope.ENTITY)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

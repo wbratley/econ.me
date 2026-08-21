@@ -815,7 +815,15 @@ pin.
    inline; the self-contained-HTML doctrine holds).**
 4. **3d — pack envelope v1:** identity/compat/provenance/conflict
    rules; migrate demo-world and stone_age; world-creation pack
-   selection.
+   selection. — **landed (v1): pack.json grew from pins-only to the
+   envelope — name/pack_id/version/display/requires plus `content`,
+   per-scenario row counts computed from real installs at regen time;
+   every content row carries `pack_id` provenance (NULL = platform);
+   the create helpers refuse a claimed key with a clean error naming
+   the owner; the catalog attributes every row to its pack.
+   World-creation pack selection and multi-pack installs are
+   platform-era work — v1 worlds install one pack into a fresh
+   database, which is every world we run today).**
 5. *(platform-era)* voted-in packs; third-party distribution.
 
 Each independently shippable; 3a first — the registry renders through
