@@ -155,6 +155,26 @@ def test_diary_captures_the_minds_reasoning(client):
     #                                                               not diary
 
 
+def test_diary_leak_flag_marks_prompt_restatement_openers(client):
+    # run-7's one true leak of 44: the entry OPENED with a restatement of
+    # the prompt (context-poisoned by the refused prose round before it)
+    lp, _ = loop(client, [CLEAN, "We are given the current behavior and "
+                                 "the observation for the entity. The entity "
+                                 "is House Nemotron."], diary=True)
+    entry = lp.cycle()
+    assert entry["diary_leak"] is True
+
+
+def test_diary_leak_flag_ignores_mid_sentence_phrasing(client):
+    # ...adequately in the given scenario" is first-person English, not
+    # leakage — only an OPENER restates the prompt
+    lp, _ = loop(client, [CLEAN, "I kept the behaviour unchanged as it "
+                                 "seemed to be functioning adequately in "
+                                 "the given scenario."], diary=True)
+    entry = lp.cycle()
+    assert entry["diary_leak"] is False
+
+
 def test_diary_record_shows_the_full_retry_chain(client):
     # a round with a lint refusal: the diary record must carry BOTH
     # attempts — the refused reply, the platform's rejection, the
