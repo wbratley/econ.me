@@ -293,7 +293,14 @@ def tool_entity_activity(session: Session, user: User, args: dict[str, Any]) -> 
         raise ToolError("last_ticks must be an integer")
     if last_ticks < 1 or last_ticks > 50:
         raise ToolError("last_ticks must be between 1 and 50")
-    rows = activity_rows(session, entity.id, last_ticks)
+    try:
+        last_ticks = int(args.get("last_ticks", 20))
+    except (TypeError, ValueError):
+        raise ToolError("last_ticks must be an integer")
+    if last_ticks < 1 or last_ticks > 50:
+        raise ToolError("last_ticks must be between 1 and 50")
+    witnessed = bool(args.get("witnessed", False))
+    rows = activity_rows(session, entity.id, last_ticks, witnessed=witnessed)
     return {"entity_id": entity.id, "activity": rows}
 
 

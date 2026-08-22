@@ -190,9 +190,14 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
     dyn_activity: dict[str, list] = {}
     for d, mcp in mcps:
         try:
+            # witnessed=True (game.md 15.6): each house's log also carries
+            # what was DELIVERED to it -- speech and loud facts -- so the
+            # dashboard's world log shows the conversation, each side
+            # hearing what that side heard.
             dyn_activity[d.name] = mcp.call(
                 "entity_activity",
-                {"entity_id": d.entity_id, "last_ticks": tail},
+                {"entity_id": d.entity_id, "last_ticks": tail,
+                 "witnessed": True},
             ).get("activity", [])
         except McpError:
             dyn_activity[d.name] = []

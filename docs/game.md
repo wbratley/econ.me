@@ -100,6 +100,7 @@ count manageable and lifts strategy to the firm/capital/governance level.
 | leaderboard / epoch records | all derived reads (owners, accounts, holdings, unlocks, stamps) | ✅ done (Phase 2a epochs, Phase 2c leaderboard — §14) |
 | readable catalog of the world | `name` columns on every content model (filled); `world.manual` precedent (stone_age); pack manifests | ✅ done (Phase 3a — §15.5: catalog + prompt fold; prose derives from physics) |
 | audit trail (per-entity readable action log) | events: per-tick, entity-attributed, status'd, hash-chained — the mechanism **already exists** | ✅ done (Phase 3b/3c — §15.5: total render registry + activity reads + dashboard world-log) |
+| entity communication | the event bus: speech as an intent, delivery frozen at emission (witness table) | ✅ done (v1 — §15.6: `say` intent free/bounded + broadcast delivery; scoping is later rules over the same table) |
 | governance cadence (windows) | proposals/votes/enact already exist; `round.state` readable by scripts | ✅ done (platform + content clerk, Phase 2b — §14.4) |
 
 ## 6. The control model and the one engine gap
@@ -832,3 +833,33 @@ pin.
 
 Each independently shippable; 3a first — the registry renders through
 the catalog, and the agent prompts improve the moment it lands.
+
+### 15.6 Speech and witness — entities that talk
+
+**Landed (v1).** Houses converse through their entities, on the event
+bus the audit trail already rides:
+
+- **`say`** — an intent like any other (`ctx.action.say("text")` from
+  Lua; resolved through `resolve_intent`): free but bounded — one
+  utterance per entity per tick, text capped at 256 characters.
+  Identity is structural (the speaker IS the entity: spoofing is
+  impossible), content is free-form (cheap talk, lies included — that
+  is the experiment). The cost question is deferred honestly: noise
+  attracting wolves is a real consequence only once distance exists;
+  v1 speech is bounded, not priced.
+- **Witness delivery** — the engine stays the single event writer; who
+  perceived what is *derived* data, frozen at emission time into
+  `event_observers` (tick, event index, observer). Never part of
+  `events_hash`. v1 rule: broadcast of the observable vocabulary
+  (`say`, `entity_incapacitated` — speech and loud facts) to every
+  active entity. Everything else stays with its actor: rival privacy
+  is layered, not repealed. Distance, line-of-sight and networks are
+  later rules over the same table — the log of who knew what when.
+- **Three ears**: behaviour scripts hear via their widened `ctx.events`
+  (own events + delivered); the round digest carries WHAT YOU SAW
+  (`entity_activity witnessed=true` — prose, speaker named from the
+  standings); the dashboard world log marks heard rows `(heard)`. REST
+  parity: `GET /entities/{id}/activity?witnessed=1`.
+
+Sequencing note: this landed BEFORE the stone-age expansion (wolves
+etc.) so the pack's loud facts have a bus to ride on day one.

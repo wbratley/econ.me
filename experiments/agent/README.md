@@ -40,7 +40,9 @@ It is also the payoff of the scripting arc (docs/scripting.md):
    money column — rival privacy; own cash arrives via `entity_state`),
    `epoch_state`, and, when the pack ships them, the generated catalog
    plus its authored notes in the system prompt (see
-   experiments/world/README.md, "three pack fixes")
+   experiments/world/README.md, "three pack fixes"). WHAT YOU SAW rides
+   the digest too: speech and loud facts delivered to the entity,
+   rendered with the speaker named (game.md §15.6)
 2. **think** — model completes: system = identity + tier sources; user =
    observation digest + current behaviour + findings since last time.
    The reply goes through a reasoning/code separator (`extract_script`):

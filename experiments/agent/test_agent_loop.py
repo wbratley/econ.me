@@ -411,6 +411,16 @@ def test_observation_is_the_parity_set(client):
     assert "u-bob" not in user                     # no other dynasty's affairs
 
 
+def test_observation_carries_what_you_saw(client):
+    """The witness feed (game.md 15.6): the digest includes WHAT YOU
+    SAW -- events delivered to this entity, rendered as prose with the
+    speaker named from the standings. Empty in a quiet world, but the
+    ear is wired into every round's observation."""
+    lp, model = loop(client, [CLEAN])
+    lp.cycle()
+    assert '"seen"' in model.calls[0]["user"]
+
+
 def test_observation_hides_everyones_money(client):
     """Rival privacy, prompt side: the standings survive but the money
     column does not — not the rival's, not the player's own either (the

@@ -115,7 +115,12 @@ Your script runs in a sandbox with exactly this vocabulary injected:
 - ctx.action.* — the intent surface: transfer(from,to,amount,ref),
   place_order(symbol,side,quantity,limit_price,account_id),
   cancel_order(order_id), start_process(recipe,parcel_id),
-  cancel_process(process_id), transfer_parcel(parcel_id,to_entity_id).
+  cancel_process(process_id), transfer_parcel(parcel_id,to_entity_id),
+  say(text) — SPEECH: one utterance per entity per tick, text up to
+  256 characters; it is delivered to every entity (their scripts hear
+  it in ctx.events next tick; it rides their logs as WHAT THEY HEARD).
+  Identity is structural — the utterance carries YOUR entity's name.
+  Say what you will: offers, threats, prices, truths or lies.
   Intents are validated and applied by the engine after your script
   returns; you can only spend YOUR entity's money and stock.
 - ctx.query.* — read-only: balance(account_id), total_supply(currency),
@@ -405,6 +410,22 @@ class AgentLoop:
         board = self.mcp.call("leaderboard")
         for row in board.get("rows", []):
             row.pop("money", None)
+        # WHAT YOU SAW (game.md 15.6): the witness feed — speech and loud
+        # facts delivered to this entity, rendered as prose. Houses think
+        # once per round, so this digest IS the conversation: a rival's say
+        # in round N reaches this prompt in round N+1. Speaker names come
+        # from the standings (ids are noise); the tail is the full read
+        # window the surface allows, because observable events are rare.
+        names = {r.get("entity_id"): r.get("name", "?")
+                 for r in board.get("rows", [])}
+        seen = self.mcp.call("entity_activity", {
+            "entity_id": eid, "last_ticks": 50, "witnessed": True})
+        heard = [
+            {"tick": r["tick"],
+             "who": names.get(r.get("entity_id"), "someone"),
+             "what": r["text"]}
+            for r in seen.get("activity", []) if r.get("witnessed")
+        ]
         obs = {
             "round": self.mcp.call("round_state"),
             "entity": self.mcp.call("entity_state", {"entity_id": eid}),
@@ -413,6 +434,7 @@ class AgentLoop:
             "prices": self.mcp.call("market_prices"),
             "leaderboard": board,
             "epoch": self.mcp.call("epoch_state"),
+            "seen": heard,
         }
         # Per-tick script errors are the loudest finding there is: the
         # behaviour is broken in play (lint cannot catch state-dependent

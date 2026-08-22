@@ -984,7 +984,11 @@ def build_queries(session: Session, tick_number: int | None = None,
     }
 
 
-def resolve_intent(session: Session, intent: Intent) -> dict:
+SAY_TEXT_CAP = 256
+
+
+def resolve_intent(session: Session, intent: Intent,
+                   said: set[str] | None = None) -> dict:
     from . import markets, production, services  # deferred: all import this module
 
     event = {
@@ -1428,6 +1432,29 @@ def resolve_intent(session: Session, intent: Intent) -> dict:
                     session, intent.params.get("parcel_id", ""),
                     intent.entity_id, to_entity,
                 )
+
+        elif intent.intent_type == "say":
+            # Speech (game.md 15.6): free but bounded. Identity is
+            # structural -- the actor IS the entity, so spoofing is
+            # impossible and the text carries no provenance to check.
+            # Content is free-form: cheap talk, lies included -- that is
+            # the experiment. The bounds are volume, not meaning: one
+            # utterance per entity per tick, text capped. The event is
+            # also the noise record: when distance lands, loud things
+            # can key on it.
+            text = intent.params.get("text", "")
+            if not isinstance(text, str):
+                return rejected("say text must be a string")
+            text = text.strip()
+            if not text:
+                return rejected("say text is empty")
+            if len(text) > SAY_TEXT_CAP:
+                return rejected(f"say text exceeds {SAY_TEXT_CAP} characters")
+            if said is not None and intent.entity_id in said:
+                return rejected("one say per tick")
+            event["params"] = {**intent.params, "text": text}
+            if said is not None:
+                said.add(intent.entity_id)
 
         else:
             return rejected(f"unknown intent type {intent.intent_type!r}")

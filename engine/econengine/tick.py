@@ -69,6 +69,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import conditions, goods, markets, needs, parcels, production, rng, tech
+from . import witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
@@ -145,7 +146,13 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
                 continue
             entity_events = (
                 prev_events if script_type == ScriptType.POLICY
-                else [e for e in prev_events if e.get("entity_id") == entity.id]
+                # The witness feed (game.md 15.6): a behaviour script sees
+                # its own events PLUS what was delivered to it -- speech
+                # and loud facts from the tick before. Rival privacy is
+                # layered, not repealed: delivery is the observable
+                # vocabulary, nothing more.
+                else witness.script_feed(session, prev.number, entity.id, prev_events)
+                if prev is not None else []
             )
             ctx = _build_script_ctx(session, entity, script, entity_events, number)
             result = lua_engine.run(script.source, ctx, timeout_ms=script.timeout_ms,
@@ -217,8 +224,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     set_executing_tick(number)
     try:
         retry: list[Intent] = []
+        said: set[str] = set()   # speech budget: one say per entity per tick
         for intent in intents:
-            outcome = resolve_intent(session, intent)
+            outcome = resolve_intent(session, intent, said=said)
             if intent.intent_type == "start_process" and outcome.get("short_of_holdings"):
                 retry.append(intent)
                 continue
@@ -226,7 +234,7 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
 
         events.extend(markets.run_auctions(session, tick_number=number))
         for intent in retry:
-            events.append(resolve_intent(session, intent))
+            events.append(resolve_intent(session, intent, said=said))
     finally:
         set_executing_tick(None)
     events.extend(production.consume_per_tick_inputs(session, tick_number=number))
@@ -243,6 +251,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
         events_hash=rng.hash_events(events),
     )
     session.add(tick)
+    # Freeze witness delivery for the finalized tick (game.md 15.6):
+    # who heard what, as a fact of this tick -- before the world moves on.
+    witness.record_delivery(session, number, events)
     session.flush()
     return tick
 
