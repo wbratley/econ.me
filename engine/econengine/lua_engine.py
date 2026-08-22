@@ -814,6 +814,18 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=int(priority),
         ))
 
+    def _say(text, priority=100):
+        # Speech (game.md 15.6): free but bounded -- the engine enforces
+        # one utterance per entity per tick and the text cap. Identity
+        # is structural: the speaker IS this entity.
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="say",
+            params={"text": str(text)},
+            resource_ids=[],   # speech touches nothing -- it only carries
+            priority=int(priority),
+        ))
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
@@ -834,6 +846,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["start_process"] = _start_process
     action_tbl["cancel_process"] = _cancel_process
     action_tbl["transfer_parcel"] = _transfer_parcel
+    action_tbl["say"]              = _say
 
     ctx_tbl = lua.table()
     ctx_tbl["tick"]   = ctx.get("tick")

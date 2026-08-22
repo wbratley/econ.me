@@ -153,6 +153,15 @@ the other way (ask -5%, bid +3%). Its bids are small (4 units, and
 never more than its COIN covers) and it stops bidding for a good it
 holds 20 of.
 
+== SPEECH ==
+ctx.action.say("text") speaks AS your entity: one utterance per tick,
+up to 256 characters, delivered to every house. Every house's next
+prompt carries what it heard (WHAT YOU SAW), and every behaviour
+script hears it in ctx.events next tick -- a rival can quote you, act
+on you, or ignore you. Speech is free and unverifiable: a claimed
+price is not a standing offer; only the order book is real. Use it to
+coordinate, to signal, to bluff -- and remember others may bluff you.
+
 == THE ORDER BOOK ==
 std.best_ask(symbol) and std.best_bid(symbol) read the best resting
 price on each side of any market -- the ask is what you must pay to buy

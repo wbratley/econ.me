@@ -39,7 +39,7 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
 #: vocabulary is ``INTENT_CAPABILITIES``; templates must cover both.
 FREE_INTENT_TYPES: tuple[str, ...] = (
     "transfer", "place_order", "cancel_order", "start_process",
-    "cancel_process", "transfer_parcel", "set_behaviour",
+    "cancel_process", "transfer_parcel", "set_behaviour", "say",
 )
 
 
@@ -103,6 +103,8 @@ def _intent_text(intent_type: str, params: dict, names=None) -> str:
         return f"enacted proposal {p.get('proposal_id', '?')}"
     if intent_type == "transfer_parcel":
         return f"transferred parcel {p.get('parcel_id', '?')}"
+    if intent_type == "say":
+        return f'says: "{p.get("text", "")}"'
     # Total by construction: an unknown intent still renders.
     detail = ", ".join(f"{k}={v}" for k, v in sorted((p or {}).items()))
     return f"{intent_type} ({detail})" if detail else intent_type

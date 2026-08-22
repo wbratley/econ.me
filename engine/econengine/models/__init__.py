@@ -5,6 +5,7 @@ from .account import Account
 from .transaction import Transaction, TransactionType
 from .script import Script, ScriptType
 from .tick import Tick
+from .observer import EventObserver
 from .market import Market
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
@@ -33,6 +34,7 @@ __all__ = [
     "Script",
     "ScriptType",
     "Tick",
+    "EventObserver",
     "Market",
     "Holding",
     "Order",

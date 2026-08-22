@@ -22,15 +22,20 @@ router = APIRouter(tags=["activity"])
 def entity_activity(
     entity_id: str,
     last_ticks: int = Query(default=50, ge=1, le=200),
+    witnessed: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """The entity's own log: every attributed action, rendered as prose.
-    Own entity only — your log is your events (§13)."""
+    Own entity only — your log is your events (§13). ``?witnessed=1``
+    widens the window with what was DELIVERED to the entity (game.md
+    §15.6: speech and loud facts) — flagged, and never more than the
+    witness table recorded."""
     entity = _own_entity(entity_id, current_user, session)
     return {
         "entity_id": entity.id,
-        "activity": activity_rows(session, entity.id, last_ticks),
+        "activity": activity_rows(session, entity.id, last_ticks,
+                                  witnessed=witnessed),
     }
 
 

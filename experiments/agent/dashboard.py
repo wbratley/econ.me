@@ -190,7 +190,13 @@ def _world_log(snapshots: list[dict]) -> str:
         act = snap["activity"]
         rows = [(r["tick"], "world", r["text"]) for r in act.get("world", [])]
         for name, rlist in act.get("dynasties", {}).items():
-            rows += [(r["tick"], name, r["text"]) for r in (rlist or [])]
+            for r in (rlist or []):
+                # Witnessed rows (game.md 15.6) are what this house HEARD
+                # -- speech and loud facts. Marked so a reader can tell
+                # "Ulf said X" (Ulf's own row) from "Bjorn heard X" (the
+                # same utterance, witnessed); the tick + text match up.
+                heard = " (heard)" if r.get("witnessed") else ""
+                rows.append((r["tick"], f"{name}{heard}", r["text"]))
         rows.sort(key=lambda t: -t[0])
         body = "".join(
             f'<tr data-who="{_esc(who)}"><td class="num">{tick}</td>'
