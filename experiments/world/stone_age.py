@@ -142,10 +142,10 @@ surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
 == THE TRADING POST ==
-A BUSINESS entity, THE TRADING POST, stands in every market with its own
-COIN. It SELLS safe food (BERRIES, COOKED_MEAT while they last, and
-JERKY -- salted meat that never rots, so the shop always has food) and
-it BUYS raw goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN: your
+THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT and BERRIES, and it
+sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
+salted meat that never rots, so the shop always has food). It is a
+BUSINESS entity standing in every market with its own COIN: your
 surplus sold to the post becomes COIN, and COIN becomes food when your
 own gathering fails. Its prices haggle: each sale raises its ask 5%,
 each purchase it fills lowers its bid 5%, and 3 quiet ticks move prices
