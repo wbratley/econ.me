@@ -126,6 +126,11 @@ class RoundSnapshot:
     dynasties: dict[str, dict]            # house name -> view (below)
     events_by_type: dict[str, int] = field(default_factory=dict)
     taken_at: str = ""
+    # The world's condition goods (world_catalog's machine-readable
+    # flag): HUNGER, WARMTH, ... held like any good but read as a state
+    # of the holder, not inventory. The dashboard splits these out of
+    # the holdings breakdown.
+    conditions: list[str] = field(default_factory=list)
     # The rendered audit-trail tail (§15.3): this round's readable world
     # log — the unattributed public facts, plus each dynasty's own events
     # as prose. Bounded by the round's own ticks; the dashboard renders
@@ -141,6 +146,7 @@ class RoundSnapshot:
             "taken_at": self.taken_at,
             "dynasties": self.dynasties,
             "activity": self.activity,
+            "conditions": self.conditions,
         }
 
 
@@ -177,6 +183,13 @@ def _dynasty_view(mcp: McpClient, d: Dynasty, entry: dict | None) -> dict:
 def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
               entries: dict[str, dict]) -> RoundSnapshot:
     market = mcps[0][1].call("market_prices")
+    try:
+        conditions = sorted(
+            g["symbol"] for g in
+            mcps[0][1].call("world_catalog").get("goods", [])
+            if g.get("condition"))
+    except McpError:
+        conditions = []
     # The audit-trail tail (§15.3): this round's rendered world log, read
     # back through the very surfaces that serve it (GET /activity and
     # entity_activity are the same render). Bounded by the round's own
@@ -206,6 +219,7 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
         resolved=resolved, market=market,
         events_by_type=resolved.get("events_by_type", {}),
         taken_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        conditions=conditions,
         dynasties={d.name: _dynasty_view(mcp, d, entries.get(d.name))
                    for d, mcp in mcps},
         activity={"world": world, "dynasties": dyn_activity},

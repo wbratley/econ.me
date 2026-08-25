@@ -6,7 +6,8 @@ whole story is there. Data view doctrine follows the platform's: every
 number is what the dynasties themselves could see on their own MCP
 surface (§13 parity), which is exactly what `multi.run_rounds` snapshots.
 
-Sections: final standings; wealth / money / prices / needs charts over
+Sections: final standings; per-house holdings &amp; conditions by
+round; wealth / money / prices / needs charts over
 rounds; a round-by-round activity table (attempts, refusals, the round's
 event mix); and per-dynasty strategy panels — the latest behaviour
 source with the sha trail of every rewrite, so "what is House Llama
@@ -15,6 +16,7 @@ doing?" is a scroll, not a query.
 
 from __future__ import annotations
 
+import datetime as _dt
 import html
 from decimal import Decimal
 from pathlib import Path
@@ -41,6 +43,29 @@ def _hms(seconds) -> str:
     h, s = divmod(s, 3600)
     m, s = divmod(s, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _progress(meta: dict, snapshots: list[dict]) -> str:
+    """The run clock: a progress bar, average pace, and (while live) an
+    ETA for the finish computed from that pace."""
+    done = meta.get("round") or (snapshots[-1]["round"] if snapshots else 0)
+    total = meta.get("rounds_total") or done
+    elapsed = meta.get("elapsed_s")
+    if not total or elapsed is None:
+        return ""
+    avg = elapsed / max(1, done)
+    bar = (f'<div class="pbar"><div style="width:{100 * done / total:.1f}%">'
+           f'</div></div>')
+    if meta.get("status") == "live":
+        remaining = max(0, total - done)
+        eta = avg * remaining
+        ends = (_dt.datetime.now()
+                + _dt.timedelta(seconds=eta)).strftime("%H:%M")
+        return (f'{bar}<p class="meta">round {done} of {total} · '
+                f'avg {_hms(avg)}/round · ETA ≈{_hms(eta)} to finish '
+                f'(ends ≈{ends})</p>')
+    return (f'{bar}<p class="meta">{done} of {total} rounds · '
+            f'avg {_hms(avg)}/round · total {_hms(elapsed)}</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +167,65 @@ def _standings(snapshots: list[dict]) -> str:
             f"<td class=\"num\">{refusals}</td>"
             f"<td>{_esc(lb.get('status', ''))}</td></tr>")
     parts.append("</table>")
+    return "".join(parts)
+
+
+def _house_summaries(snapshots: list[dict]) -> str:
+    """Per house, per round: the full holdings breakdown with conditions
+    split from inventory — every snapshot already carries each dynasty's
+    own MCP view (§13 parity: what the house itself could see). Columns
+    are the symbols ever held by anyone, so houses compare row for row;
+    zeros render as quiet dots to keep the table readable."""
+    names = list(snapshots[0]["dynasties"].keys()) if snapshots else []
+    if not names:
+        return ""
+    conditions = sorted({c for s in snapshots for c in s.get("conditions", [])})
+
+    def held(view: dict) -> dict[str, Decimal]:
+        return {h["symbol"]: Decimal(h["quantity"])
+                for h in view.get("holdings", [])}
+
+    commodity = sorted({sym for s in snapshots
+                        for v in s["dynasties"].values()
+                        for sym, q in held(v).items()
+                        if sym not in conditions and sym != "COIN" and q != 0})
+    cond_syms = sorted({sym for s in snapshots
+                        for v in s["dynasties"].values()
+                        for sym, q in held(v).items()
+                        if sym in conditions and q != 0})
+
+    parts = ['<h2>Houses — holdings &amp; conditions by round</h2>',
+             '<p class="quiet">Each row is the round-end state the house '
+             'itself could see. Conditions are held like goods but read as '
+             'a state of the holder — the number is the level, not '
+             'inventory.</p>']
+    for name in names:
+        parts.append(
+            f'<details open class="hsum"><summary><b>{_esc(name)}</b></summary>'
+            f'<div class="hsum-scroll"><table class="grid">')
+        head = ('<tr><th>Round</th><th>Money</th>'
+                + "".join(f'<th>{_esc(s)}</th>' for s in commodity)
+                + "".join(f'<th class="cond-h">{_esc(s)}</th>'
+                           for s in cond_syms)
+                + "</tr>")
+        parts.append(head)
+        for snap in snapshots:
+            view = snap["dynasties"][name]
+            h = held(view)
+            row = [f"<tr><td>{snap['round']}</td>",
+                   f'<td class="num">{_fmt(dynasty_money(view))}</td>']
+            for sym in commodity:
+                q = h.get(sym, Decimal("0"))
+                cls = "num" if q != 0 else "num quiet"
+                cell = _fmt(q) if q != 0 else "·"
+                row.append(f'<td class="{cls}">{cell}</td>')
+            for sym in cond_syms:
+                q = h.get(sym, Decimal("0"))
+                cls = "num cond" if q != 0 else "num cond quiet"
+                cell = _fmt(q) if q != 0 else "·"
+                row.append(f'<td class="{cls}">{cell}</td>')
+            parts.append("".join(row) + "</tr>")
+        parts.append("</table></div></details>")
     return "".join(parts)
 
 
@@ -323,6 +407,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
         status = (f'<p class="meta"><span class="done">✓ complete</span> '
                   f'{len(snapshots)} rounds in '
                   f'{_hms(meta.get("elapsed_s"))}</p>')
+    status += _progress(meta, snapshots)
     css = """
       body{font:14px/1.45 -apple-system,'Segoe UI',sans-serif;margin:0;
            background:#0f1115;color:#e5e7eb;padding:28px 34px}
@@ -364,6 +449,14 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       .wl-btn.on{background:#12321f;color:#6ee7b7;border-color:#1d4d33}
       .wlog-table td{font-size:12.5px}
       code{color:#93c5fd}
+      .pbar{height:8px;background:#171a21;border:1px solid #2a2f3a;
+           border-radius:5px;margin:8px 0 2px;max-width:640px;overflow:hidden}
+      .pbar div{height:100%;background:#2563eb}
+      .hsum-scroll{max-height:340px;overflow:auto;margin:6px 0}
+      .hsum table.grid th{position:sticky;top:0;z-index:1}
+      td.cond{color:#fbbf24;font-variant-numeric:tabular-nums}
+      th.cond-h{color:#fbbf24}
+      td.quiet{color:#4b5563}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
 {refresh}<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
@@ -376,6 +469,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
 {_esc(snapshots[-1]["ticks"][-1] if snapshots else "")} ·
 generated {_esc(meta.get("generated", ""))}</p>
 {_standings(snapshots)}
+{_house_summaries(snapshots)}
 {line_chart("Wealth over rounds (money + holdings at last prices)", labels, wealth)}
 {line_chart("Money over rounds", labels, money)}
 {line_chart("Market prices over rounds", labels, prices)}

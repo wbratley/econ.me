@@ -86,6 +86,19 @@ def test_condition_effect_line_is_derived_from_the_row(session):
     )
 
 
+def test_goods_rows_flag_conditions_machine_readably(session):
+    """The catalog's condition flag: consumers (snapshots, dashboards)
+    split condition goods from commodity inventory without parsing the
+    prose effect line."""
+    _seed(session)
+    state = catalog_state(session)
+    by_symbol = {g["symbol"]: g["condition"] for g in state["goods"]}
+    assert by_symbol["HUNGER"] is True          # incapacitates_at
+    assert by_symbol["COLD_HANDS"] is True       # modifies_pattern
+    assert by_symbol["BERRIES"] is False
+    assert by_symbol["WOOD"] is False
+
+
 def test_plain_goods_render_their_physics_only(session):
     _seed(session)
     state = catalog_state(session)

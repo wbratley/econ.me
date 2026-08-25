@@ -141,8 +141,13 @@ built-in server exists because watching a run shouldn't need root to
 install one.
 
 The dashboard is one self-contained HTML file (inline SVG, no CDN):
-final standings (money / assets-at-last-price / wealth / rewrites /
-kept-old rounds), wealth-money-prices-FOOD charts over rounds, a
+a live header with a progress bar, average round pace, and an ETA for
+the finish; final standings (money / assets-at-last-price / wealth /
+rewrites / kept-old rounds); per-house holdings &amp; conditions tables
+(each round's full inventory breakdown from the house's own §13 view,
+with condition goods — HUNGER, WARMTH, … — split into amber columns
+via the catalog's machine-readable condition flag);
+wealth-money-prices-FOOD charts over rounds, a
 round-by-round activity table (each house's attempts and refusals, the
 round's event mix), and per-house strategy panels — the full current
 behaviour source with the sha trail of every rewrite, so "what is House
