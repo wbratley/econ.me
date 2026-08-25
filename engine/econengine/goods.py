@@ -178,13 +178,18 @@ def apply_decay(session: Session, tick_number: int) -> list[dict]:
                 decayed += lost
                 holders += 1
         if decayed > 0:
-            events.append({
+            event = {
                 "type": "decay",
                 "entity_id": None,
                 "symbol": good.symbol,
                 "decayed": str(decayed),
                 "holders": holders,
-            })
+            }
+            # Conditions decay as recovery/relapse, not rot: flag the
+            # renderer so HUNGER "fell" instead of "rotted".
+            if conditions.is_condition(good):
+                event["condition"] = True
+            events.append(event)
     if events:
         session.flush()
     return events

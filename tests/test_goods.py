@@ -93,6 +93,24 @@ def test_auto_issue_silent_when_everyone_topped_up(session):
 # Decay
 # ---------------------------------------------------------------------------
 
+def test_decay_flags_condition_goods(session):
+    """Conditions shed quantity as recovery/relapse, not rot: the event
+    carries a flag so the renderer can say HUNGER "fell"."""
+    from econengine.conditions import is_condition
+    chill = create_good(session, "CHILL", decay_per_tick=Decimal("0.5"),
+                        incapacitates_at=Decimal("10"))
+    bread = create_good(session, "BREAD", decay_per_tick=Decimal("0.5"))
+    assert is_condition(chill) and not is_condition(bread)
+    a = create_entity(session, "A", EntityType.INDIVIDUAL)
+    adjust_holding(session, a, "CHILL", Decimal("4"))
+    adjust_holding(session, a, "BREAD", Decimal("4"))
+
+    events = {e["symbol"]: e for e in apply_decay(session, tick_number=1)}
+
+    assert events["CHILL"]["condition"] is True
+    assert "condition" not in events["BREAD"]
+
+
 def test_decay_removes_fraction_and_summarizes(session):
     create_good(session, "BREAD", decay_per_tick=Decimal("0.25"))
     a = create_entity(session, "A", EntityType.INDIVIDUAL)
