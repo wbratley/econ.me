@@ -62,6 +62,32 @@ def test_rejected_intent_renders_the_refusal():
     )
 
 
+def test_condition_decay_renders_as_falling_not_rotting():
+    """Run-13 shapes: conditions shed quantity (recovery or relapse), so
+    HUNGER eases and WARMTH fades -- neither rots."""
+    assert render_event({
+        "type": "decay", "entity_id": None, "symbol": "HUNGER",
+        "decayed": "0.0260", "holders": 1, "condition": True,
+    }) == "condition HUNGER fell 0.026 across 1 holders"
+    assert render_event({
+        "type": "decay", "entity_id": None, "symbol": "WARMTH",
+        "decayed": "1.2000", "holders": 3, "condition": True,
+    }) == "condition WARMTH fell 1.2 across 3 holders"
+
+
+def test_need_satisfied_is_verb_neutral():
+    """The payload carries no need semantics: WARMTH used to render as
+    "warmth met: ate 1.5"."""
+    assert render_event({
+        "type": "need_satisfied", "entity_id": "x", "need": "WARMTH",
+        "consumed": "1.5000", "required": "1.5000", "satisfaction": "1.0000",
+    }) == "warmth met: 1.5 of 1.5"
+    assert render_event({
+        "type": "need_satisfied", "entity_id": "x", "need": "FOOD",
+        "consumed": "1.0000", "required": "1.0000", "satisfaction": "1.0000",
+    }) == "food met: 1 of 1"
+
+
 def test_run9_event_shapes_render():
     """Real shapes lifted from stone-run9's world log."""
     assert render_event({

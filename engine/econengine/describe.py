@@ -163,7 +163,9 @@ def _unlocked(e, names):
 
 @_renders("need_satisfied")
 def _need_satisfied(e, names):
-    return (f"{str(e.get('need', '?')).lower()} met: ate "
+    # Verb-neutral: "warmth met: ate 1.5" read wrong; the payload carries
+    # no need semantics, so the sentence states quantities only.
+    return (f"{str(e.get('need', '?')).lower()} met: "
             f"{_num(e.get('consumed', 0))} of {_num(e.get('required', 0))}")
 
 
@@ -178,8 +180,14 @@ def _need_unmet(e, names):
 
 @_renders("decay")
 def _decay(e, names):
+    symbol = _g(e, 'symbol', names)
+    if e.get("condition"):
+        # Condition goods shed quantity as recovery or relapse (HUNGER
+        # easing, WARMTH fading) -- falling is the fact, rotting is not.
+        return (f"condition {symbol} fell {_num(e.get('decayed', 0))} "
+                f"across {e.get('holders', 0)} holders")
     return (f"decay: {_num(e.get('decayed', 0))} "
-            f"{_g(e, 'symbol', names)} rotted across "
+            f"{symbol} rotted across "
             f"{e.get('holders', 0)} holders")
 
 
