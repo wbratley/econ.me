@@ -30,6 +30,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from econengine.conditions import is_condition
 from econengine.models import Good, Market, Need, Recipe, Technology
 
 
@@ -166,6 +167,10 @@ def catalog_state(session: Session) -> dict:
                 "name": g.name,
                 "description": g.description,
                 "pack": g.pack_id,      # 15.4 provenance; None = platform
+                "condition": is_condition(g),   # machine-readable: a
+                # condition good sheds quantity as recovery/relapse and
+                # carries held modifiers -- consumers (snapshots,
+                # dashboards) split it out of commodity holdings.
                 "effect": good_effect(g, needs_by_condition),
             }
             for g in goods

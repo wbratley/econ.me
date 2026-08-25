@@ -381,11 +381,15 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
         "elapsed_s": 75, "refresh_s": 10})
     assert 'http-equiv="refresh" content="10"' in live
     assert "LIVE" in live and "round 1 of 2" in live and "1:15" in live
+    # run clock: average pace and (while live) an ETA off that pace
+    assert "avg 1:15/round" in live and "ETA" in live
+    assert 'class="pbar"' in live
     done = build_dashboard(snapshots, {
         "title": "done run", "ticks_per_round": 2, "generated": "now",
         "status": "complete", "round": 2, "rounds_total": 2,
         "elapsed_s": 3725})
     assert "complete" in done and "1:02:05" in done
+    assert "avg 31:02/round" in done
     assert 'http-equiv="refresh"' not in done
     # regression (nim-run3): a market unpriced in early snapshots that
     # trades later must chart zeros before the first print — not crash
@@ -402,6 +406,32 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert "ctx.state.note" in page         # latest behaviour source shown
     # strategy trail: one sha chip per round per dynasty
     assert page.count("sha-") >= 2 * 3
+
+
+def test_dashboard_house_summaries_split_conditions(client, monkeypatch, tmp_path):
+    """The player-summary section: per house, per round, the full
+    holdings breakdown with the catalog's condition goods split out of
+    inventory (amber columns) — a scroll answers 'what does each house
+    hold, and how are they doing'."""
+    loops = make_loops(client, [[CLEAN, CLEAN2]] * 3, monkeypatch)
+    snapshots = run_rounds(loops, 2, tmp_path)
+
+    # the snapshot carries the world's condition goods, catalog-flagged
+    assert snapshots[0]["conditions"] == ["DISREPAIR", "HUNGER"]
+
+    # a held condition renders as its own amber column; a synthetic
+    # holding makes the assertion deterministic regardless of the
+    # starter behaviour's diet in two rounds
+    view = snapshots[-1]["dynasties"][NAMES[0]]
+    view["holdings"].append({"symbol": "HUNGER", "quantity": "4.5"})
+    page = build_dashboard(snapshots, {
+        "title": "test run", "ticks_per_round": 2, "generated": "now"})
+    assert "Houses — holdings &amp; conditions by round" in page
+    assert "<th>Money</th>" in page
+    assert '<th class="cond-h">HUNGER</th>' in page
+    assert "4.50" in page
+    # one collapsible block per house, newest round last
+    assert page.count('class="hsum"') == 3
 
 
 def test_snapshot_carries_the_audit_trail_tail(client, monkeypatch, tmp_path):
