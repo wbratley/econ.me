@@ -209,6 +209,11 @@ SYNTHETIC_CTX = {
     "accounts": [{"id": "gate-account", "currency": "USD", "balance": "1000.0000"}],
     "holdings": [], "processes": [], "parcels": [], "needs": [],
     "unlocks": [], "events": [], "state": {},
+    # _build_ctx exposes the executing tick as ctx.tick (scripting.py
+    # "tick"); behaviours schedule off it (the post peddles every 10th
+    # tick), so the gate ctx carries a scalar too -- a nil here would
+    # be a vocabulary lie, not a clean smoke run.
+    "tick": 1,
     # POLICY/VALIDATOR/HOOK scripts read ctx.op
     "op": {
         "type": "transfer", "entity_id": "gate-entity",

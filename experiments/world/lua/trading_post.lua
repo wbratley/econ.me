@@ -168,3 +168,33 @@ for key, w in pairs(want) do
     S.ids[key] = nil      -- the new id arrives in next tick's events
   end
 end
+
+-- 6. Peddle the counter. The order book is passive -- it waits to be
+--    read -- and five runs showed houses that never read it. Speech is
+--    broadcast: every house's next prompt carries what it heard, so a
+--    steady drumbeat here is the menu on the wall, remembered without
+--    anyone going looking. Run 14: 9 WOOD sold to the post, zero food
+--    bought FROM it; a shelf nobody recalls never moves. The menu is
+--    what actually rests -- asks only for larder on hand, bids only
+--    where coin stands behind them -- and twice a round (every 10th
+--    tick) keeps it ambient without drowning rival speech in the
+--    50-tick digest houses read.
+if ctx.tick % 10 == 0 then
+  local sells, buys = {}, {}
+  for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
+    if want["sell_" .. sym] then
+      sells[#sells + 1] = sym .. " " .. r2(S.ask[sym])
+    end
+  end
+  for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES" }) do
+    if want["buy_" .. sym] then
+      buys[#buys + 1] = sym .. " " .. r2(S.bid[sym])
+    end
+  end
+  if #sells + #buys > 0 then
+    ctx.action.say("POST: selling " .. table.concat(sells, ", ")
+      .. " | buying " .. table.concat(buys, ", ")
+      .. ". Sell me your surplus for coin; my shelf is food when "
+      .. "your gathering fails.")
+  end
+end

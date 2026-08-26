@@ -472,6 +472,26 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
     # it never crosses itself: BERRIES ask stands even with no bid
 
 
+def test_post_peddles_its_menu_on_the_cadence(session):
+    """The post hawks its counter through say: the standing menu,
+    twice a 20-tick round, pitched at both directions of trade."""
+    create_content(session)
+    _run(session, 21)
+    heard = [
+        (t.number, e)
+        for t in session.execute(select(Tick).order_by(Tick.number)).scalars()
+        for e in (t.events or []) if e.get("type") == "say"
+    ]
+    post = _post(session)
+    assert [t for t, _ in heard] == [10, 20]   # every 10th tick, no more
+    assert all(e["entity_id"] == post.id for _, e in heard)
+    text = heard[0][1]["params"]["text"]
+    assert "selling" in text and "JERKY" in text   # larder-side quotes
+    assert "buying" in text and "WOOD" in text      # purse-side quotes
+    assert "surplus" in text                        # the pitch, not just prices
+    assert all(len(e["params"]["text"]) <= 256 for _, e in heard)
+
+
 def test_post_ask_rises_when_food_sells(session):
     """Demand moves the ask up 5% the tick after a fill."""
     create_content(session)
