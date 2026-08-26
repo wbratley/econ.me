@@ -124,8 +124,10 @@ and death threshold, derived from this world's physics. What follows is
 what the numbers cannot spell.
 
 == SCARCITY ==
-LABOR is the ration: one recipe with LABOR in its cost per tick. You
-choose what each tick is for; unspent labor is nearly worthless. A fed
+LABOR is the ration: you get 1 LABOR each tick and exactly one
+LABOR-costing recipe runs -- the first script call that takes it wins,
+later calls bounce. Use it wisely; unspent labor is nearly worthless.
+A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
 where each one kills.
