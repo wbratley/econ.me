@@ -21,11 +21,11 @@ OUT=/tmp/stone-run$N
 PORT=8919      # world API
 DASH=8117      # dashboard (served by the run itself)
 LAN=8118       # LAN sidecar for $OUT
-MODELS=(meta/llama-3.2-90b-vision-instruct meta/llama-3.2-90b-vision-instruct meta/llama-3.2-90b-vision-instruct)
-# (llama-3.3-70b EOL'd 2026-08-26 mid-thread; nemotron-3-super-120b ran
-#  3 rounds of run 15 but played poorly — 90b-vision is the last big
-#  Llama this account can call: same 405B-distillate lineage as 3.3-70b,
-#  ~12s/call warm, ~56s cold)
+MODELS=(openai/gpt-oss-20b openai/gpt-oss-20b openai/gpt-oss-20b)
+# (Seat history: llama-3.3-70b EOL'd 2026-08-26; nemotron-3-super played 3
+#  lukewarm rounds; llama-3.2-90b-vision brains-but-glacial (>15min calls
+#  at 6KB prompts). gpt-oss-20b won the audition: careful reasoning, 21s
+#  calls, and its 32k completion budget is already wired in llm.py.)
 
 # Distinct Norse house names per seat (edit to taste).
 NAMES=("House Ivar" "House Lagertha" "House Harald")
