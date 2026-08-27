@@ -21,7 +21,9 @@ OUT=/tmp/stone-run$N
 PORT=8919      # world API
 DASH=8117      # dashboard (served by the run itself)
 LAN=8118       # LAN sidecar for $OUT
-MODELS=(meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct)
+MODELS=(nvidia/nemotron-3-super-120b-a12b nvidia/nemotron-3-super-120b-a12b nvidia/nemotron-3-super-120b-a12b)
+# (run 15's first attempt, llama-3.3-70b, died 410 EOL 2026-08-26 —
+#  NIM retired the model between runs 14 and 15)
 
 # Distinct Norse house names per seat (edit to taste).
 NAMES=("House Ivar" "House Lagertha" "House Harald")

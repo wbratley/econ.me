@@ -396,6 +396,10 @@ NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
 # finish_reason=length with empty content, 7 stone-run3 rounds).
 _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     "gpt-oss": 32768,
+    # nemotron-3 reasons before content (observed ~110 thinking tokens
+    # for a trivial ask; a full script rewrite thinks more). max_tokens
+    # is a cap, not a target -- the headroom costs nothing unspent.
+    "nemotron-3": 16384,
 }
 
 
