@@ -8,7 +8,8 @@
 # Ports are allocated per run number -- keep this table current:
 #   run 10 -> 8915/8109/8110   run 11 -> 8916/8111/8112
 #   run 12 -> 8917/8113/8114   run 13 -> 8917/8113/8114 (reused after reboot)
-#   run 14 -> 8918/8115/8116   (defaults below; edit before your next run)
+#   run 14 -> 8918/8115/8116   run 15 -> 8919/8117/8118
+#   (defaults below; edit before your next run)
 set -euo pipefail
 
 REPO=/home/ice52/git/econ.me
@@ -17,9 +18,9 @@ PY=$REPO/.venv/bin/python
 N=${1:?usage: stone-run.sh <run-number> [rounds]}
 ROUNDS=${2:-40}
 OUT=/tmp/stone-run$N
-PORT=8918      # world API
-DASH=8115      # dashboard (served by the run itself)
-LAN=8116       # LAN sidecar for $OUT
+PORT=8919      # world API
+DASH=8117      # dashboard (served by the run itself)
+LAN=8118       # LAN sidecar for $OUT
 MODELS=(meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct)
 
 # Distinct Norse house names per seat (edit to taste).
