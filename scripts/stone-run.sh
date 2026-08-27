@@ -30,6 +30,20 @@ NAMES=("House Ivar" "House Lagertha" "House Harald")
 
 mkdir -p "$OUT"
 cd "$REPO"
+
+# Pre-flight: a port still held by a previous run's orphaned uvicorn
+# (killing nim_run leaves the world server behind) means the new run's
+# clients silently attach to the OLD world and die on its stale gate --
+# run 15 attempt 2 lost 20 minutes to exactly that. Refuse instead.
+for P in "$PORT" "$DASH" "$LAN"; do
+  if ss -tlnH "sport = :$P" 2>/dev/null | grep -q .; then
+    echo "refusing to launch: port $P is already held:" >&2
+    ss -tlnp "sport = :$P" 2>/dev/null >&2
+    echo "kill the stale process (e.g. pkill -f 'uvicorn.*--port $P') " \
+         "or move this run to fresh ports" >&2
+    exit 1
+  fi
+done
 setsid nohup "$PY" -m experiments.agent.nim_run \
   --models "${MODELS[@]}" \
   --names "${NAMES[@]}" \
