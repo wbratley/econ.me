@@ -17,7 +17,9 @@ PY=$REPO/.venv/bin/python
 
 N=${1:?usage: stone-run.sh <run-number> [rounds]}
 ROUNDS=${2:-40}
-OUT=/tmp/stone-run$N
+# Under $HOME, not /tmp: a reboot wiped /tmp mid-run-15 (attempt 5 died ~12
+# minutes into its 40 rounds). $HOME survives.
+OUT=$HOME/econ-runs/stone-run$N
 PORT=8919      # world API
 DASH=8117      # dashboard (served by the run itself)
 LAN=8118       # LAN sidecar for $OUT
