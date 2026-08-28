@@ -158,6 +158,19 @@ function std.holding_qty(symbol)
   return 0
 end
 
+-- The spendable side of a holding: held minus what your RUNNING
+-- processes have reserved (their good-requirements back work in
+-- progress -- you cannot sell the oven mid-bake). start_process and
+-- market settlement check THIS number, not holding_qty; a process or
+-- order that looks affordable against the pantry can still bounce
+-- here. holding_qty is the pantry; unreserved is what is free to
+-- promise. nil when the query is unavailable.
+function std.unreserved(symbol)
+  local q = ctx.query.unreserved(ctx.entity.id, symbol)
+  if q then return tonumber(q) end
+  return nil
+end
+
 function std.market_price(symbol, fallback)
   local p = ctx.query.market_price(symbol)
   if p then
@@ -498,7 +511,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
         return wrapper
 
     query_tbl = lua.table()
-    for name in ("balance", "total_supply", "market_price", "holding"):
+    for name in ("balance", "total_supply", "market_price", "holding", "unreserved"):
         query_tbl[name] = _wrap_result(queries[name]) if name in queries else (lambda *a: None)
     for name, fn in queries.items():
         query_tbl[name] = _wrap_result(fn)
@@ -506,54 +519,75 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     # --- action stubs (collect intents) ---
     action_tbl = lua.table()
 
-    def _transfer(from_id, to_id, amount, ref, priority=100):
+    def _arity(name: str, rest: tuple, expected: str):
+        # Lua silently discards extra call arguments, so a wrong-shaped
+        # call used to queue an intent that meant something else -- or
+        # nothing -- with no error anywhere. Run 15: the starter's
+        # unlabeled third argument `20` (an intent priority) that two
+        # models read as a duration, and invented account_id/quantity
+        # arguments on start_process. Fail loudly at the call site
+        # instead: the submit gate smoke-runs every script, so the
+        # author sees this before their entity ever runs it.
+        if rest:
+            raise ValueError(
+                f"ctx.action.{name} takes {expected} "
+                f"-- got {len(rest)} extra argument(s)"
+            )
+
+    def _transfer(from_id, to_id, amount, ref, *rest):
+        _arity("transfer", rest, "(from, to, amount, reference)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="transfer",
             params={"from_account_id": str(from_id), "to_account_id": str(to_id),
                     "amount": str(amount), "reference": str(ref)},
             resource_ids=[str(from_id), str(to_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _issue_money(account_id, amount, ref, priority=100):
+    def _issue_money(account_id, amount, ref, *rest):
+        _arity("issue_money", rest, "(account_id, amount, reference)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="issue_money",
             params={"account_id": str(account_id), "amount": str(amount), "reference": str(ref)},
             resource_ids=[str(account_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _retire_money(account_id, amount, ref, priority=100):
+    def _retire_money(account_id, amount, ref, *rest):
+        _arity("retire_money", rest, "(account_id, amount, reference)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="retire_money",
             params={"account_id": str(account_id), "amount": str(amount), "reference": str(ref)},
             resource_ids=[str(account_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _place_order(symbol, side, quantity, limit_price, account_id, priority=100):
+    def _place_order(symbol, side, quantity, limit_price, account_id, *rest):
+        _arity("place_order", rest, "(symbol, side, quantity, limit_price, account_id)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="place_order",
             params={"symbol": str(symbol), "side": str(side), "quantity": str(quantity),
                     "limit_price": str(limit_price), "account_id": str(account_id)},
             resource_ids=[str(account_id), str(symbol)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _cancel_order(order_id, priority=100):
+    def _cancel_order(order_id, *rest):
+        _arity("cancel_order", rest, "(order_id)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="cancel_order",
             params={"order_id": str(order_id)},
             resource_ids=[str(order_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _start_process(recipe, parcel_id=None, priority=100):
+    def _start_process(recipe, parcel_id=None, *rest):
+        _arity("start_process", rest, "(recipe, parcel_id)")
         params = {"recipe": str(recipe)}
         if parcel_id is not None:
             params["parcel_id"] = str(parcel_id)
@@ -562,28 +596,31 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="start_process",
             params=params,
             resource_ids=[str(recipe)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _cancel_process(process_id, priority=100):
+    def _cancel_process(process_id, *rest):
+        _arity("cancel_process", rest, "(process_id)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="cancel_process",
             params={"process_id": str(process_id)},
             resource_ids=[str(process_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _transfer_parcel(parcel_id, to_entity_id, priority=100):
+    def _transfer_parcel(parcel_id, to_entity_id, *rest):
+        _arity("transfer_parcel", rest, "(parcel_id, to_entity_id)")
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="transfer_parcel",
             params={"parcel_id": str(parcel_id), "to_entity_id": str(to_entity_id)},
             resource_ids=[str(parcel_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _levy(from_id, to_id, amount, rule_ref, priority=100):
+    def _levy(from_id, to_id, amount, rule_ref, *rest):
+        _arity("levy", rest, "(from, to, amount, rule_ref)")
         # The privileged transfer: money leaves `from_id` (an account the
         # entity does NOT own) and enters the entity's own `to_id`, under a
         # declared `rule_ref`. resolve_intent gates this on the `levy`
@@ -595,10 +632,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
                     "amount": str(amount), "rule_ref": str(rule_ref),
                     "reference": ""},
             resource_ids=[str(from_id), str(to_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _seize(from_entity_id, spec, rule_ref, priority=100):
+    def _seize(from_entity_id, spec, rule_ref, *rest):
+        _arity("seize", rest, "(from_entity_id, spec, rule_ref)")
         # Privileged expropriation — the goods/parcels analogue of levy.
         # Move goods and/or parcels out of `from_entity_id` (an entity the
         # actor does NOT own) into a declared recipient (the authority
@@ -629,10 +667,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="seize",
             params=params,
             resource_ids=resource_ids,
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _set_fiscal_policy(policy, priority=100):
+    def _set_fiscal_policy(policy, *rest):
+        _arity("set_fiscal_policy", rest, "(policy)")
         # Replace the votable fiscal-policy dict. `policy` is a Lua table
         # (the natural form for a script author); it is converted to a
         # Python dict and serialised to a JSON string because intent params
@@ -645,10 +684,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="set_fiscal_policy",
             params={"policy": json.dumps(_lua_to_python(policy))},
             resource_ids=[],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _set_script(script_type, lineage_id, source, bound_entity_id=None, priority=100):
+    def _set_script(script_type, lineage_id, source, bound_entity_id=None, *rest):
+        _arity("set_script", rest, "(script_type, lineage_id, source, bound_entity_id)")
         # Governed lawmaking (step 4a-1): retire the active version of
         # `lineage_id` and activate `source` as a new version. The entity
         # is the legislating authority; resolve_intent gates this on the
@@ -666,10 +706,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="set_script",
             params=params,
             resource_ids=[str(lineage_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _set_validator(lineage_id, source, bound_entity_id=None, priority=100):
+    def _set_validator(lineage_id, source, bound_entity_id=None, *rest):
+        _arity("set_validator", rest, "(lineage_id, source, bound_entity_id)")
         # Constitutional amendment (step 4b): the governed lifecycle for a
         # VALIDATOR — retire-old + activate-new, gated by
         # `amend_constitution`. The ONLY script path that writes a
@@ -688,10 +729,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="set_validator",
             params=params,
             resource_ids=[str(lineage_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _set_constitution(params, priority=100):
+    def _set_constitution(params, *rest):
+        _arity("set_constitution", rest, "(params)")
         # Constitutional amendment (step 4b): replace the voting-system
         # floor (supermajority threshold/quorum). `params` is a Lua table
         # (the natural form for a script author); converted to a dict and
@@ -704,10 +746,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="set_constitution",
             params={"constitution": json.dumps(_lua_to_python(params))},
             resource_ids=[],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _grant_capability(to_entity_id, capability, priority=100):
+    def _grant_capability(to_entity_id, capability, *rest):
+        _arity("grant_capability", rest, "(to_entity_id, capability)")
         # Governed capability transfer (the meta-privilege): confer
         # `capability` on `to_entity_id`. resolve_intent gates this on the
         # `grant_capability` capability and fires a VALIDATOR (so the
@@ -718,10 +761,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             params={"to_entity_id": str(to_entity_id),
                     "capability": str(capability)},
             resource_ids=[str(to_entity_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _revoke_capability(to_entity_id, capability, priority=100):
+    def _revoke_capability(to_entity_id, capability, *rest):
+        _arity("revoke_capability", rest, "(to_entity_id, capability)")
         # The symmetric partner of grant_capability — withdraw a
         # capability. Same gate (grant_capability) and VALIDATOR path.
         intents.append(Intent(
@@ -730,10 +774,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             params={"to_entity_id": str(to_entity_id),
                     "capability": str(capability)},
             resource_ids=[str(to_entity_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", proposal_type="ordinary", priority=100):
+    def _create_proposal(target_id, mutations, weight_model="citizen", threshold="0.5", quorum="0", title="", proposal_type="ordinary", *rest):
+        _arity("create_proposal", rest, "(target_id, mutations, weight_model, threshold, quorum, title, proposal_type)")
         # Open a proposal for vote (step 4a-ii). `mutations` is a Lua table
         # (a list of {type=..., params={...}}); converted to Python and
         # serialised to JSON because intent params are stringly typed. No
@@ -756,10 +801,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
                 "proposal_type": str(proposal_type),
             },
             resource_ids=[str(target_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _vote(proposal_id, choice, priority=100):
+    def _vote(proposal_id, choice, *rest):
+        _arity("vote", rest, "(proposal_id, choice)")
         # Cast a for/against on a proposal. Gated by electorate membership
         # in resolve_intent; the weight is snapshotted by the resolver.
         intents.append(Intent(
@@ -767,10 +813,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="vote",
             params={"proposal_id": str(proposal_id), "choice": str(choice)},
             resource_ids=[str(proposal_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _enact(proposal_id, priority=100):
+    def _enact(proposal_id, *rest):
+        _arity("enact", rest, "(proposal_id)")
         # Tally and apply a proposal as the target government. resolve_intent
         # gates this on the legislate capability (the enactor must be the
         # proposal's target). On pass, the mutations apply atomically; a
@@ -780,10 +827,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="enact",
             params={"proposal_id": str(proposal_id)},
             resource_ids=[str(proposal_id)],
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _spawn_entity(parents, opts=None, priority=100):
+    def _spawn_entity(parents, opts=None, *rest):
+        _arity("spawn_entity", rest, "(parents, opts)")
         # Bring a new entity into being during a tick (Step 6c). The CALLER
         # (the entity running this script) is the midwife/factory/parent;
         # `parents` is the declared provenance, independent of the caller
@@ -811,10 +859,11 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="spawn_entity",
             params=params,
             resource_ids=list(parent_ids),
-            priority=int(priority),
+            priority=100,
         ))
 
-    def _say(text, priority=100):
+    def _say(text, *rest):
+        _arity("say", rest, "(text)")
         # Speech (game.md 15.6): free but bounded -- the engine enforces
         # one utterance per entity per tick and the text cap. Identity
         # is structural: the speaker IS this entity.
@@ -823,7 +872,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             intent_type="say",
             params={"text": str(text)},
             resource_ids=[],   # speech touches nothing -- it only carries
-            priority=int(priority),
+            priority=100,
         ))
 
     action_tbl["transfer"]    = _transfer

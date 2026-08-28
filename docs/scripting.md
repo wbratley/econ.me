@@ -77,7 +77,8 @@ sandbox is applied — the same mechanism `ctx` already uses. A script sees:
 ```lua
 local fills  = world.settle_last_orders()
 local price  = std.market_price("GRAIN", 1.0)
-ctx.action.start_process("FARM_GRAIN", std.facility_parcel("FARM"), 20)
+ctx.action.start_process("FARM_GRAIN", std.facility_parcel("FARM"))
+local free   = std.unreserved("LABOR")  -- spendable side of the pantry
 ```
 
 - **`get_behaviour` shows only the player's own source.** Today a

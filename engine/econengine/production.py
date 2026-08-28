@@ -240,8 +240,42 @@ def start_process(
             raise ValueError("unknown parcel")
         if parcel.owner_id != entity.id:
             raise ValueError("entity does not control parcel")
+    elif recipe.requires_facility:
+        # Auto-bind (run 15: 20 refusals "recipe TEND_FIRE must be bound
+        # to a parcel" while the engine knew exactly where the entity's
+        # FIRE stood). A facility recipe started without a parcel binds
+        # itself to the first owned parcel with a FREE facility of that
+        # type -- where the facility lives is bookkeeping, not strategy.
+        owned = session.execute(
+            select(Parcel).where(Parcel.owner_id == entity.id).order_by(Parcel.id)
+        ).scalars().all()
+        has_any = False
+        for p in owned:
+            count = parcels.facility_count(session, p.id, recipe.requires_facility)
+            if not count:
+                continue
+            has_any = True
+            free = count - parcels.reserved_facilities(
+                session, p.id, recipe.requires_facility
+            )
+            if free > 0:
+                parcel = p
+                break
+        if parcel is None:
+            if has_any:
+                raise ValueError(
+                    f"recipe {recipe.code}: your {recipe.requires_facility} "
+                    f"facilities are fully reserved by running processes"
+                )
+            raise ValueError(
+                f"recipe {recipe.code} requires a {recipe.requires_facility} "
+                f"facility on a parcel you control; you have none"
+            )
     elif recipe_needs_parcel(recipe):
-        raise ValueError(f"recipe {recipe.code} must be bound to a parcel")
+        raise ValueError(
+            f"recipe {recipe.code} must be bound to a parcel you control "
+            f"(pass its parcel_id)"
+        )
 
     if recipe.requires_facility:
         free = (
@@ -266,10 +300,38 @@ def start_process(
             )
 
     for item in recipe.inputs:
-        if _available_quantity(session, entity, item.symbol) < item.quantity:
+        available = _available_quantity(session, entity, item.symbol)
+        if available < item.quantity:
+            # Name the balance the check actually drew on, and -- when
+            # reservations hold part of it -- WHO holds them (run 15:
+            # 144 "insufficient unreserved LABOR" refusals against a
+            # holdings read that looked fine, with no way to see the
+            # spendable side from the refusal).
+            held = get_holding(session, entity.id, item.symbol)
+            held_qty = held.quantity if held else Decimal("0")
+            reservers = sorted({
+                code for code in session.execute(
+                    select(Recipe.code)
+                    .select_from(Process)
+                    .join(Recipe, Process.recipe_id == Recipe.id)
+                    .join(RecipeGoodRequirement,
+                          RecipeGoodRequirement.recipe_id == Recipe.id)
+                    .where(
+                        Process.entity_id == entity.id,
+                        Process.status == ProcessStatus.RUNNING,
+                        RecipeGoodRequirement.symbol == item.symbol,
+                    )
+                ).scalars()
+            })
+            note = (
+                f", reserved by your running {', '.join(reservers)}"
+                if reservers else ""
+            )
             raise InsufficientHoldingsError(
-                f"entity {entity.id} has insufficient unreserved {item.symbol} "
-                f"for recipe {recipe.code} input {item.quantity}"
+                f"entity {entity.id} has {available} unreserved "
+                f"{item.symbol} of {held_qty} held{note} "
+                f"for recipe {recipe.code} input {item.quantity} "
+                f"(std.unreserved('{item.symbol}') is the spendable balance)"
             )
         adjust_holding(session, entity, item.symbol, -item.quantity)
     for item in recipe.deposit_inputs:

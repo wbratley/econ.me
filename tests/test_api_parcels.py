@@ -181,7 +181,7 @@ def test_farming_loop_end_to_end(client):
     # and a parcel-bound recipe cannot be started unbound
     r = client.post("/processes", json={"entity_id": alice, "recipe": "GROW_WHEAT"},
                     headers=_auth("u-alice"))
-    assert r.status_code == 422 and "bound to a parcel" in r.json()["detail"]
+    assert r.status_code == 422 and "FARM facility" in r.json()["detail"]
 
     r = client.post("/processes",
                     json={"entity_id": alice, "recipe": "BUILD_FARM",

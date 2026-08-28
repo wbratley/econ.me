@@ -219,3 +219,64 @@ def test_unbanked_output_stays_a_good(session):
     assert digger.accounts == []
     assert get_holding(session, digger.id, "COIN").quantity == Decimal("1")
     assert session.query(Transaction).count() == 0
+
+
+# --- facility auto-bind (run 15: 20 "must be bound to a parcel" refusals) ---
+
+def _fire_world(session):
+    from econengine.parcels import add_facility, create_parcel
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    adjust_holding(session, alice, "LABOR", Decimal("2"))
+    camp = create_parcel(session, "CAMP", owner=alice)
+    create_recipe(session, "TEND_FIRE", inputs={"LABOR": Decimal("1")},
+                  outputs={"WARMTH": Decimal("8")}, duration_ticks=2,
+                  requires_facility="FIRE")
+    return alice, camp, add_facility(session, camp, "FIRE")
+
+
+def test_facility_recipe_auto_binds_to_owned_facility(session):
+    """A facility recipe started without parcel_id binds itself to the
+    first owned parcel with a free facility of that type -- where the
+    facility lives is bookkeeping, not strategy."""
+    alice, camp, _fire = _fire_world(session)
+    process = start_process(session, alice, "TEND_FIRE")  # no parcel_id
+    assert process.parcel_id == camp.id
+
+
+def test_facility_recipe_without_facility_names_what_is_missing(session):
+    """Owning parcels is not owning the facility: auto-bind refuses and
+    names what is missing rather than the old bare 'must be bound to a
+    parcel' (which read like a call-syntax error, not a world fact)."""
+    _alice, _camp, _fire = _fire_world(session)
+    from econengine.parcels import create_parcel
+    other = create_entity(session, "Bob", EntityType.INDIVIDUAL)
+    adjust_holding(session, other, "LABOR", Decimal("1"))
+    create_parcel(session, "PLOT", owner=other)  # owns a parcel, no FIRE on it
+    with pytest.raises(ValueError, match="FIRE facility"):
+        start_process(session, other, "TEND_FIRE")
+
+
+def test_facility_recipe_when_all_facilities_reserved(session):
+    alice, _camp, _fire = _fire_world(session)
+    start_process(session, alice, "TEND_FIRE")  # RUNNING: reserves the FIRE
+    with pytest.raises(ValueError, match="fully reserved"):
+        start_process(session, alice, "TEND_FIRE")
+
+
+def test_input_refusal_names_running_reservers(session):
+    """The refusal names the balance the check drew on and WHO holds the
+    reservation -- the spendable side was invisible in run 15 (144
+    'insufficient unreserved' bounces against a fine-looking pantry)."""
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    adjust_holding(session, alice, "OVEN", Decimal("1"))
+    adjust_holding(session, alice, "FLOUR", Decimal("10"))
+    create_recipe(session, "BAKE", inputs={"FLOUR": Decimal("1")},
+                  outputs={"BREAD": Decimal("2")}, duration_ticks=2,
+                  good_requirements={"OVEN": Decimal("1")})
+    create_recipe(session, "SCRAP_OVEN", inputs={"OVEN": Decimal("1")},
+                  outputs={"SCRAP": Decimal("5")}, duration_ticks=1)
+    start_process(session, alice, "BAKE")  # RUNNING: reserves the OVEN
+    with pytest.raises(InsufficientHoldingsError,
+                       match=r"unreserved OVEN of [\d.]+ held, "
+                             r"reserved by your running BAKE"):
+        start_process(session, alice, "SCRAP_OVEN")

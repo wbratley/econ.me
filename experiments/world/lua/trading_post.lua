@@ -147,7 +147,7 @@ end
 for key in pairs(S.live) do
   if not want[key] then
     local id = S.ids[key]
-    if id then ctx.action.cancel_order(id, 30) end
+    if id then ctx.action.cancel_order(id) end
     S.live[key] = nil
     S.quiet[key] = nil
     S.ids[key] = nil
@@ -156,14 +156,14 @@ end
 
 -- 5. Reconcile: cancel + replace only where (qty, price) moved; new
 --    wants place directly. Untouched orders keep their time priority
---    in the book. Cancelling an order that already filled is a
---    harmless rejection -- the engine just says no.
+--    in the book. Cancelling an order that already filled is an
+--    idempotent no-op -- the engine just says yes to "rest nothing".
 for key, w in pairs(want) do
   local cur = S.live[key]
   if not (cur and cur.qty == w.qty and cur.price == w.price) then
     local id = S.ids[key]
-    if id then ctx.action.cancel_order(id, 30) end
-    ctx.action.place_order(w.symbol, w.side, w.qty, w.price, acct, 30)
+    if id then ctx.action.cancel_order(id) end
+    ctx.action.place_order(w.symbol, w.side, w.qty, w.price, acct)
     S.live[key] = w
     S.ids[key] = nil      -- the new id arrives in next tick's events
   end

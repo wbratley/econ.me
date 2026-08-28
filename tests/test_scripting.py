@@ -449,3 +449,22 @@ def test_unset_flag_keeps_queries_global(world):
     run_tick(session)
 
     assert script.state == {"theirs": "7.0000", "register": 1}
+
+
+def test_unreserved_query_exposes_the_spendable_side(world):
+    """Run 15: 144 'insufficient unreserved LABOR' refusals against a
+    holdings read that looked fine -- nothing showed held-minus-reserved.
+    ctx.query.unreserved (std.unreserved over it) is that surface."""
+    from econengine.scripting import build_queries
+    from econengine.production import create_recipe, start_process
+    session, alice, bob, gov, a, b, g = world
+    adjust_holding(session, alice, "OVEN", Decimal("1"))
+    adjust_holding(session, alice, "FLOUR", Decimal("10"))
+    create_recipe(session, "BAKE", inputs={"FLOUR": Decimal("1")},
+                  outputs={"BREAD": Decimal("2")}, duration_ticks=2,
+                  good_requirements={"OVEN": Decimal("0.5")})
+    queries = build_queries(session, owner_id=alice.id)
+    assert queries["unreserved"](alice.id, "OVEN") == "1.0000"
+    start_process(session, alice, "BAKE")  # RUNNING: reserves half the oven
+    assert queries["holding"](alice.id, "OVEN") == "1.0000"       # the pantry
+    assert queries["unreserved"](alice.id, "OVEN") == "0.5000"  # spendable

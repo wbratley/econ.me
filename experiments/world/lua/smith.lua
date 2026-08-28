@@ -28,7 +28,7 @@ if want_ore > 0.01 and balance > 0 then
     local qty = math.min(want_ore, balance / bid)
     if qty > 0.01 then
       ctx.action.place_order("ORE", "buy", std.amount_str(qty),
-                              std.amount_str(bid), account.id, 35)
+                              std.amount_str(bid), account.id)
       balance = balance - qty * bid
     end
   end
@@ -40,7 +40,7 @@ local forge_id = std.facility_parcel("FORGE")
 if forge_id and std.has_unlock("SMELTING")
    and std.holding_qty("ORE") >= 2 and std.holding_qty("LABOR") >= 1
    and not std.running_recipe("SMELT_IRON") then
-  ctx.action.start_process("SMELT_IRON", forge_id, 20)
+  ctx.action.start_process("SMELT_IRON", forge_id)
 end
 
 -- 3. Sell iron (no live buyer in the proving cast -- it accumulates; a

@@ -181,6 +181,7 @@ def synthetic_queries() -> dict:
         "best_bid": lambda symbol: None,
         "best_ask": lambda symbol: None,
         "holding": lambda entity_id, symbol: None,
+        "unreserved": lambda entity_id, symbol: None,
         "has_unlock": lambda entity_id, code: False,
         "holders": lambda symbol: [],
         "world_setting": lambda key: None,
@@ -669,6 +670,23 @@ def build_queries(session: Session, tick_number: int | None = None,
         h = markets.get_holding(session, str(entity_id), str(symbol).upper())
         return str(h.quantity) if h else "0"
 
+    def unreserved(entity_id, symbol):
+        """Held minus reserved-by-running-processes -- the spendable side.
+
+        start_process and market settlement both draw on this balance
+        (production._available_quantity), but until run 15's postmortem
+        no script could READ it: holding_qty showed the pantry while the
+        check saw the pantry minus what running work had reserved, and
+        144 refusals bounced off the difference. Same privacy rule as
+        `holding`: a private-holdings world shows only your own row.
+        """
+        if _private and str(entity_id) != str(owner_id):
+            return None
+        eid = str(entity_id)
+        h = markets.get_holding(session, eid, str(symbol).upper())
+        held = h.quantity if h else Decimal("0")
+        return str(held - markets.reserved_quantity(session, eid, str(symbol).upper()))
+
     def has_unlock(entity_id, code):
         technology = tech.get_technology(session, str(code))
         if technology is None:
@@ -971,6 +989,7 @@ def build_queries(session: Session, tick_number: int | None = None,
         "best_bid": best_bid,
         "best_ask": best_ask,
         "holding": holding,
+        "unreserved": unreserved,
         "has_unlock": has_unlock,
         "holders": holders,
         "age": age,

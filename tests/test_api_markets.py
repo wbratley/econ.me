@@ -174,12 +174,14 @@ def test_order_auth_boundaries(client):
     r = client.post(f"/orders/{order_id}/cancel", headers=_auth("u-seller"))
     assert r.status_code == 404
 
-    # Owner can cancel; a second cancel is rejected.
+    # Owner can cancel; a second cancel is idempotent (the caller's
+    # success state is "nothing rests", whether or not it already did).
     r = client.post(f"/orders/{order_id}/cancel", headers=_auth("u-buyer"))
     assert r.status_code == 200
     assert r.json()["status"] == "cancelled"
     r = client.post(f"/orders/{order_id}/cancel", headers=_auth("u-buyer"))
-    assert r.status_code == 422
+    assert r.status_code == 200
+    assert r.json()["status"] == "cancelled"
 
     # Admin endpoints are admin-only.
     r = client.post("/admin/markets", json={"symbol": "OIL", "currency": "USD"},

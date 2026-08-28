@@ -17,7 +17,7 @@ local grain_price = std.market_price("GRAIN", 1.0)
 --    the recipe to the parcel).
 local mine_id = std.deposit_parcel("ORE")
 if mine_id and std.holding_qty("LABOR") >= 1 and not std.running_recipe("MINE_ORE") then
-  ctx.action.start_process("MINE_ORE", mine_id, 20)
+  ctx.action.start_process("MINE_ORE", mine_id)
 end
 
 -- 2. Sell all ore (labour is free, so the anchor is a nominal price; concede

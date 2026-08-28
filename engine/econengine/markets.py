@@ -221,13 +221,22 @@ def place_order(
 
 
 def cancel_order(session: Session, order_id: str, entity_id: str) -> Order:
+    """Cancel an open order; a no-op when it already rests nowhere.
+
+    Idempotent by construction (run 15: 49 rejections were scripts
+    cancel-then-replacing on a book whose fill arrived first). Cancelling
+    an order that is already filled or cancelled IS the caller's success
+    state -- "nothing rests at this level" -- so it returns the order
+    untouched. Unknown ids and orders the entity does not own still
+    raise: those are not idempotent retries, they are mistakes.
+    """
     order = session.get(Order, order_id)
     if order is None:
         raise ValueError("unknown order")
     if order.entity_id != entity_id:
         raise ValueError("entity does not own order")
     if order.status != OrderStatus.OPEN:
-        raise ValueError(f"order is {order.status.value}, only open orders can be cancelled")
+        return order
     order.status = OrderStatus.CANCELLED
     order.cancel_reason = "cancelled by owner"
     session.flush()

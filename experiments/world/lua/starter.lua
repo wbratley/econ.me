@@ -23,7 +23,7 @@ local grain_price = std.market_price("GRAIN", 1.0)
 local farm_id = std.facility_parcel("FARM")
 if farm_id and std.has_unlock("FARMING")
    and std.holding_qty("LABOR") >= 1 and not std.running_recipe("FARM_GRAIN") then
-  ctx.action.start_process("FARM_GRAIN", farm_id, 20)
+  ctx.action.start_process("FARM_GRAIN", farm_id)
 end
 
 -- 2. Sell grain beyond a small pantry. (FARM_GRAIN yields 4, you eat 1, so a

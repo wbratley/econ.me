@@ -70,13 +70,13 @@ def test_process_is_fed_by_what_its_entity_bought_this_tick(market_world):
 
     make_script(session, "buy-and-bake",
                 "if ctx.state.done == nil then"
-                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s', 10)"
+                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s')"
                 "  ctx.action.start_process('BAKE_BREAD')"
                 "  ctx.state.done = true "
                 "end" % baker_acct.id, baker)
     make_script(session, "sell-flour",
                 "if ctx.state.done == nil then"
-                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s', 10)"
+                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s')"
                 "  ctx.state.done = true "
                 "end" % miller_acct.id, miller)
 
@@ -132,7 +132,7 @@ def test_still_short_after_the_auction_is_reported_once(market_world):
 
 def test_process_keeps_first_claim_over_a_sell_order_of_the_same_good(session):
     """Orders do not escrow -- holdings are checked live at settlement -- so
-    whichever runs first wins. Production runs first, as priority says. If
+    whichever runs first wins. Production runs first (line order, the stable tie-break). If
     production were deferred wholesale past the auction, the sale below would
     take the flour out from under the process and it would be rejected."""
     create_good(session, "FLOUR")
@@ -151,17 +151,17 @@ def test_process_keeps_first_claim_over_a_sell_order_of_the_same_good(session):
                   outputs={"BREAD": Decimal("3")}, duration_ticks=1)
     session.flush()
 
-    # Baker holds exactly 2 FLOUR and both uses AND offers all of it. Priority
-    # 10 (bake) beats priority 40 (sell): the bake must win.
+    # Baker holds exactly 2 FLOUR and both uses AND offers all of it. Line
+    # order puts the bake first; the bake must win.
     make_script(session, "bake-then-offer",
                 "if ctx.state.done == nil then"
                 "  ctx.action.start_process('BAKE_BREAD')"
-                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s', 40)"
+                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s')"
                 "  ctx.state.done = true "
                 "end" % baker_acct.id, baker)
     make_script(session, "buy-flour",
                 "if ctx.state.done == nil then"
-                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s', 40)"
+                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s')"
                 "  ctx.state.done = true "
                 "end" % buyer_acct.id, buyer)
 
@@ -194,16 +194,16 @@ def test_duration_zero_output_is_sellable_in_the_same_tick(session):
                   outputs={"FLOUR": Decimal("2")}, duration_ticks=0)
     session.flush()
 
-    # Mill at priority 10, then offer the fresh flour at priority 40.
+    # Mill first, then offer the fresh flour (line order = intent order).
     make_script(session, "mill-and-sell",
                 "if ctx.state.done == nil then"
                 "  ctx.action.start_process('MILL')"
-                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s', 40)"
+                "  ctx.action.place_order('FLOUR', 'sell', '2', '1', '%s')"
                 "  ctx.state.done = true "
                 "end" % miller_acct.id, miller)
     make_script(session, "buy-flour",
                 "if ctx.state.done == nil then"
-                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s', 40)"
+                "  ctx.action.place_order('FLOUR', 'buy', '2', '10', '%s')"
                 "  ctx.state.done = true "
                 "end" % buyer_acct.id, buyer)
 
