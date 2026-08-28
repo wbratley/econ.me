@@ -218,6 +218,8 @@ def test_tool_and_facility_gates(session):
         production.start_process(session, w, "TEND_FIRE", camp.id)
     with pytest.raises(Exception, match="no free FIRE"):
         production.start_process(session, w, "COOK_MEAT", camp.id)
+    with pytest.raises(Exception, match="no free FIRE"):
+        production.start_process(session, w, "SMOKE_MEAT", camp.id)
     with pytest.raises(Exception, match="no free SHELTER"):
         production.start_process(session, w, "REST_SHELTERED", camp.id)
     with pytest.raises(Exception, match="CLOTHES"):
@@ -243,6 +245,40 @@ def test_cook_meat_converts(session):
     _run(session, 2)
     assert _hold(session, w.id, "COOKED_MEAT") >= Decimal("1.5")
     assert _hold(session, w.id, "MEAT") == Decimal("0")
+
+
+def test_smoke_meat_converts_slowly_and_keeps(session):
+    """SMOKE_MEAT (run 17's pack delta): 2 MEAT + 1 WOOD + the fire, five
+    slow ticks, -> 2 JERKY that NEVER decay. Preservation is a craft a
+    house can own -- run 16's houses starved beside rotting larders and
+    a post-only shelf they could not restock. Mechanics on a BUSINESS
+    seat (no FOOD draw to eat the output); feeding on an INDIVIDUAL."""
+    create_content(session)
+    w = _biz(session, "Smoker")
+    parcels.create_parcel(session, "LAND", name="Smoker's Camp", owner=w)
+    camp = _camp(session, w)
+    parcels.add_facility(session, camp, "FIRE")
+    markets.adjust_holding(session, w, "MEAT", Decimal("2"))
+    markets.adjust_holding(session, w, "WOOD", Decimal("1"))
+    assert _act(session, w, "SMOKE_MEAT", camp.id)
+    # inputs are spent when the process starts; the jerky lands only
+    # after the long smoke -- nothing edible at tick 2
+    assert _hold(session, w.id, "MEAT") == Decimal("0")
+    assert _hold(session, w.id, "WOOD") == Decimal("0")
+    _run(session, 2)
+    assert _hold(session, w.id, "JERKY") == Decimal("0")
+    _run(session, 4)
+    assert _hold(session, w.id, "JERKY") == Decimal("2")
+    # ...and unlike every other food, time does not eat it
+    _run(session, 10)
+    assert _hold(session, w.id, "JERKY") == Decimal("2")
+    # a larder of house-smoked jerky feeds the FOOD need like shelf food
+    seat = _seat(session, "JerkyEater")
+    markets.adjust_holding(session, seat, "BERRIES", -BERRY_BUFFER)
+    markets.adjust_holding(session, seat, "JERKY", Decimal("5"))
+    before = _hold(session, seat.id, "JERKY")
+    _run(session, 1)
+    assert _hold(session, seat.id, "JERKY") < before
 
 
 def test_eat_raw_feeds_now_and_risks_disease(session):
