@@ -318,6 +318,17 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                 entries.setdefault(d.name, {}).setdefault(
                     "refusal", f"set_ready refused: {exc}")
         if resolved is None:
+            # Nobody consented. The one expected shape: every dynasty is
+            # extinct — the world's answer is in (run 16 ended in a
+            # RuntimeError here at round 27, after the last house died
+            # mid-round-26 and the run crashed on a gate nobody was left
+            # to close). Stop the world instead.
+            if entries and all(e.get("action") == "extinct"
+                               for e in entries.values()):
+                last = snapshots[-1]["round"] if snapshots else 0
+                print(f"  total extinction — no dynasty left to act; "
+                      f"stopping after round {last}")
+                break
             if admin_advance is None:
                 raise RuntimeError(
                     f"round {round_no} did not resolve after every dynasty "

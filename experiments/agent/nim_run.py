@@ -333,9 +333,10 @@ def main(argv=None) -> int:
         print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")
         t0 = time.monotonic()
 
-        def write_dash(snaps: list[dict], done: bool = False) -> None:
+        def write_dash(snaps: list[dict], status: str = "live") -> None:
             """The dashboard rewrite: after every round while live, once
-            more at the finish (status flips, auto-refresh drops off)."""
+            more at the finish (status flips, auto-refresh drops off —
+            "extinct" when the last dynasty died before round N)."""
             meta = {
                 "title": f"econ.me dynasty run — {args.rounds} rounds",
                 "ticks_per_round": args.ticks_per_round,
@@ -345,9 +346,9 @@ def main(argv=None) -> int:
                 "world": world,
                 "round": snaps[-1]["round"] if snaps else 0,
                 "rounds_total": args.rounds,
-                "status": "complete" if done else "live",
+                "status": status,
             }
-            if not done:
+            if status == "live":
                 meta["refresh_s"] = 10
             _atomic_write(out / "dashboard.html",
                           build_dashboard(snaps, meta))
@@ -363,7 +364,8 @@ def main(argv=None) -> int:
             proc.send_signal(signal.SIGTERM)
             proc.wait(timeout=10)
 
-    write_dash(snapshots, done=True)
+    write_dash(snapshots, status="complete" if len(snapshots) >= args.rounds
+               else "extinct")
     (out / "snapshots.json").write_text(json.dumps(snapshots, indent=1))
 
     print(f"\ndone in {elapsed:.0f}s — {snapshots[-1]['ticks'][-1]} ticks, "
