@@ -117,7 +117,10 @@ def test_need_renders_draw_order_and_condition_link(session):
     _seed(session)
     state = catalog_state(session)
     food = next(n for n in state["needs"] if n["code"] == "FOOD")
-    assert food["draws"] == "1 FOOD per tick from BERRIES, JERKY (in draw order)"
+    assert food["draws"] == (
+        "draws 1/tick from holdings, eating BERRIES, then JERKY; "
+        "tried in that order, each unit covers one tick"
+    )
     assert food["condition"] == {"symbol": "HUNGER", "quantity": "1"}
 
 
@@ -238,7 +241,7 @@ def test_catalog_text_is_the_prompt_fold(session):
     assert "- BERRIES (Berries)" in text          # name rides
     assert "decays 25%/tick" in text              # derived effect
     assert "== NEEDS (drawn every tick; shortfalls bite) ==" in text
-    assert "per tick from" in text                 # the draw line renders
+    assert "draws 1/tick from holdings, eating" in text  # the draw-order line renders
     assert "== THE ACTION SPACE (recipes: inputs -> outputs) ==" in text
     assert "GATHER" in text
     assert "== MARKETS (order books; quote currencies) ==" in text

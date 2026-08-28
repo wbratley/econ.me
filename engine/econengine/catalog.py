@@ -143,6 +143,26 @@ def recipe_effects(recipe: Recipe) -> list[str]:
     return lines
 
 
+def _satisfier_chain(need: Need, good_by_symbol: dict[str, Good]) -> str:
+    """The need's satisfiers as a draw-order sentence.
+
+    The consumption pass eats holdings of these goods each tick, tried
+    in relationship order (symbol-ascending), each unit covering one
+    tick's draw. A satisfier that fully decays within a tick is flagged
+    inline: it is a flow (spend it the tick it lands or it is gone),
+    not a store -- the difference run 15's readers kept missing when
+    the list read like a menu of equivalents.
+    """
+    names = []
+    for s in need.satisfiers:
+        g = good_by_symbol.get(s.symbol)
+        if g is not None and g.decay_per_tick and g.decay_per_tick >= 1:
+            names.append(f"{s.symbol} (fades the same tick)")
+        else:
+            names.append(s.symbol)
+    return ", then ".join(names)
+
+
 def catalog_state(session: Session) -> dict:
     """The whole readable world, grouped by row kind (§15.1: `GET /catalog`).
 
@@ -159,6 +179,8 @@ def catalog_state(session: Session) -> dict:
     for need in needs:
         if need.condition_symbol:
             needs_by_condition.setdefault(need.condition_symbol, []).append(need)
+
+    good_by_symbol = {g.symbol: g for g in goods}
 
     return {
         "goods": [
@@ -181,10 +203,14 @@ def catalog_state(session: Session) -> dict:
                 "name": n.name,
                 "description": n.description,
                 "pack": n.pack_id,      # 15.4 provenance; None = platform
+                # Draw-order wording: the need is PAID from holdings,
+                # satisfier by satisfier in the order the consumption
+                # pass tries them -- not a menu of equivalent sources.
                 "draws": (
-                    f"{_num(n.quantity_per_tick)} {n.code} per tick from "
-                    + ", ".join(s.symbol for s in n.satisfiers)
-                    + (" (in draw order)" if len(n.satisfiers) > 1 else "")
+                    f"draws {_num(n.quantity_per_tick)}/tick from holdings, "
+                    f"eating {_satisfier_chain(n, good_by_symbol)}"
+                    + ("; tried in that order, each unit covers one tick"
+                       if len(n.satisfiers) > 1 else " (1:1)")
                 ),
                 "entity_type": n.entity_type.value if n.entity_type else None,
                 "priority": n.priority,
