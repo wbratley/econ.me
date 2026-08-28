@@ -10,6 +10,7 @@ snapshots alone.
 
 import hashlib
 import json
+from pathlib import Path
 from decimal import Decimal
 
 import pytest
@@ -485,3 +486,89 @@ def test_price_table_and_assets_value_holdings(client, monkeypatch, tmp_path):
         assets = dynasty_assets(view, prices)
         assert assets >= 0          # GRAIN buffers are valued once GRAIN trades
 
+
+
+# ===========================================================================
+# Resume: a reboot kills the runner, not the world
+# ===========================================================================
+
+def test_run_rounds_resumes_with_prior_snapshots(client, monkeypatch, tmp_path):
+    """Round numbering continues, prior snapshots ride along in the list
+    (the dashboard must not forget round 1 because the process
+    restarted), and round-XX.json files append, not clobber."""
+    loops = make_loops(client, [[CLEAN]] * 3, monkeypatch, rounds_k=2)
+    prior = run_rounds(loops, 1, tmp_path)
+    assert [p["round"] for p in prior] == [1]
+
+    # a "new process": fresh loops against the SAME world
+    loops2 = make_loops(client, [[CLEAN2]] * 3, rounds_k=2)
+    snaps = run_rounds(loops2, 2, tmp_path, start_round=2, snapshots=prior)
+    assert [p["round"] for p in snaps] == [1, 2]
+    assert sorted(p.name for p in tmp_path.glob("round-*.json")) == \
+        ["round-01.json", "round-02.json"]
+
+
+def test_nim_run_resume_end_to_end(tmp_path):
+    """The actual reboot path: run the CLI scripted offline, let it
+    finish rounds 1-2, then a second process --resume's the same out
+    dir to rounds 3-4. World db kept, journals appended, meta complete,
+    snapshots carry all four rounds."""
+    import json as _json
+    import socket
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    def script(name, lines):
+        p = tmp_path / name
+        p.write_text("\n".join(_json.dumps(l) for l in lines) + "\n")
+        return str(p)
+
+    a = [script("a1.jsonl", ["ctx.state.note = 'one'",
+                             "ctx.state.note = 'two'"]),
+         script("a2.jsonl", ["ctx.state.note = 'one'",
+                             "ctx.state.note = 'two'"])]
+    b = [script("b1.jsonl", ["ctx.state.note = 'three'",
+                             "ctx.state.note = 'four'"]),
+         script("b2.jsonl", ["ctx.state.note = 'three'",
+                             "ctx.state.note = 'four'"])]
+    out = tmp_path / "run"
+
+    def call(files, rounds, extra=()):
+        return subprocess.run(
+            [sys.executable, "-m", "experiments.agent.nim_run",
+             "--scripted", *files, "--names", "House A", "House B",
+             "--scenario", "stone_age", "--rounds", str(rounds),
+             "--ticks-per-round", "2", "--port", str(port), "--serve", "0",
+             "--out", str(out), *extra],
+            cwd=repo, capture_output=True, text=True, timeout=300)
+
+    first = call(a, 2)
+    assert first.returncode == 0, first.stderr[-2000:]
+    assert sorted(p.name for p in out.glob("round-*.json")) == \
+        ["round-01.json", "round-02.json"]
+
+    second = call(b, 4, extra=("--resume",))
+    assert second.returncode == 0, second.stderr[-2000:]
+    assert "resuming" in second.stdout
+    assert sorted(p.name for p in out.glob("round-*.json")) == \
+        [f"round-0{i}.json" for i in range(1, 5)]
+
+    meta = _json.loads((out / "meta.json").read_text())
+    assert meta["round"] == 4
+    assert meta["status"] == "complete"
+    snaps = _json.loads((out / "snapshots.json").read_text())
+    assert [s["round"] for s in snaps] == [1, 2, 3, 4]
+    for j in out.glob("journal-*.jsonl"):
+        assert len(j.read_text().splitlines()) == 4  # 2 + 2, appended
+
+    # and the guard: no --resume against a built world refuses loudly
+    # rather than silently unlinking 4 rounds of world
+    third = call(b, 6)
+    assert third.returncode != 0
+    assert "--resume" in third.stderr
+    assert len(list(out.glob("round-*.json"))) == 4  # nothing destroyed

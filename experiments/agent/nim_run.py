@@ -46,7 +46,8 @@ from pathlib import Path
 from .dashboard import build_dashboard
 from .llm import Model, NimModel, ScriptedModel, nim_key
 from .loop import AgentLoop, McpClient
-from .multi import Dynasty, build_agent_world, run_rounds
+from .multi import (Dynasty, build_agent_world, read_world_meta,
+                    run_rounds)
 
 
 def http_transport(base: str, token: str):
@@ -118,15 +119,17 @@ def serve_run(out: Path, port: int) -> bool:
 def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
     """Fresh DB, one admin + one user per dynasty, in-process (the OAuth
     surface is for humans; a harness mints directly). Must run BEFORE any
-    app import so DATABASE_URL points at the run's own database."""
+    app import so DATABASE_URL points at the run's own database.
+    Idempotent users: a --resume bootstrap finds them already there and
+    just re-mints tokens (adding them again would violate id uniqueness);
+    main() refuses to touch an existing world without --resume, so this
+    never unlinks."""
     db_path = out / "world.db"
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
     # The harness outlives an hour-long human session: tokens must last the
     # whole run (a 20-round world runs past 60 minutes — learned the hard
     # way when round 12 bounced 401 on set_ready).
     os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "100000"
-    if db_path.exists():
-        db_path.unlink()
 
     from sqlalchemy.orm import Session
     from econengine.models import Base, User
@@ -135,11 +138,13 @@ def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
 
     Base.metadata.create_all(db_engine)
     with Session(db_engine) as s:
-        s.add(User(id="u-admin", email="admin@run", name="Operator",
-                   provider="test", provider_id="0", is_admin=True))
+        if s.get(User, "u-admin") is None:
+            s.add(User(id="u-admin", email="admin@run", name="Operator",
+                       provider="test", provider_id="0", is_admin=True))
         for d in dynasties:
-            s.add(User(id=d.user_id, email=f"{d.user_id}@run", name=d.name,
-                       provider="test", provider_id=d.user_id[-1]))
+            if s.get(User, d.user_id) is None:
+                s.add(User(id=d.user_id, email=f"{d.user_id}@run", name=d.name,
+                           provider="test", provider_id=d.user_id[-1]))
         s.commit()
         admin_token = create_token("u-admin", "admin@run", True)
         for d in dynasties:
@@ -198,6 +203,11 @@ def main(argv=None) -> int:
                     help="live dashboard: serve the out dir here "
                          "(0 disables; nginx on the same dir works too)")
     ap.add_argument("--out", default="/tmp/nim-run")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue an interrupted run in --out: keep its "
+                         "world.db and seats, skip rounds already on disk "
+                         "(round-XX.json), append to its journals. Without "
+                         "an existing world this just runs fresh.")
     ap.add_argument("--keep-server", action="store_true")
     args = ap.parse_args(argv)
 
@@ -230,21 +240,57 @@ def main(argv=None) -> int:
         for name, mn in zip(names, model_names)
     ]
 
+    # A reboot-safe runner must not silently destroy an interrupted run:
+    # notice the existing world BEFORE bootstrap or anything else opens it.
+    if (out / "world.db").exists() and not args.resume:
+        raise SystemExit(
+            f"{out} already holds a world — pass --resume to continue it, "
+            "or point --out at a fresh directory")
     started = _dt.datetime.now(_dt.timezone.utc)
     bootstrap(out, args.names, dynasties)
 
     # The world, in-process against the run DB (content pack + owned seats
     # + readiness gate), before the server ever starts.
+    from sqlalchemy import select as _select
     from sqlalchemy.orm import Session
     from econ.db import engine as db_engine
+    from econengine.models import Entity, WorldSetting
+
+    start_round, prior_snaps = 1, []
+    for p in sorted(out.glob("round-*.json")):
+        prior_snaps.append(json.loads(p.read_text()))
+        start_round = max(start_round, prior_snaps[-1]["round"] + 1)
 
     with Session(db_engine) as s:
-        world_meta = build_agent_world(s, dynasties, scenario=args.scenario)
+        gate = s.execute(_select(WorldSetting.key)
+                         .where(WorldSetting.key == "round.gate")).first()
+        if gate is not None:
+            # Attach to the existing seats: same deterministic user ids,
+            # entity ids recovered from ownership — the world IS the state.
+            for d in dynasties:
+                ent = s.execute(_select(Entity)
+                                .where(Entity.owner_id == d.user_id)
+                                ).scalar_one_or_none()
+                if ent is None:
+                    raise SystemExit(
+                        f"--resume: no seat owned by {d.user_id} — is "
+                        f"{out} the run dir for these --names?")
+                d.entity_id = ent.id
+            world_meta = read_world_meta(s)
+            print(f"resuming: world intact, rounds 1..{start_round - 1} "
+                  f"on disk; continuing at {start_round}")
+        else:
+            world_meta = build_agent_world(s, dynasties, scenario=args.scenario)
     manual = (world_meta or {}).get("manual")
     catalog = (world_meta or {}).get("catalog")
     world = {d.name: {"user_id": d.user_id,
                       "entity_id": d.entity_id, "model": d.model_name}
              for d in dynasties}
+
+    if args.resume and start_round > args.rounds:
+        print(f"nothing to do: {start_round - 1} rounds on disk, "
+              f"--rounds {args.rounds} — run complete already")
+        return 0
 
     os.environ["ECON_TICKS_PER_ROUND"] = str(args.ticks_per_round)
     proc = spawn_server(args.port, out / "server.log")
@@ -308,7 +354,9 @@ def main(argv=None) -> int:
             _atomic_write(out / "meta.json", json.dumps(meta, indent=1))
 
         snapshots = run_rounds(loops, args.rounds, out,
-                               on_round=write_dash)
+                               on_round=write_dash,
+                               start_round=start_round,
+                               snapshots=prior_snaps)
         elapsed = time.monotonic() - t0
     finally:
         if not args.keep_server:
