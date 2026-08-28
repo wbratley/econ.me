@@ -199,5 +199,10 @@ def test_cancel_order_not_open(world):
     session, alice, a, market = world
     order = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("1"), a.id)
     cancel_order(session, order.id, alice.id)
-    with pytest.raises(ValueError, match="only open"):
-        cancel_order(session, order.id, alice.id)
+    # Idempotent (run 15: 49 rejections were cancel-replace churn
+    # racing its own fills): cancelling again is the caller's success
+    # state -- "nothing rests" -- not an error. Unknown ids and
+    # foreign orders still raise.
+    again = cancel_order(session, order.id, alice.id)
+    assert again.id == order.id
+    assert again.status.value == "cancelled"

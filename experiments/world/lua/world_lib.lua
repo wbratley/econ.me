@@ -18,7 +18,7 @@ function world.settle_last_orders()
 
   for _, e in ipairs(ctx.events) do
     if e.type == "place_order" and e.status == "applied" and e.order_id then
-      ctx.action.cancel_order(e.order_id, 1)
+      ctx.action.cancel_order(e.order_id)
       by_order[e.order_id] = {
         key = e.params.symbol .. "|" .. e.params.side,
         ordered = tonumber(e.params.quantity) or 0,

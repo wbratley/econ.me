@@ -38,7 +38,7 @@ function pack.sell_surplus(symbol, keep, anchor, account_id, fills)
   if qty <= 0.01 then return end
   local ask = pack.concede(fills, symbol) * anchor
   ctx.action.place_order(symbol, "sell", std.amount_str(qty),
-                          std.amount_str(ask), account_id, 40)
+                          std.amount_str(ask), account_id)
 end
 
 -- Top up a GRAIN pantry of `pantry` units. The food BUYERS (miner, smith)
@@ -55,7 +55,7 @@ function pack.buy_food(account_id, balance, grain_price, pantry)
   local qty = math.min(want, balance / bid)
   if qty > 0.01 then
     ctx.action.place_order("GRAIN", "buy", std.amount_str(qty),
-                            std.amount_str(bid), account_id, 30)
+                            std.amount_str(bid), account_id)
     balance = balance - qty * bid
   end
   return balance

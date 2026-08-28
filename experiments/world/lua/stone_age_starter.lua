@@ -16,6 +16,12 @@
 -- the blocks just set the priority order in which intents queue.
 --
 -- Vocabulary: std.* (engine), world.* (this world), pack.* (opinions).
+-- Idioms worth copying (docs/scripting.md has the full surfaces):
+--   book prices are nil on an empty side -- ALWAYS pass a fallback:
+--     local ask = std.best_ask("JERKY", 0)
+--   a holding's spendable side is smaller than holding_qty when your
+--   running processes reserve some of it:
+--     if std.unreserved("LABOR") >= 1 then ... end
 
 local camp = ctx.parcels[1] and ctx.parcels[1].id
 local fire = std.facility_parcel("FIRE")
@@ -28,27 +34,27 @@ local food   = std.holding_qty("BERRIES") + std.holding_qty("COOKED_MEAT")
 -- 0. Desperate: nothing to eat but raw meat. Take the risk -- disease is
 --    a chance, starvation is a schedule. (EAT_RAW is labor-free.)
 if food + std.holding_qty("SATIETY") < 1 and meat >= 1 then
-  ctx.action.start_process("EAT_RAW", nil, 20)
+  ctx.action.start_process("EAT_RAW")
 end
 
 -- 1. The fire: build it, then keep it fed. A tended fire (~8 warmth a
 --    log) covers ~4 ticks; tend when the stock runs low.
 if not fire then
   if wood >= 2 then
-    ctx.action.start_process("MAKE_FIRE", camp, 20)
+    ctx.action.start_process("MAKE_FIRE", camp)
   end
 elseif warmth < 3 and wood >= 1 and not std.running_recipe("TEND_FIRE") then
-  ctx.action.start_process("TEND_FIRE", fire, 20)
+  ctx.action.start_process("TEND_FIRE", fire)
 end
 
 -- 2. Cooking: fire + 2 raw meat -> 2 safe food.
 if fire and meat >= 2 and food < 4 then
-  ctx.action.start_process("COOK_MEAT", fire, 20)
+  ctx.action.start_process("COOK_MEAT", fire)
 end
 
 -- 3. Everything else is gathering: food first, then wood for the fire.
 if food < 3 or wood < 3 then
   if not std.running_recipe("GATHER") then
-    ctx.action.start_process("GATHER", nil, 20)
+    ctx.action.start_process("GATHER")
   end
 end

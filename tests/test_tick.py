@@ -102,8 +102,8 @@ def test_failed_intent_does_not_block_others(world):
     make_script(
         session, "overdraw-then-pay",
         f"""
-ctx.action.transfer('{a.id}', '{b.id}', '999999', 'too much', 10)
-ctx.action.transfer('{a.id}', '{b.id}', '50', 'ok', 20)
+ctx.action.transfer('{a.id}', '{b.id}', '999999', 'too much')
+ctx.action.transfer('{a.id}', '{b.id}', '50', 'ok')
 """,
         alice,
     )
@@ -118,12 +118,15 @@ ctx.action.transfer('{a.id}', '{b.id}', '50', 'ok', 20)
 
 def test_priority_orders_intents(world):
     session, alice, bob, cb, a, b, c = world
-    # Only 1000 available: the lower-priority-number intent must win
+    # Only 1000 available. Intent priority is no longer a script-facing
+    # argument (run 15: the unlabeled trailing number was read as a
+    # duration); at the uniform default, the stable sort resolves ties
+    # in the order the script queued them -- first line, first claim.
     make_script(
         session, "compete",
         f"""
-ctx.action.transfer('{a.id}', '{b.id}', '800', 'low priority', 200)
-ctx.action.transfer('{a.id}', '{c.id}', '800', 'high priority', 1)
+ctx.action.transfer('{a.id}', '{c.id}', '800', 'first claim')
+ctx.action.transfer('{a.id}', '{b.id}', '800', 'second claim')
 """,
         alice,
     )
@@ -131,8 +134,8 @@ ctx.action.transfer('{a.id}', '{c.id}', '800', 'high priority', 1)
     tick = run_tick(session)
 
     by_ref = {e["params"]["reference"]: e["status"] for e in tick.events}
-    assert by_ref["high priority"] == "applied"
-    assert by_ref["low priority"] == "rejected"
+    assert by_ref["first claim"] == "applied"
+    assert by_ref["second claim"] == "rejected"
     assert c.balance == Decimal("800")
 
 

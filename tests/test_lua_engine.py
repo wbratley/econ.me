@@ -60,10 +60,19 @@ def test_intent_default_priority():
     assert result.intents[0].priority == 100
 
 
-def test_intent_custom_priority():
+def test_intent_extra_arguments_are_refused():
+    # Lua silently discards extra call arguments; the action surface
+    # must not (run 15: invented trailing args queued intents that
+    # meant something else, with no error anywhere). The submit gate
+    # smoke-runs every script, so this surfaces at submit time --
+    # in the author's hands -- not at the entity's next tick.
     src = "ctx.action.transfer('a', 'b', '1', 'ref', 10)"
     result = engine.run(src, _CTX)
-    assert result.intents[0].priority == 10
+    assert result.error and "ctx.action.transfer takes" in result.error
+
+    src = "ctx.action.start_process('GATHER', nil, 20)"
+    result = engine.run(src, _CTX)
+    assert result.error and "ctx.action.start_process takes (recipe, parcel_id)" in result.error
 
 
 def test_state_mutations_returned():
@@ -376,3 +385,12 @@ def test_stdlib_fingerprint_is_stable_identity():
     # The fingerprint tracks the source: the pinned vocabulary IS this text.
     import hashlib
     assert fp == hashlib.sha256(stdlib_source().encode()).hexdigest()[:16]
+
+
+def test_std_unreserved_smoke():
+    # std.unreserved over the synthetic query (None) is nil, not an
+    # error: the same nil-safe discipline as std.best_bid.
+    src = "ctx.state.x = std.unreserved('LABOR') or 'nil'"
+    result = engine.run(src, _CTX)
+    assert result.error is None
+    assert result.state_updates["x"] == "nil"
