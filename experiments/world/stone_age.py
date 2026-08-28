@@ -19,7 +19,8 @@ the world is POOR and the needs are FATAL:
     and trade have room to pay.
 
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
-SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows WARMTH/SATIETY and the
+JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
+WARMTH/SATIETY and the
 conditions HUNGER/EXPOSURE/DISEASE. Money is COIN — found, not endowed:
 seats start with walking money, the bagged gather mints the rest, and
 food, materials, tools and spare LABOR all trade on COIN markets (no
@@ -135,7 +136,8 @@ where each one kills.
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + a tick): cooking + warmth. Do not sleep fireless.
 2. BAG (3 YARN-ish, one tick): doubles EVERY future gather, finds COIN.
-3. SPEAR (flint+yarn): meat surplus -> COOKED_MEAT stock -> sell MEAT.
+3. SPEAR (flint+yarn): meat surplus -> COOKED_MEAT stock, or SMOKE_MEAT
+   it into JERKY (slower, costs a log, NEVER rots) -> sell MEAT.
 4. SHELTER + CLOTHES (7 WOOD + 7 YARN): the 1.5 warmth need becomes
    FREE. Every TEND_FIRE tick you stop paying is a gather you gained.
 5. TRAPs: convert surplus WOOD+YARN into the best hunt table.
@@ -271,13 +273,17 @@ def _create_goods(session: Session) -> None:
                       description="Fire-cooked meat: keeps a little better than "
                                   "raw and feeds you without disease risk.",
                       decay_per_tick=Decimal("0.25"))
-    # ...except JERKY: salted meat keeps forever. Only the Trading Post
-    # stocks it -- the shop shelf that is never bare (run 4's timing
-    # gap: agents arrive coin-poor early and coin-rich late, so the
-    # late coin needs something to buy that rot did not eat).
+    # ...except JERKY: salted meat keeps forever. The Trading Post always
+    # stocks it (run 4's timing gap: agents arrive coin-poor early and
+    # coin-rich late, so the late coin needs something to buy that rot
+    # did not eat) -- and since the smokehouse landed, a seat can salt
+    # its own: SMOKE_MEAT is the preservation path from surplus hunts.
     goods.create_good(session, "JERKY", name="Jerky",
-                      description="Salted meat that never rots. Stocked only by "
-                                  "the Trading Post — the shelf that is never bare.")
+                      description="Salted meat that never rots — bought from "
+                                  "the Trading Post, or smoked by hand at a "
+                                  "fire (SMOKE_MEAT: a slow fire and a log "
+                                  "turns raw meat into the only food that "
+                                  "keeps).")
     # Gathered materials -- durable.
     goods.create_good(session, "WOOD", name="Wood",
                       description="Gathered timber: the fuel of fires and the "
@@ -439,6 +445,21 @@ def _create_recipes(session: Session) -> None:
         description="Fire-cooked meat: no disease, keeps a little better.",
         inputs={"LABOR": D("1"), "MEAT": D("2")},
         outputs={"COOKED_MEAT": D("2")}, duration_ticks=1,
+        requires_facility="FIRE",
+    )
+    # The smokehouse: preservation as a craft. Smoking is deliberately
+    # SLOW (5 ticks vs cooking's 1) and costs a log -- you pay time and
+    # wood for food that never rots. It is the house-made answer to the
+    # post's salted shelf, and the only way a hunt outlives the week:
+    # meat decays at 0.30/tick, jerky at 0. Run 16's houses starved
+    # beside rotting larders; now the ladder has a preservation rung.
+    production.create_recipe(
+        session, "SMOKE_MEAT", name="Smoke Meat",
+        description="Slow-smoke raw meat over your fire: a log and a long "
+                    "wait turn hunts into jerky — the only food that never "
+                    "rots. Time is the price of permanence.",
+        inputs={"LABOR": D("1"), "MEAT": D("2"), "WOOD": D("1")},
+        outputs={"JERKY": D("2")}, duration_ticks=5,
         requires_facility="FIRE",
     )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
