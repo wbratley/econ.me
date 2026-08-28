@@ -103,6 +103,16 @@ def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "fronti
     # stays authored). Rival privacy (multi's own read below) is a pack
     # decision, not an agent-client one.
     manual_row = session.get(WorldSetting, getattr(pack, "MANUAL_KEY", "world.manual"))
+    return read_world_meta(session)
+
+
+def read_world_meta(session) -> dict:
+    """The manual + rendered catalog from a BUILT world — the same read
+    build_agent_world returns, for a process that attaches to an
+    existing world (nim_run --resume) instead of building one."""
+    from econengine.models import WorldSetting
+
+    manual_row = session.get(WorldSetting, "world.manual")
     return {
         "manual": (manual_row.value or {}).get("text") if manual_row else None,
         # The readable world, rendered at read time from the same shared
@@ -266,13 +276,18 @@ def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
 
 def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                out_dir: str | Path,
-               admin_advance=None, on_round=None) -> list[dict]:
-    """Rounds 1..N. Each round: every dynasty cycles — CONCURRENTLY, the
-    decisions are independent — then readies in order, and the final
-    ready resolves the round in-request (readiness gate); a snapshot
-    lands in `out_dir/round-XX.json`. A dynasty whose model hard-fails
-    (network, provider) keeps its behaviour, journals the failure, and
-    STILL readies — one dead model must not stop the world.
+               admin_advance=None, on_round=None,
+               start_round: int = 1,
+               snapshots: list[dict] | None = None) -> list[dict]:
+    """Rounds start_round..N (default 1..N). A resumed run passes the
+    rounds already on disk as `snapshots` so `on_round` and the return
+    value carry the WHOLE run — the dashboard never forgets round 1
+    because the process restarted. Each round: every dynasty cycles —
+    CONCURRENTLY, the decisions are independent — then readies in order,
+    and the final ready resolves the round in-request (readiness gate);
+    a snapshot lands in `out_dir/round-XX.json`. A dynasty whose model
+    hard-fails (network, provider) keeps its behaviour, journals the
+    failure, and STILL readies — one dead model must not stop the world.
     `admin_advance` is the referee fallback for a round nobody resolved
     (never expected in readiness mode; keeps long runs unstickable).
     `on_round(snapshots)` fires after each resolved round with the
@@ -280,9 +295,9 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     mcps = [(d, lp.mcp) for d, lp in loops]
-    snapshots: list[dict] = []
+    snapshots = snapshots if snapshots is not None else []
 
-    for round_no in range(1, rounds + 1):
+    for round_no in range(start_round, rounds + 1):
         resolved, entries = None, {}
         with ThreadPoolExecutor(max_workers=len(loops)) as pool:
             futures = [(d, pool.submit(_decide, d, lp, round_no))

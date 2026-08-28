@@ -4,6 +4,7 @@
 # usage: scripts/stone-run.sh <run-number> [rounds]
 #   e.g.: scripts/stone-run.sh 14          # 40 rounds (default)
 #         scripts/stone-run.sh 14 20       # 20 rounds
+#         scripts/stone-run.sh 14 40 resume # continue run 14 after a crash
 #
 # Ports are allocated per run number -- keep this table current:
 #   run 10 -> 8915/8109/8110   run 11 -> 8916/8111/8112
@@ -35,6 +36,14 @@ NAMES=("House Ivar" "House Lagertha" "House Harald")
 mkdir -p "$OUT"
 cd "$REPO"
 
+# `resume` as the third word continues the interrupted run in $OUT: its
+# world.db and seats survive the runner dying (a reboot took run 16 down
+# at round 8 of 40); rounds already on disk are skipped, journals append.
+EXTRA=()
+if [ "${3:-}" = "resume" ]; then
+  EXTRA+=(--resume)
+fi
+
 # Pre-flight: a port still held by a previous run's orphaned uvicorn
 # (killing nim_run leaves the world server behind) means the new run's
 # clients silently attach to the OLD world and die on its stale gate --
@@ -53,6 +62,7 @@ setsid nohup "$PY" -m experiments.agent.nim_run \
   --names "${NAMES[@]}" \
   --scenario stone_age --rounds "$ROUNDS" --ticks-per-round 20 \
   --edit-mode --diary --port "$PORT" --serve "$DASH" --out "$OUT" \
+  "${EXTRA[@]}" \
   > "$OUT/run.log" 2>&1 &
 
 cd "$OUT"
