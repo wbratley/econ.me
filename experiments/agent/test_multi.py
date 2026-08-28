@@ -572,3 +572,44 @@ def test_nim_run_resume_end_to_end(tmp_path):
     assert third.returncode != 0
     assert "--resume" in third.stderr
     assert len(list(out.glob("round-*.json"))) == 4  # nothing destroyed
+
+
+def test_run_rounds_stops_cleanly_on_total_extinction(client, monkeypatch,
+                                                      tmp_path):
+    """Run 16's ending: the last house died mid-round and the run CRASHED
+    on round 27 with 'did not resolve' — nobody was left to close the
+    gate. Total extinction must stop the world cleanly instead: the
+    snapshot list ends at the last resolved round, no exception."""
+    from econengine.models import Entity, EntityStatus
+
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch,
+                      rounds_k=2)
+    prior = run_rounds(loops, 1, tmp_path)
+    assert [p["round"] for p in prior] == [1]
+
+    # the reboot-and-starve: a resumed process finds everyone dead
+    with Session(client["engine"]) as s:
+        for d in client["dynasties"]:
+            s.get(Entity, d.entity_id).status = EntityStatus.INCAPACITATED
+        s.commit()
+
+    loops2 = make_loops(client, [["-- never used"]] * 3, rounds_k=2)
+    snaps = run_rounds(loops2, 4, tmp_path, start_round=2, snapshots=prior)
+    assert [p["round"] for p in snaps] == [1]      # nothing resolved past 1
+    assert sorted(p.name for p in tmp_path.glob("round-*.json")) == \
+        ["round-01.json"]
+
+
+def test_run_rounds_all_extinct_from_start_returns_empty(client, tmp_path):
+    """A world launched dead (bad scenario, hostile tuning) must return
+    no rounds quietly — not crash on a gate nobody can ever close."""
+    from econengine.models import Entity, EntityStatus
+
+    with Session(client["engine"]) as s:
+        for d in client["dynasties"]:
+            s.get(Entity, d.entity_id).status = EntityStatus.INCAPACITATED
+        s.commit()
+
+    loops = make_loops(client, [["-- never used"]] * 3)
+    assert run_rounds(loops, 2, tmp_path) == []
+    assert list(tmp_path.glob("round-*.json")) == []
