@@ -39,6 +39,7 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import clock
 from .models import (
     Entity, EntityStatus, EntityType, Holding, Need, NeedSatisfier, NeedState,
 )
@@ -57,6 +58,7 @@ def create_need(
     description: str = "",
     condition_symbol: str | None = None,
     condition_quantity: Decimal = Decimal("0"),
+    night_quantity_per_tick: Decimal | None = None,
 ) -> Need:
     existing = get_need(session, code)
     if existing is not None:
@@ -74,6 +76,10 @@ def create_need(
         raise ValueError(
             "condition_symbol and a positive condition_quantity go together"
         )
+    if night_quantity_per_tick is not None:
+        night_quantity_per_tick = Decimal(night_quantity_per_tick).quantize(_QUANTUM)
+        if night_quantity_per_tick <= 0:
+            raise ValueError("night_quantity_per_tick must be positive when set")
 
     need = Need(
         code=code.upper(),
@@ -81,6 +87,7 @@ def create_need(
         description=description,
         entity_type=entity_type,
         quantity_per_tick=quantity_per_tick,
+        night_quantity_per_tick=night_quantity_per_tick,
         priority=priority,
         condition_symbol=condition_symbol.upper() if condition_symbol else None,
         condition_quantity=condition_quantity,
@@ -111,7 +118,11 @@ def run_consumption(session: Session, tick_number: int) -> list[dict]:
         query = select(Entity).where(Entity.status == EntityStatus.ACTIVE).order_by(Entity.id)
         if need.entity_type is not None:
             query = query.where(Entity.entity_type == need.entity_type)
+        # The clock (run 18): a need with a night draw pulls the heavier
+        # rate during dark hours — the same cold, a colder intensity.
         required = need.quantity_per_tick
+        if need.night_quantity_per_tick is not None and clock.is_night(tick_number):
+            required = need.night_quantity_per_tick
         for entity in session.execute(query).scalars():
             consumed = Decimal("0")
             for satisfier in need.satisfiers:  # relationship is symbol-ordered

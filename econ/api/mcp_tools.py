@@ -33,7 +33,7 @@ from typing import Any, Callable
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from econengine import scripting, services, tech
+from econengine import clock, scripting, services, tech
 from econengine.catalog import catalog_state
 from econengine.describe import render_event, symbol_names
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
@@ -112,6 +112,7 @@ def tool_entity_state(session: Session, user: User, args: dict[str, Any]) -> dic
     ).order_by(Script.created_at.desc()).first()
 
     return {
+        "clock": clock.clock_facts(latest + 1),
         "entity": {
             "id": entity.id,
             "name": entity.name,

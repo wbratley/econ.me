@@ -209,6 +209,9 @@ ctx.action.issue_money("acct-1", "100", "issue")
 # ===========================================================================
 
 _LIB_CTX = {
+    "tick": 25,
+    "clock": {"tick": 25, "day": 2, "hour": 1, "is_day": False, "is_night": True,
+               "daylight_hours": "06:00-19:00"},
     "entity": {"id": "ent-1", "name": "T", "entity_type": "individual"},
     "accounts": [{"id": "acct-1", "currency": "USD", "balance": "100.0000"}],
     "holdings": [{"symbol": "GRAIN", "quantity": "3.5000"}],
@@ -246,6 +249,9 @@ def test_stdlib_pure_helpers_work():
         "facility_parcel": "return std.facility_parcel('FARM')",
         "deposit_parcel": "return std.deposit_parcel('ORE')",
         "amount_str": "return std.amount_str(1.5)",
+        "hour": "return std.hour()",
+        "is_night": "return std.is_night()",
+        "day": "return std.day()",
     }
     expected = {
         "missing_holding": 0,
@@ -260,6 +266,9 @@ def test_stdlib_pure_helpers_work():
         "facility_parcel": "p1",
         "deposit_parcel": "p1",
         "amount_str": "1.5000",
+        "hour": 1,
+        "is_night": True,
+        "day": 2,
     }
     for name, src in checks.items():
         result = engine.run(src, _LIB_CTX)
@@ -394,3 +403,18 @@ def test_std_unreserved_smoke():
     result = engine.run(src, _CTX)
     assert result.error is None
     assert result.state_updates["x"] == "nil"
+
+
+def test_std_clock_queries_nil_without_ctx_clock():
+    # An engine world with no clock facts (pre-run-18) still runs: the
+    # queries return nil, they never raise.
+    src = "ctx.state.h = std.hour(); ctx.state.n = std.is_night() " \
+          "; ctx.state.d = std.day()"
+    bare = dict(_LIB_CTX)
+    bare.pop("clock", None)
+    result = engine.run("return std.hour()", bare)
+    assert result.error is None
+    assert result.return_value is None
+    result = engine.run("return std.is_night()", bare)
+    assert result.error is None
+    assert result.return_value is None

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import String, Numeric, DateTime, Enum as SAEnum
+from sqlalchemy import Boolean, String, Numeric, DateTime, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base
 from .entity import EntityType
@@ -32,6 +32,13 @@ class Good(Base):
     auto_issue_entity_type: Mapped[EntityType | None] = mapped_column(
         SAEnum(EntityType), nullable=True
     )  # NULL = every entity
+    # Day/night clock (run 18): when true, the top-up only happens during
+    # daylight hours -- darkness issues nothing. The ration stays a
+    # fade-with-top-up (no banking: hoarded daylight would dominate), it
+    # just goes quiet at night.
+    auto_issue_daylight_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # Condition properties (docs/design.md § conditions). A good declaring
     # either is a condition: non-tradable-by-construction (no market), and
     # burned rather than transferred when an estate is applied.

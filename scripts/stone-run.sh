@@ -60,7 +60,7 @@ done
 setsid nohup "$PY" -m experiments.agent.nim_run \
   --models "${MODELS[@]}" \
   --names "${NAMES[@]}" \
-  --scenario stone_age --rounds "$ROUNDS" --ticks-per-round 20 \
+  --scenario stone_age --rounds "$ROUNDS" --ticks-per-round 24 \
   --edit-mode --diary --port "$PORT" --serve "$DASH" --out "$OUT" \
   "${EXTRA[@]}" \
   > "$OUT/run.log" 2>&1 &

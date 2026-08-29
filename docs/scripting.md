@@ -53,7 +53,7 @@ is only ever its own logic; vocabulary arrives from the tiers beneath it.
 
 | tier | ships with | scope | v0 contents (from the current prelude) |
 |---|---|---|---|
-| **engine stdlib** (`std`) | the engine + its test suite | pure functions over injected data; zero opinions; no world knowledge | `holding_qty`, `market_price`, `best_bid`, `best_ask`, `has_unlock`, `need_by_code`, `running_recipe`, `facility_parcel`, `deposit_parcel`, `amount_str` (+ thin `math`/`string` conveniences) |
+| **engine stdlib** (`std`) | the engine + its test suite | pure functions over injected data; zero opinions; no world knowledge | `holding_qty`, `market_price`, `best_bid`, `best_ask`, `has_unlock`, `need_by_code`, `running_recipe`, `facility_parcel`, `deposit_parcel`, `amount_str`, `hour`, `is_night`, `day` (+ thin `math`/`string` conveniences) |
 | **world lib** (`world`) | the world, at creation | engine idioms shared by every script in *this* world; no play opinions | `settle_last_orders` — the GTC order lifecycle (cancel last tick's generation, read fills from `place_order`/`trade` events); the duration-1 process timing |
 | **content pack** | the pack manifest | role behaviours, starters, anything with an opinion | `concede`, `sell_surplus`, `buy_food` (reservation-and-adapt pricing, clamps 0.3–3.0, steps −0.15/+0.03, hardcoded GRAIN, 3× bid cap, order priorities) |
 

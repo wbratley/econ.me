@@ -26,6 +26,11 @@ class Recipe(Base):
     # parcel-bound production: the process must be bound to a controlled parcel
     # carrying a facility of this type ("smelt at a forge"); NULL = unlocated
     requires_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Day/night clock (run 18): refuse to start during dark hours with a
+    # clear darkness error (GATHER/HUNT need light to see the work).
+    requires_daylight: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # construction: completion erects a facility of this type on the bound
     # parcel — the output is a facility rather than goods
     builds_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)

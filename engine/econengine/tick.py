@@ -68,7 +68,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import conditions, goods, markets, needs, parcels, production, rng, tech
+from . import clock, conditions, goods, markets, needs, parcels, production, rng, tech
 from . import witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
@@ -306,6 +306,7 @@ def _tick_scripts(session: Session, script_type: ScriptType):
 def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_events: list, tick_number: int) -> dict:
     return {
         "tick": tick_number,
+        "clock": clock.clock_facts(tick_number),
         "entity": {
             "id": entity.id,
             "name": entity.name,
