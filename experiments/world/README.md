@@ -133,13 +133,20 @@ costs most of the tick, tools buy back time, and neglect kills.
 | teeth | DISREPAIR (the UPKEEP sink) | HUNGER, EXPOSURE, DISEASE |
 | starter script | comfortable | hand-to-mouth treadmill |
 
-The shape: two needs — **FOOD** (0.5/hour from BERRIES / COOKED_MEAT,
+The shape: two needs — **FOOD** (0.5/hour from SATIETY, the stomach,
 else HUNGER) and **WARMTH** (1/hour by day, 3/hour at night, from the
 WARMTH flow-good, else EXPOSURE). **The clock (run 18)**: tick = hour,
 round = 24 ticks = one day; daylight is hours 06..19 — LABOR issues
 only then, and GATHER/HUNT are refused in the dark (a clear error that
 names the window). `std.hour()` / `std.is_night()` / `std.day()` are
-pure-info queries over `ctx.clock`. Food comes from GATHER (a
+pure-info queries over `ctx.clock`. **Conscious eating (run 19)**:
+nothing is eaten for you — the FOOD need drinks only SATIETY, and only
+EAT recipes fill the stomach: EAT_BERRIES (2 berries, ~3h),
+EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
+25%-per-meal DISEASE lottery). Meals are labor-free, instant and
+night-legal; the stomach spills a tenth an hour, so a day costs ~14 —
+the treadmill arithmetic is unchanged, but a full larder now feeds
+nobody until someone runs the recipe. Food comes from GATHER (a
 loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
 warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log
 carries the colder night) plus a graded ladder — REST under a SHELTER

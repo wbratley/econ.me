@@ -30,6 +30,18 @@ rounds becomes 0.5/hour against 24-hour days so the daylight work-day
 at 20 one-tick rounds. Durations are honest hours (a spear is an
 afternoon, smoking is a watch of the night fire).
 
+CONSCIOUS EATING (run 19): the engine no longer chews for you. FOOD's
+only satisfier is SATIETY -- the stomach -- and only EAT recipes fill
+it: EAT_BERRIES (~3h fed), EAT_COOKED (~4h), EAT_JERKY (~5½h, the
+densest), EAT_RAW (~1h, a one-in-four disease lottery). Meals are
+labor-free, instant and night-legal; a fed body still burns ~0.6 an
+hour (0.5 need + a tenth of the stomach, compound -- ~14/day), so the
+treadmill is unchanged arithmetically -- but eating is now a decision
+with a cadence (two meals a day), and preservation economics is real:
+berries thin, jerky dense, exactly the trade a trader should
+arbitrage. The predicted failure mode is the point: starving beside a
+full larder is economics, not a bug.
+
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
 JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
 WARMTH/SATIETY and the
@@ -146,6 +158,17 @@ refuses gathering and hunting (too dark); tending, cooking, smoking,
 eating and resting all work. WARMTH draws 3/hour at night vs 1 by day:
 bank warmth stock before dark, or sleep by a fire (std.hour() and
 std.is_night() read the clock). Unspent labor is nearly worthless.
+
+MEALS ARE DECISIONS: nothing is eaten for you. Meals are labor-free,
+instant and night-legal -- but they do not happen by themselves.
+The FOOD need drinks SATIETY at 0.5/hour plus a tenth of the stomach
+each hour (a day costs ~14), and only EAT recipes fill the stomach:
+EAT_BERRIES (2 berries, ~3h), EAT_COOKED (~4h), EAT_JERKY (~5½h),
+EAT_RAW (~1h, one-in-four disease). A full larder feeds nobody until
+someone runs the recipe: starving beside one is a choice, and the
+clock will make it for you if you let it -- two meals a day is the
+natural cadence.
+
 A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
@@ -153,15 +176,18 @@ where each one kills.
 
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + an hour): cooking + warmth. Do not sleep fireless.
-2. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
-3. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
-   or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots)
-   -> sell MEAT.
-4. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
+2. EAT what spoils first: berries within hours, cooked within a day;
+   JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
+   hunger kills the careless before any tool matters.)
+3. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
+4. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
+   or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
+   ~6 hours fed per strip) -> sell MEAT.
+5. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
-5. TRAPs: convert surplus WOOD+YARN into the best hunt table.
-A tooled house gathers ~2.5 food per LABOR against a 0.5/hour need -- the
+6. TRAPs: convert surplus WOOD+YARN into the best hunt table.
+A tooled house gathers ~2.5 food per LABOR against a ~0.6/hour burn -- the
 surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
@@ -335,17 +361,24 @@ def _create_goods(session: Session) -> None:
                       description="Craftable comfort, mechanically idle — "
                                   "the expansion hook.")
     # Flows. WARMTH fades (0.2/tick): a tended fire warms you for a few
-    # ticks, not forever. SATIETY is instant (1.0 decay): eat-now food
-    # from the desperate EAT_RAW path, consumed the same tick.
+    # ticks, not forever. SATIETY is the stomach: filled only by EAT
+    # recipes (conscious eating, run 19 -- the engine no longer chews
+    # for you), drawn by the FOOD need every hour, and spilling a tenth
+    # of itself each hour besides -- a banked belly keeps about a day,
+    # no more (compound spill: a full stomach is a wasting asset).
     goods.create_good(session, "WARMTH", name="Warmth",
                       description="A flow, not a stock to hoard: made by fires, "
                                   "shelter and clothes, fades fast. The WARMTH "
                                   "need drinks it every tick.",
                       decay_per_tick=Decimal("0.2"))
     goods.create_good(session, "SATIETY", name="Satiety",
-                      description="Instant food from eating raw meat: lands and "
-                                  "is consumed the same tick.",
-                      decay_per_tick=Decimal("1"))
+                      description="The stomach. Only EAT recipes fill it "
+                                  "(berries thin, jerky dense, raw meat a "
+                                  "disease lottery); the FOOD need draws it "
+                                  "every hour and it spills on its own. Meals "
+                                  "are free, instant and night-legal -- but "
+                                  "they do not happen by themselves.",
+                      decay_per_tick=Decimal("0.1"))
     # Conditions. See the equilibrium notes in the module docstring.
     goods.create_good(
         session, "HUNGER", name="Hunger",
@@ -492,18 +525,51 @@ def _create_recipes(session: Session) -> None:
         outputs={"JERKY": D("2")}, duration_ticks=5,
         requires_facility="FIRE",
     )
+    # --- Eating: meals as decisions (run 19) --------------------------------
+    # Conscious eating: the FOOD need drinks only SATIETY, and only EAT
+    # recipes fill the stomach. All meals are labor-free, instant
+    # (duration 0: satiety lands before this tick's draw) and
+    # night-legal -- hunger does not keep daylight hours. The density
+    # ladder is the point: berries are thin (2 berries ~ 3 hours),
+    # jerky dense (one strip ~ 5½ hours, and it never rots) -- the trade
+    # a trader should arbitrage, the craft a hunter should practice.
+    # A fed body burns 0.5/hour plus a tenth of the stomach each hour
+    # (compound spill), so a day costs ~14: two jerky meals and change,
+    # or a dozen-and-a-half berries eaten as you gather them.
+    production.create_recipe(
+        session, "EAT_BERRIES", name="Eat Berries",
+        description="A belly of berries: thin food, eaten as gathered -- "
+                    "they spoil within hours anyway. ~3 hours fed.",
+        inputs={"BERRIES": D("2")}, outputs={"SATIETY": D("2")},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "EAT_COOKED", name="Eat Cooked Meat",
+        description="Fire-cooked, safe, satisfying: ~4 hours fed per meal.",
+        inputs={"COOKED_MEAT": D("1")}, outputs={"SATIETY": D("2.4")},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "EAT_JERKY", name="Eat Jerky",
+        description="The densest meal in the world: one strip ~ 5½ hours "
+                    "fed, and the strip itself never rots. Preservation "
+                    "you can taste.",
+        inputs={"JERKY": D("1")}, outputs={"SATIETY": D("3.6")},
+        duration_ticks=0,
+    )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
     # (duration 0: SATIETY lands before this tick's consumption pass), and
-    # a 25% chance of DISEASE. The alternative to cooking, priced in risk.
+    # a 25% chance of DISEASE. The thinnest meal at the highest risk --
+    # the alternative to cooking, priced in disease. ~1 hour fed.
     production.create_recipe(
         session, "EAT_RAW", name="Eat Raw Meat",
-        description="Desperation does not wait: free, instant — and a "
-                    "one-in-four chance of disease.",
+        description="Desperation does not wait: free, instant, ~1 hour fed -- "
+                    "and a one-in-four chance of disease.",
         inputs={"MEAT": D("1")}, outputs={}, duration_ticks=0,
         branches=[
-            {"weight": D("75"), "outputs": {"SATIETY": D("1")}, "label": "fine"},
+            {"weight": D("75"), "outputs": {"SATIETY": D("0.6")}, "label": "fine"},
             {"weight": EAT_RAW_DISEASE_WEIGHT,
-             "outputs": {"SATIETY": D("1"), "DISEASE": D("1")}, "label": "sick"},
+             "outputs": {"SATIETY": D("0.6"), "DISEASE": D("1")}, "label": "sick"},
         ],
     )
 
@@ -579,13 +645,18 @@ def _create_recipes(session: Session) -> None:
 
 
 def _create_needs(session: Session) -> None:
-    # FOOD: berries, cooked meat, or desperate SATIETY. Unmet -> HUNGER.
+    # FOOD: SATIETY only -- the stomach. Conscious eating (run 19): the
+    # engine no longer eats for you; EAT recipes are the only path from
+    # a full larder to a fed body, and starving beside one is the
+    # experiment, not a bug. Unmet -> HUNGER, as ever.
     needs.create_need(
-        session, "FOOD", FOOD_PER_TICK, ["BERRIES", "COOKED_MEAT", "JERKY", "SATIETY"],
+        session, "FOOD", FOOD_PER_TICK, ["SATIETY"],
         name="Food",
-        description="One meal a tick, drawn in order: berries, then cooked "
-                    "meat, then jerky, then raw satiety. Miss it and hunger "
-                    "accrues.",
+        description="The stomach's hourly draw (0.5). Only EAT recipes fill "
+                    "it -- EAT_BERRIES (thin), EAT_COOKED, EAT_JERKY (dense), "
+                    "EAT_RAW (a disease lottery). A larder is not a meal: "
+                    "food in holdings satisfies nothing until you eat it. "
+                    "Miss the draw and hunger accrues.",
         entity_type=EntityType.INDIVIDUAL, priority=0,
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
