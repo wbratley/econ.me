@@ -10,7 +10,8 @@
 #   run 10 -> 8915/8109/8110   run 11 -> 8916/8111/8112
 #   run 12 -> 8917/8113/8114   run 13 -> 8917/8113/8114 (reused after reboot)
 #   run 14 -> 8918/8115/8116   run 15 -> 8919/8117/8118
-#   run 16 -> 8920/8119/8120   run 17 -> 8921/8121/8122 (defaults)
+#   run 16 -> 8920/8119/8120   run 17 -> 8921/8121/8122
+#   run 18 -> 8922/8123/8124 (defaults)
 set -euo pipefail
 
 REPO=/home/ice52/git/econ.me
@@ -21,9 +22,9 @@ ROUNDS=${2:-40}
 # Under $HOME, not /tmp: a reboot wiped /tmp mid-run-15 (attempt 5 died ~12
 # minutes into its 40 rounds). $HOME survives.
 OUT=$HOME/econ-runs/stone-run$N
-PORT=8921      # world API
-DASH=8121      # dashboard (served by the run itself)
-LAN=8122       # LAN sidecar for $OUT
+PORT=8922      # world API
+DASH=8123      # dashboard (served by the run itself)
+LAN=8124       # LAN sidecar for $OUT
 MODELS=(openai/gpt-oss-20b openai/gpt-oss-20b openai/gpt-oss-20b)
 # (Seat history: llama-3.3-70b EOL'd 2026-08-26; nemotron-3-super played 3
 #  lukewarm rounds; llama-3.2-90b-vision brains-but-glacial (>15min calls
