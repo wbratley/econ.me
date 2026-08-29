@@ -588,7 +588,7 @@ TOOLS: list[Tool] = [
                        "derived effect line — decay, conditions, auto-issue), "
                        "every recipe (inputs → outputs, duration, gates, branch "
                        "odds), the tech tree, needs (satisfiers and hourly "
-                       "draws), and markets. "
+                       "draws), threats (night pressure), and markets. "
                        "The world's vocabulary, public facts only.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
         "handler": tool_world_catalog,

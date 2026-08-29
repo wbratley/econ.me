@@ -114,7 +114,7 @@ def _content_counts() -> dict[str, dict[str, int]]:
     from sqlalchemy.pool import StaticPool
 
     from econengine.models import (
-        Base, Good, Market, Need, Recipe, Technology,
+        Base, Good, Market, Need, Recipe, Technology, Threat,
     )
 
     from . import scenario as frontier
@@ -130,7 +130,7 @@ def _content_counts() -> dict[str, dict[str, int]]:
                 builder.create_content(session, verify=False)
                 tables = {"goods": Good, "recipes": Recipe,
                           "technologies": Technology, "needs": Need,
-                          "markets": Market}
+                          "markets": Market, "threats": Threat}
                 counts[name] = {
                     label: session.scalar(
                         select(func.count()).select_from(m))

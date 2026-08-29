@@ -69,7 +69,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import clock, conditions, goods, markets, needs, parcels, production, rng, tech
-from . import witness
+from . import threats, witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
@@ -239,6 +239,10 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
         set_executing_tick(None)
     events.extend(production.consume_per_tick_inputs(session, tick_number=number))
     events.extend(needs.run_consumption(session, tick_number=number))
+    # Threats pressurize after needs and before decay: this tick's says
+    # are already in the event list, and the decay pass fades the fresh
+    # pressure in the same tick it lands (net drift = pressure − decay).
+    events.extend(threats.apply_pressure(session, number, events))
     events.extend(goods.apply_decay(session, tick_number=number))
     events.extend(conditions.run_incapacity(session, tick_number=number))
 

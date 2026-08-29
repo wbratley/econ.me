@@ -5,14 +5,16 @@
    "markets": 10,
    "needs": 2,
    "recipes": 11,
-   "technologies": 6
+   "technologies": 6,
+   "threats": 0
   },
   "stone_age": {
-   "goods": 18,
-   "markets": 13,
+   "goods": 21,
+   "markets": 14,
    "needs": 2,
-   "recipes": 21,
-   "technologies": 0
+   "recipes": 23,
+   "technologies": 0,
+   "threats": 1
   }
  },
  "display": {
@@ -26,8 +28,8 @@
   "pack.lua": "4f68c575e7a8057b",
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
-  "stone_age_starter.lua": "cae6959290488f36",
-  "trading_post.lua": "e360ff6109cc9d4d",
+  "stone_age_starter.lua": "c7923ea223b2dae0",
+  "trading_post.lua": "b536375e8ab027bf",
   "world_lib.lua": "eed87f283ccd5874"
  },
  "name": "demo-world",

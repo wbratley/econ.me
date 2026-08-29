@@ -146,7 +146,16 @@ EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
 25%-per-meal DISEASE lottery). Meals are labor-free, instant and
 night-legal; the stomach spills a tenth an hour, so a day costs ~14 —
 the treadmill arithmetic is unchanged, but a full larder now feeds
-nobody until someone runs the recipe. Food comes from GATHER (a
+nobody until someone runs the recipe. **Wolves (run 20)**: the night
+has teeth — a `threats` pass (declared content, like needs) credits
+**WOLF** pressure every dark hour: +1.5 fireless, +0.5 per say
+(noise carries at night), quartered while a hearth is lit (WARMTH ≥ 1;
+shelter works through its drip). Pressure fades a fifth an hour and
+kills at 6.0 — eaten in the dark, and rivals *hear* it (loud fact).
+It is consumed, not waited out: FIGHT_WOLF (spear in, may break; 90%
+driven off with a PELT / 10% WOUNDS) or SCARE_WOLF (bare hands, 60/40,
+slower). WOUNDS heal 0.1/hour and kill at 8.0; the post bids pelts.
+Food comes from GATHER (a
 loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
 warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log
 carries the colder night) plus a graded ladder — REST under a SHELTER

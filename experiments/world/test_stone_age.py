@@ -160,7 +160,7 @@ def test_content_and_coin_markets(session):
     rows = list(session.execute(select(markets.Market)).scalars())
     assert {m.symbol for m in rows} == {
         "LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD", "YARN",
-        "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"}
+        "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED", "PELT"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -533,11 +533,12 @@ def test_world_ships_a_legible_manual(session):
         assert needle in flat, needle
 
     # The derived numbers moved to the generated catalog -- and they are
-    # all there: actions, tools, conditions, thresholds.
+    # all there: actions, tools, conditions, thresholds, threats.
     cat = " ".join(catalog_text(catalog_state(session)).split()).lower()
     for needle in ("gather_bag", "hunt_spear", "make_shelter", "eat_raw",
-                   "spear", "bag", "incapacitates at 15",
-                   "incapacitates at 2.5", "== needs", "== markets"):
+                   "fight_wolf", "spear", "bag", "incapacitates at 15",
+                   "incapacitates at 2.5", "== needs", "== markets",
+                   "== threats", "per say you make"):
         assert needle in cat, needle
 
 
@@ -749,3 +750,82 @@ def test_post_jerky_never_rots_and_feeds(session):
     assert markets.get_holding(session, seat.id, "JERKY").quantity \
         == Decimal("4")                    # eaten, not rotted (0 decay)
     assert _hold(session, seat.id, "SATIETY") == Decimal("3.6")
+
+
+def test_wolves_press_the_fireless_and_hear_the_loud(session):
+    """Run 20's variable: the night has teeth. Ambient pressure lands on
+    the fireless every dark hour, says add to it, a lit hearth (WARMTH
+    >= 1) quarters the whole rate, and daylight scatters what the night
+    gathered. The BUSINESS post may talk all night unharmed."""
+    create_content(session)
+    cold = _seat(session, "Fireless")
+    markets.adjust_holding(session, cold, "WARMTH", -WARMTH_BUFFER)
+    warm = _seat(session, "Hearthlit")
+    post = _post(session)                      # talks at night, unharmed
+    _run(session, 1)                           # hour 0: night
+    cold_p = _hold(session, cold.id, "WOLF")
+    warm_p = _hold(session, warm.id, "WOLF")
+    assert cold_p == Decimal("1.2")            # +1.5, then -20% of the stock
+    assert 0 < warm_p < Decimal("0.5")         # (1.5*0.25) then -20%: 0.3
+    # daylight (tick 25 = hour 0 is night; run to hour 8 = tick 32)
+    _run(session, 24)
+    before = _hold(session, cold.id, "WOLF")
+    _run(session, 8)
+    assert _hold(session, cold.id, "WOLF") < before     # dawn scatters
+    assert _hold(session, post.id, "WOLF") == Decimal("0")  # scoped out
+
+
+def test_fighting_wolves_spends_the_spear_and_sometimes_pays(session):
+    """Pressure is answered, not waited out: FIGHT_WOLF consumes the
+    pressure and the spear (an input -- unlike hunting, fighting breaks
+    it) at START, and pays out at completion an hour later; SCARE_WOLF
+    works bare-handed. 50 fights with zero pelts is a 0.5% event;
+    zero maulings is 0.9^50 = 0.5%."""
+    create_content(session)
+    w = _biz(session, "Wolfbait")              # needs-free: mechanics only
+    pelts, mauls, fights = 0, 0, 0
+    for _ in range(50):
+        markets.adjust_holding(session, w, "WOLF", Decimal("2"))
+        markets.adjust_holding(session, w, "SPEAR", Decimal("1"))
+        assert _act(session, w, "FIGHT_WOLF")
+        fights += 1
+        # the pressure and the spear are gone the moment the fight starts
+        assert _hold(session, w.id, "WOLF") == Decimal("0")
+        assert _hold(session, w.id, "SPEAR") == Decimal("0")
+        _run(session, 1)                       # the hour passes; it resolves
+        if _hold(session, w.id, "PELT") > 0:
+            pelts += 1
+            markets.adjust_holding(
+                session, w, "PELT", -_hold(session, w.id, "PELT"))
+        if _hold(session, w.id, "WOUNDS") > 0:
+            mauls += 1
+            markets.adjust_holding(
+                session, w, "WOUNDS", -_hold(session, w.id, "WOUNDS"))
+    assert fights == 50
+    assert pelts > 0 and mauls > 0
+    # SCARE: bare hands, two hours, no spear spent
+    markets.adjust_holding(session, w, "WOLF", Decimal("2"))
+    assert _act(session, w, "SCARE_WOLF")
+    assert _hold(session, w.id, "WOLF") == Decimal("0")
+
+
+def test_wounds_heal_slowly_and_kill_at_the_threshold(session):
+    """A mauling is a wound, not a limp: WOUNDS holds no LABOR modifier
+    (a throttle would floor the ration below the 1.0 every recipe costs
+    -- a shave would be a stoppage); it heals a tenth an hour and
+    kills at 8.0."""
+    create_content(session)
+    whole = _seat(session, "Whole")
+    hurt = _seat(session, "Hurt")
+    for s in (whole, hurt):                   # keep them fed to dusk:
+        markets.adjust_holding(session, s, "SATIETY", Decimal("30"))
+    markets.adjust_holding(session, hurt, "WOUNDS", Decimal("6"))
+    _run(session, 10)                         # ten hours of healing
+    assert _hold(session, hurt.id, "WOUNDS") < Decimal("6")   # it heals
+    assert _hold(session, whole.id, "WOUNDS") == Decimal("0")
+    # and 8.0 is the end: the mauling that does not stop (the check
+    # runs after decay, so 9.0 lands at 8.1)
+    markets.adjust_holding(session, hurt, "WOUNDS",
+                           Decimal("9") - _hold(session, hurt.id, "WOUNDS"))
+    _run(session, 1)
+    assert session.get(Entity, hurt.id).status != EntityStatus.ACTIVE

@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from econengine.conditions import is_condition
-from econengine.models import Good, Market, Need, Recipe, Technology
+from econengine.models import Good, Market, Need, Recipe, Technology, Threat
 
 
 def _num(value: Decimal | int | float | str) -> str:
@@ -175,6 +175,7 @@ def catalog_state(session: Session) -> dict:
     """
     goods = list(session.execute(select(Good).order_by(Good.symbol)).scalars())
     needs = list(session.execute(select(Need).order_by(Need.priority, Need.code)).scalars())
+    threats = list(session.execute(select(Threat).order_by(Threat.code)).scalars())
     recipes = list(session.execute(select(Recipe).order_by(Recipe.code)).scalars())
     techs = list(session.execute(select(Technology).order_by(Technology.code)).scalars())
     markets = list(session.execute(select(Market).order_by(Market.symbol)).scalars())
@@ -261,7 +262,33 @@ def catalog_state(session: Session) -> dict:
             }
             for m in markets
         ],
+        "threats": [
+            {
+                "code": t.code,
+                "name": t.name,
+                "description": t.description,
+                "pack": t.pack_id,
+                "condition": t.condition_symbol,
+                "entity_type": t.entity_type.value if t.entity_type else None,
+                "line": threat_line(t),
+            }
+            for t in threats
+        ],
     }
+
+
+def threat_line(t: Threat) -> str:
+    """The derived physics line for a Threat row: when it presses, what
+    it hears, and what keeps it shy."""
+    bits = [f"at night, +{_num(t.ambient_night_per_tick)}/hour"]
+    if t.per_say_night > 0:
+        bits.append(f"+{_num(t.per_say_night)} per say you make (noise "
+                    f"carries after dark)")
+    if t.deterred_by_symbol is not None:
+        bits.append(f"held {t.deterred_by_symbol} >= "
+                    f"{_num(t.deterred_by_quantity)} quarters all of it "
+                    f"(x{_num(t.deterrence_factor)})")
+    return ", ".join(bits)
 
 
 def catalog_text(state: dict) -> str:
@@ -299,6 +326,15 @@ def catalog_text(state: dict) -> str:
                 line += (f" -- while short, accumulates "
                          f"{n['condition']['symbol']} "
                          f"{n['condition']['quantity']}/tick")
+            out.append(line)
+
+    if state["threats"]:
+        out.append("")
+        out.append("== THREATS (what presses at night) ==")
+        for t in state["threats"]:
+            line = f"- {t['code']} -> {t['condition']}: {t['line']}"
+            if t["description"]:
+                line += f" -- {t['description']}"
             out.append(line)
 
     out.append("")
