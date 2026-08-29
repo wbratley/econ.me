@@ -19,6 +19,7 @@ from .parcel import Parcel, Facility, Deposit
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
 from .threat import Threat
+from .entity_stat import EntityStat
 from .setting import WorldSetting
 from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
 from .proposal import Proposal, Vote, ProposalStatus, VoteChoice, ProposalType
@@ -62,6 +63,7 @@ __all__ = [
     "NeedSatisfier",
     "NeedState",
     "Threat",
+    "EntityStat",
     "WorldSetting",
     "Technology",
     "TechnologyPrerequisite",

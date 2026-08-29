@@ -21,7 +21,8 @@ from .models import Entity, EntityStatus, EventObserver
 #: detail) stays with its actor -- rival privacy is layered, not
 #: repealed, by the witness feed. New loud facts (wolf attacks) join
 #: here as content lands.
-OBSERVABLE_EVENT_TYPES: frozenset[str] = frozenset({"say", "entity_incapacitated"})
+OBSERVABLE_EVENT_TYPES: frozenset[str] = frozenset(
+    {"say", "entity_incapacitated", "combat"})
 
 
 def _observable(event: dict) -> bool:

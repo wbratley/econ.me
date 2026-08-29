@@ -1013,7 +1013,7 @@ SAY_TEXT_CAP = 256
 
 def resolve_intent(session: Session, intent: Intent,
                    said: set[str] | None = None) -> dict:
-    from . import markets, production, services  # deferred: all import this module
+    from . import combat, markets, production, services  # deferred: all import this module
 
     event = {
         "type": intent.intent_type,
@@ -1116,6 +1116,20 @@ def resolve_intent(session: Session, intent: Intent,
             extra["seized_goods"] = summary["goods_quantity"]
             extra["seized_symbol"] = summary["goods_symbol"]
             extra["seized_parcels"] = summary["parcels"]
+
+        elif intent.intent_type == "attack":
+            # One creature's attempt on another (run 20: wolves as
+            # entities). Any entity may fight anything: the resolution --
+            # daylight refusal, hearth deterrence, stat math, loot -- is
+            # the pack's COMBAT_RULES, applied by combat.py. The target
+            # may be None: a desperate prowl, and the engine picks the
+            # noisiest speaker of the night.
+            target = intent.params.get("target_id") or None
+            with session.begin_nested():
+                outcome = combat.resolve_attack(
+                    session, intent.entity_id, target, _executing_tick(session))
+            outcome["idempotency_key"] = intent.idempotency_key
+            return outcome
 
         elif intent.intent_type == "spawn_entity":
             # Bring a new entity into being during a tick (Step 6c). The
