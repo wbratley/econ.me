@@ -198,7 +198,7 @@ def test_entity_state_snapshot(client):
     assert state["entity"]["id"] == joined["entity"]["id"]
     assert state["entity"]["is_fixed"] is False
     assert set(state) == {
-        "entity", "accounts", "holdings", "needs", "processes",
+        "clock", "entity", "accounts", "holdings", "needs", "processes",
         "parcels", "unlocks", "behaviour",
     }
     assert len(state["accounts"]) == 1

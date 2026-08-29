@@ -81,6 +81,8 @@ def good_effect(good: Good, needs_by_condition: dict[str, list[Need]]) -> str | 
         parts.append(
             f"auto-issued up to {_num(good.auto_issue_quantity)}/tick to {who}"
         )
+        if good.auto_issue_daylight_only:
+            parts.append("daylight only (hours 06..19; night issues nothing)")
     if good.incapacitates_at is not None:
         parts.append(f"incapacitates at {_num(good.incapacitates_at)}")
     return "; ".join(parts) or None
@@ -134,6 +136,8 @@ def recipe_effects(recipe: Recipe) -> list[str]:
                      f"{'s' if recipe.duration_ticks != 1 else ''}")
     if recipe.requires_facility:
         lines.append(f"must run at a {recipe.requires_facility} facility")
+    if recipe.requires_daylight:
+        lines.append("needs daylight (refused at night, hours 20..05)")
     if recipe.requirements:
         for req in recipe.requirements:
             scope = req.technology.scope.value.lower()
@@ -209,6 +213,8 @@ def catalog_state(session: Session) -> dict:
                 "draws": (
                     f"draws {_num(n.quantity_per_tick)}/tick from holdings, "
                     f"eating {_satisfier_chain(n, good_by_symbol)}"
+                    + (f" but {_num(n.night_quantity_per_tick)}/tick at night"
+                       if n.night_quantity_per_tick is not None else "")
                     + ("; tried in that order, each unit covers one tick"
                        if len(n.satisfiers) > 1 else " (1:1)")
                 ),

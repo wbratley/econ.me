@@ -128,26 +128,31 @@ costs most of the tick, tools buy back time, and neglect kills.
 
 | axis | frontier | stone age |
 |---|---|---|
-| bind | markets / specialization | needs / the elements |
-| scarcity | ORE (deposit-gated) | LABOR (1/tick ration) |
+| bind | markets / specialization | needs / the elements + the day/night clock |
+| scarcity | ORE (deposit-gated) | LABOR (1 labor-hour per DAYLIGHT hour; none at night) |
 | teeth | DISREPAIR (the UPKEEP sink) | HUNGER, EXPOSURE, DISEASE |
 | starter script | comfortable | hand-to-mouth treadmill |
 
-The shape: two needs — **FOOD** (1/tick from BERRIES / COOKED_MEAT, else
-HUNGER) and **WARMTH** (1.5/tick from the WARMTH flow-good, else
-EXPOSURE). Food comes from GATHER (a loot-table recipe) and HUNT (a
-lottery: 55% nothing bare-handed); warmth from TEND_FIRE (1 WOOD → 8
-WARMTH at a FIRE facility) plus a graded ladder — REST under a SHELTER
+The shape: two needs — **FOOD** (0.5/hour from BERRIES / COOKED_MEAT,
+else HUNGER) and **WARMTH** (1/hour by day, 3/hour at night, from the
+WARMTH flow-good, else EXPOSURE). **The clock (run 18)**: tick = hour,
+round = 24 ticks = one day; daylight is hours 06..19 — LABOR issues
+only then, and GATHER/HUNT are refused in the dark (a clear error that
+names the window). `std.hour()` / `std.is_night()` / `std.day()` are
+pure-info queries over `ctx.clock`. Food comes from GATHER (a
+loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
+warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log
+carries the colder night) plus a graded ladder — REST under a SHELTER
 (1.0, labor-free), HUDDLE in CLOTHES (+0.5, labor-free). Shelter +
-clothes exactly cover the need; shelter alone is a chronic-but-
-survivable 0.5 gap (equilibrium 10 < threshold 18). MEAT rots (0.30/tick)
-and eating it raw is a 25%-per-meal DISEASE lottery — cooking is a FIRE
-facility away. Capital goods are the escape: SPEAR / BAG / TRAP improve
-the hunt and the gather, CLOTHES / SHELTER / BED the warmth budget. All
-conditions follow the run-5 equilibrium lesson: grant/decay equilibrium
-sits **above** the incapacitation threshold (HUNGER 20 ≫ 15, EXPOSURE
-30 ≫ 18, DISEASE 20 ≫ 2.5), so neglect reliably kills between ticks
-18–40, and adaptation reliably saves.
+clothes cover every mild day for free; nights still draw 3 an hour,
+so dusk wants either banked warmth stock or the fire tended. MEAT rots
+(0.30/hour) and eating it raw is a 25%-per-meal DISEASE lottery —
+cooking is a FIRE facility away. Capital goods are the escape: SPEAR /
+BAG / TRAP improve the hunt and the gather, CLOTHES / SHELTER / BED
+the warmth budget. All conditions follow the run-5 equilibrium lesson:
+grant/decay equilibrium sits **above** the incapacitation threshold
+(HUNGER 20 ≫ 15, EXPOSURE 30 ≫ 18, DISEASE 20 ≫ 2.5), so neglect
+reliably kills between ticks 18–40, and adaptation reliably saves.
 
 The balance contract is three policy tests, not numbers in a comment:
 `test_neglect_kills` (a seat that gathers nothing dies in 18–40),

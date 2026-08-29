@@ -32,7 +32,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import conditions
+from . import clock, conditions
 from .models import Entity, EntityStatus, EntityType, Good, Holding
 
 _QUANTUM = Decimal("0.0001")
@@ -46,6 +46,7 @@ def create_good(
     decay_per_tick: Decimal = Decimal("0"),
     auto_issue_quantity: Decimal = Decimal("0"),
     auto_issue_entity_type: EntityType | None = None,
+    auto_issue_daylight_only: bool = False,
     modifies_pattern: str | None = None,
     modifies_factor: Decimal | None = None,
     incapacitates_at: Decimal | None = None,
@@ -79,6 +80,7 @@ def create_good(
         decay_per_tick=decay_per_tick,
         auto_issue_quantity=auto_issue_quantity,
         auto_issue_entity_type=auto_issue_entity_type,
+        auto_issue_daylight_only=auto_issue_daylight_only,
         modifies_pattern=modifies_pattern.upper() if modifies_pattern else None,
         modifies_factor=modifies_factor,
         incapacitates_at=incapacitates_at,
@@ -100,13 +102,17 @@ def auto_issue(session: Session, tick_number: int) -> list[dict]:
     (effective-quantity read site — a feverish smith is issued less
     LABOR-SMITH; the top-up never destroys stock, so an over-target holding
     is simply not topped up). Returns one auto_issue event per good that
-    actually issued anything."""
+    actually issued anything. Daylight-only rations (the clock, run 18)
+    issue nothing during dark hours: night has no labor-hours in it."""
     events: list[dict] = []
+    night = clock.is_night(tick_number)
     goods = session.execute(
         select(Good).where(Good.auto_issue_quantity > 0).order_by(Good.symbol)
     ).scalars().all()
     modifiers_by_entity: dict[str, list] = {}
     for good in goods:
+        if night and good.auto_issue_daylight_only:
+            continue
         query = select(Entity).where(Entity.status == EntityStatus.ACTIVE).order_by(Entity.id)
         if good.auto_issue_entity_type is not None:
             query = query.where(Entity.entity_type == good.auto_issue_entity_type)

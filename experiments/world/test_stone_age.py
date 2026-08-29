@@ -140,6 +140,17 @@ def _act(session, entity, code, parcel_id=None):
         return False
 
 
+def _act_day(session, entity, code, parcel_id=None):
+    """_act for daylight-gated recipes (the clock, run 18): if the next
+    tick would be dark, run idle ticks to dawn first. The night hours are
+    not this test's subject -- the darkness refusal has its own."""
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session)
+        session.commit()
+    return _act(session, entity, code, parcel_id)
+
+
 # ===========================================================================
 # FOCUSED FEATURE TESTS
 # ===========================================================================
@@ -170,8 +181,8 @@ def test_gather_loot_table(session):
     create_content(session)
     w = _seat(session)
     for _ in range(24):
+        _act_day(session, w, "GATHER")
         run_tick(session); session.commit()
-        _act(session, w, "GATHER")
     done = [e for e in _events(session, "process_completed")
             if e["recipe"] == "GATHER"]
     assert len(done) >= 20
@@ -185,15 +196,15 @@ def test_bag_doubles_the_gather(session):
     """The advantage contract, part one: a BAG holder gathers far more loot
     over the same ticks (event-based totals, so rot cannot blur it)."""
     create_content(session)
-    bare, bagged = _seat(session, "Bare"), _seat(session, "Bagged")
+    bare, bagged = _biz(session, "Bare"), _biz(session, "Bagged")
     # Two BAGs: one stays reserved by the running gather between ticks
     # (scripts act in-tick after completions and need only one; the
     # between-tick harness needs a spare).
     markets.adjust_holding(session, bagged, "BAG", Decimal("2"))
     for _ in range(60):
+        _act_day(session, bare, "GATHER")
+        _act_day(session, bagged, "GATHER_BAG")
         run_tick(session); session.commit()
-        _act(session, bare, "GATHER")
-        _act(session, bagged, "GATHER_BAG")
 
     def units(entity):
         total = Decimal("0")
@@ -281,6 +292,52 @@ def test_smoke_meat_converts_slowly_and_keeps(session):
     assert _hold(session, seat.id, "JERKY") < before
 
 
+def test_the_clock_rations_labor_and_gates_the_dark(session):
+    """The clock (run 18): LABOR auto-issues only in daylight (one
+    labor-hour per daylight hour, none at night), and the dark refuses
+    gathering -- with the window named in the error, not advice."""
+    from econengine import clock
+    create_content(session)
+    w = _seat(session, "NightOwl")
+    # tick 1 opens at hour 0 (midnight): the ration is NOT issued in dark
+    run_tick(session); session.commit()
+    assert clock.hour_of(1) == 0 and clock.is_night(1)
+    assert _hold(session, w.id, "LABOR") == Decimal("0")
+    with pytest.raises(ValueError, match="too dark for GATHER.*hour 01"):
+        production.start_process(session, w, "GATHER")
+    # dawn (hour 6, tick 7): the ration flows and the work is legal
+    while production.next_tick_number(session) != 7:
+        run_tick(session); session.commit()
+    run_tick(session); session.commit()          # tick 7 = hour 6
+    # issued 1 at the top of the tick; the end-of-tick labor fade took
+    # its half (scripts act between the two -- they see the full ration)
+    assert _hold(session, w.id, "LABOR") >= Decimal("0.5")
+    assert _act(session, w, "GATHER")
+
+
+def test_warmth_draws_three_an_hour_at_night(session):
+    """Night is the expensive half of the day: the consumption pass
+    takes 3 WARMTH per dark hour and 1 per daylight hour."""
+    create_content(session)
+    w = _seat(session, "Cold")
+    markets.adjust_holding(session, w, "WARMTH", -WARMTH_BUFFER)
+    markets.adjust_holding(session, w, "WARMTH", Decimal("3"))
+    while production.next_tick_number(session) != 1:   # stay before tick 1
+        break
+    run_tick(session); session.commit()                 # tick 1 = hour 0, night
+    night = [e for e in _events(session, "need_satisfied")
+             if e["entity_id"] == w.id and e["need"] == "WARMTH"][0]
+    assert night["consumed"] == "3.0000"                # the night draw
+    markets.adjust_holding(session, w, "WARMTH", -_hold(session, w.id, "WARMTH"))
+    while production.next_tick_number(session) != 8:    # to hour 7 (day)
+        run_tick(session); session.commit()
+    markets.adjust_holding(session, w, "WARMTH", Decimal("1"))
+    run_tick(session); session.commit()
+    day = [e for e in _events(session, "need_satisfied")
+           if e["entity_id"] == w.id and e["need"] == "WARMTH"][-1]
+    assert day["consumed"] == "1.0000"                  # the mild day draw
+
+
 def test_eat_raw_feeds_now_and_risks_disease(session):
     """EAT_RAW is instant food (SATIETY lands at start_process, before
     the same tick's consumption pass) -- and a 25%-per-meal disease
@@ -317,8 +374,8 @@ def test_spear_hunt_beats_bare_hunt(session):
     markets.adjust_holding(session, hunter, "SPEAR", Decimal("3"))  # see BAG note; duration-2 hunts can hold two
     for _ in range(100):
         run_tick(session); session.commit()
-        _act(session, bare, "HUNT")
-        _act(session, hunter, "HUNT_SPEAR")
+        _act_day(session, bare, "HUNT")
+        _act_day(session, hunter, "HUNT_SPEAR")
 
     def meat(entity):
         total = Decimal("0")
@@ -336,7 +393,7 @@ def test_spear_hunt_beats_bare_hunt(session):
 def test_neglect_kills(session):
     """Doing nothing is fatal: the buffers run out and the conditions --
     EXPOSURE first, then HUNGER -- reach their thresholds. Death lands
-    inside two rounds (20-tick rounds): after tick 18, before tick 40."""
+    inside two DAYS (24-tick days): after tick 18, before tick 40."""
     create_content(session)
     w = _seat(session, "Doomed")
     _run(session, 40)
@@ -350,10 +407,11 @@ def test_neglect_kills(session):
 
 
 def test_shelter_alone_is_misery_not_death(session):
-    """The graded ladder: REST under a SHELTER covers 1.0 of the 1.5
-    WARMTH need -- a chronic 0.5/tick gap that equilibrates at 10, under
-    the 18 threshold. Cold, uncomfortable, alive (REST is labor-free, so
-    the whole LABOR budget still goes to gathering food)."""
+    """The graded ladder under the clock: REST under a SHELTER covers
+    the whole 1/hour DAYTIME draw; nights still gap (3 draw vs 1 drip
+    per hour) -- a chronic shortfall that equilibrates far under the 18
+    threshold. Cold, uncomfortable, alive (REST is labor-free, so the
+    daylight LABOR budget still goes to gathering food)."""
     create_content(session)
     w = _seat(session, "Sheltered")
     parcels.add_facility(session, _camp(session, w), "SHELTER")
@@ -364,7 +422,7 @@ def test_shelter_alone_is_misery_not_death(session):
                                      _camp(session, w).id)   # labor-free
         except Exception:
             pass
-        _act(session, w, "GATHER")
+        _act_day(session, w, "GATHER")
     assert session.get(Entity, w.id).status == EntityStatus.ACTIVE
     assert _hold(session, w.id, "EXPOSURE") < Decimal("15")
 
@@ -404,9 +462,9 @@ def test_money_comes_from_the_ground(session):
     # Spares for the between-tick reservation window (see the bag test).
     markets.adjust_holding(session, digger, "BAG", Decimal("3"))
     for _ in range(200):
+        _act_day(session, digger, "GATHER_BAG")
+        _act_day(session, bare, "GATHER")
         run_tick(session); session.commit()
-        _act(session, digger, "GATHER_BAG")
-        _act(session, bare, "GATHER")
 
     digs = [e for e in _events(session, "process_completed")
             if e["entity_id"] == digger.id and e["recipe"] == "GATHER_BAG"]

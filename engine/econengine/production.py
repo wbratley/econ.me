@@ -61,7 +61,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import conditions, parcels, rng, tech
+from . import clock, conditions, parcels, rng, tech
 from .markets import InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity
 from .models import (
     Entity, EntityStatus, Parcel, Process, ProcessStatus, Recipe, RecipeBranch,
@@ -95,6 +95,7 @@ def create_recipe(
     per_tick_inputs: dict[str, Decimal] | None = None,
     requires_facility: str | None = None,
     builds_facility: str | None = None,
+    requires_daylight: bool = False,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -151,6 +152,7 @@ def create_recipe(
         duration_ticks=duration_ticks,
         requires_facility=requires_facility.upper() if requires_facility else None,
         builds_facility=builds_facility.upper() if builds_facility else None,
+        requires_daylight=requires_daylight,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
@@ -219,6 +221,15 @@ def start_process(
         raise ValueError(f"recipe {recipe.code} is inactive")
     if entity.status != EntityStatus.ACTIVE:
         raise ValueError("entity is incapacitated")
+    if recipe.requires_daylight:
+        tick = next_tick_number(session)
+        hour = clock.hour_of(tick)
+        if clock.is_night(tick):
+            raise ValueError(
+                f"too dark for {recipe.code} (hour {hour:02d}, night — "
+                f"daylight is hours {clock.DAY_START_HOUR:02d}.."
+                f"{clock.DAY_END_HOUR - 1:02d})"
+            )
 
     missing = sorted(
         r.technology.code for r in recipe.requirements

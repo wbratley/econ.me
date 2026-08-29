@@ -28,6 +28,13 @@ class Need(Base):
         SAEnum(EntityType), nullable=True
     )  # NULL = every entity
     quantity_per_tick: Mapped[Decimal] = mapped_column(Numeric(precision=18, scale=4), nullable=False)
+    # Day/night clock (run 18): when set, this is the draw during dark
+    # hours (hour < 6 or >= 20) instead of quantity_per_tick -- the night
+    # is a different intensity of the same need (a cold night draws 3
+    # warmth-hours where a mild day draws 1). NULL = the draw never varies.
+    night_quantity_per_tick: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # lower = more essential; consumed first when needs share a satisfying good

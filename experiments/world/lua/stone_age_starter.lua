@@ -37,13 +37,17 @@ if food + std.holding_qty("SATIETY") < 1 and meat >= 1 then
   ctx.action.start_process("EAT_RAW")
 end
 
--- 1. The fire: build it, then keep it fed. A tended fire (~8 warmth a
---    log) covers ~4 ticks; tend when the stock runs low.
+-- 1. The fire: build it, then keep it fed. Night draws 3 warmth an
+--    hour -- bank a stock before dark (hour 17 onward) and keep the
+--    fire fed while labor lasts into the evening. MAKE_FIRE and
+--    TEND_FIRE are night-legal (darkness only refuses gathering and
+--    hunting).
 if not fire then
   if wood >= 2 then
     ctx.action.start_process("MAKE_FIRE", camp)
   end
-elseif warmth < 3 and wood >= 1 and not std.running_recipe("TEND_FIRE") then
+elseif warmth < (std.hour() and std.hour() >= 17 and 12 or 3)
+       and wood >= 1 and not std.running_recipe("TEND_FIRE") then
   ctx.action.start_process("TEND_FIRE", fire)
 end
 
@@ -53,7 +57,8 @@ if fire and meat >= 2 and food < 4 then
 end
 
 -- 3. Everything else is gathering: food first, then wood for the fire.
-if food < 3 or wood < 3 then
+--    Daylight only -- the dark refuses the work (std.is_night()).
+if (food < 3 or wood < 3) and not std.is_night() then
   if not std.running_recipe("GATHER") then
     ctx.action.start_process("GATHER")
   end

@@ -6,6 +6,10 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
 
   ctx.tick         the current tick number (for POLICY/BEHAVIOUR: the tick
                    executing; for VALIDATOR/HOOK: the latest committed tick)
+  ctx.clock        the day/night clock facts: tick, day, hour, is_day,
+                   is_night, daylight_hours ("06:00-19:00"); worlds
+                   without a clock ship no facts and std.hour()/std.is_night()
+                   return nil, never error
   ctx.entity        read-only entity info
   ctx.accounts      read-only account list
   ctx.holdings      read-only commodity holdings list
@@ -246,6 +250,26 @@ function std.deposit_parcel(symbol)
 end
 
 function std.amount_str(x) return string.format("%.4f", x) end
+
+-- The clock (run 18): tick = hour, round = one 24-hour day. Pure facts
+-- from ctx.clock -- hour of day, day number, and whether it is dark.
+-- Daylight is hours 06..19; night issues no labor-hours and refuses
+-- daylight-gated work (gathering, hunting). Planning around these is
+-- the model's job; the facts are free.
+function std.hour()
+  if ctx.clock then return ctx.clock.hour end
+  return nil
+end
+
+function std.is_night()
+  if ctx.clock then return ctx.clock.is_night end
+  return nil
+end
+
+function std.day()
+  if ctx.clock then return ctx.clock.day end
+  return nil
+end
 
 return std
 """
@@ -899,6 +923,8 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
 
     ctx_tbl = lua.table()
     ctx_tbl["tick"]   = ctx.get("tick")
+    if ctx.get("clock") is not None:
+        ctx_tbl["clock"] = _to_lua_table(ctx["clock"])
     ctx_tbl["entity"]   = entity_tbl
     ctx_tbl["accounts"] = accounts_tbl
     ctx_tbl["holdings"] = holdings_tbl

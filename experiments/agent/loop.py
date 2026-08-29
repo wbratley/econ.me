@@ -108,7 +108,8 @@ holdings every tick), then wealth.
 
 Your script runs in a sandbox with exactly this vocabulary injected:
 
-- ctx.tick, ctx.entity, ctx.accounts, ctx.holdings, ctx.processes,
+- ctx.tick, ctx.clock (day/night facts: hour, is_night, daylight window),
+  ctx.entity, ctx.accounts, ctx.holdings, ctx.processes,
   ctx.parcels, ctx.needs, ctx.unlocks, ctx.events (your own events, last
   few ticks), ctx.state (a dict that PERSISTS across your script's runs —
   keep counters/marks there, in `local` variables they reset)

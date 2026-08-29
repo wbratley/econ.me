@@ -12,11 +12,23 @@ the world is POOR and the needs are FATAL:
     ABOVE its incapacitation threshold: chronic neglect eventually
     seizes the entity. HUNGER (starvation), EXPOSURE (cold), DISEASE
     (raw meat) all have real teeth.
-  * Survival consumes most of the LABOR budget (1 auto-issued per
-    tick): bare-handed living runs a deficit the genesis buffers only
-    briefly cover. The way out is CAPITAL -- spear, bag, trap make food
-    cheap; fire, shelter, clothes make warmth free -- so specialization
-    and trade have room to pay.
+  * Survival consumes most of the daylight LABOR budget (1
+    auto-issued labor-hour per HOUR OF DAYLIGHT -- 14 a day, none at
+    night): bare-handed living runs close to the line the genesis
+    buffers only briefly cover. The way out is CAPITAL -- spear, bag,
+    trap make food cheap; fire, shelter, clothes make warmth free -- so
+    specialization and trade have room to pay.
+
+THE CLOCK (run 18): tick = hour, round = 24 ticks = one day. Daylight
+is hours 06..19: LABOR issues only then, and gathering/hunting are
+refused in the dark with a clear error (facts, not advice -- the model
+plans its day around them via std.hour()/std.is_night()). WARMTH draws
+1/hour by day and 3/hour at night -- night is the expensive half of
+the world. FOOD is 0.5/hour (12/day): the old 1/tick against 20-tick
+rounds becomes 0.5/hour against 24-hour days so the daylight work-day
+(14 labor-hours) still treadmills a bare-handed house the way it did
+at 20 one-tick rounds. Durations are honest hours (a spear is an
+afternoon, smoking is a watch of the night fire).
 
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
 JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
@@ -95,8 +107,9 @@ WARMTH_BUFFER = Decimal("15")
 #   DISEASE:  a raw-meat diet grants 0.25/tick expected -> equilibrium 5,
 #             dies at 2.5. One raw meal is a scare (+1, fades in ~14
 #             ticks); raw as a staple is a slow death. Cooking is cheap.
-FOOD_PER_TICK = Decimal("1")
-WARMTH_PER_TICK = Decimal("1.5")
+FOOD_PER_TICK = Decimal("0.5")
+WARMTH_PER_TICK = Decimal("1")
+WARMTH_PER_NIGHT_TICK = Decimal("3")
 EAT_RAW_DISEASE_WEIGHT = Decimal("25")   # out of 100 per raw meal
 
 DEFAULT_TICKS = 40
@@ -125,23 +138,30 @@ and death threshold, derived from this world's physics. What follows is
 what the numbers cannot spell.
 
 == SCARCITY ==
-LABOR is the ration: you get 1 LABOR each tick and exactly one
-LABOR-costing recipe runs -- the first script call that takes it wins,
-later calls bounce. Use it wisely; unspent labor is nearly worthless.
+THE DAY IS THE BUDGET: tick = hour, and the day has 24 of them.
+Daylight is hours 06..19 -- you get 1 LABOR each daylight hour and
+exactly one LABOR-costing recipe runs per hour -- the first script
+call that takes it wins, later calls bounce. NIGHT issues no LABOR and
+refuses gathering and hunting (too dark); tending, cooking, smoking,
+eating and resting all work. WARMTH draws 3/hour at night vs 1 by day:
+bank warmth stock before dark, or sleep by a fire (std.hour() and
+std.is_night() read the clock). Unspent labor is nearly worthless.
 A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
 where each one kills.
 
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
-1. FIRE first (2 WOOD + a tick): cooking + warmth. Do not sleep fireless.
-2. BAG (3 YARN-ish, one tick): doubles EVERY future gather, finds COIN.
-3. SPEAR (flint+yarn): meat surplus -> COOKED_MEAT stock, or SMOKE_MEAT
-   it into JERKY (slower, costs a log, NEVER rots) -> sell MEAT.
-4. SHELTER + CLOTHES (7 WOOD + 7 YARN): the 1.5 warmth need becomes
-   FREE. Every TEND_FIRE tick you stop paying is a gather you gained.
+1. FIRE first (2 WOOD + an hour): cooking + warmth. Do not sleep fireless.
+2. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
+3. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
+   or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots)
+   -> sell MEAT.
+4. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
+   nights still draw 3/hour -- the fire you stop paying for by day is
+   the one you need at dusk.
 5. TRAPs: convert surplus WOOD+YARN into the best hunt table.
-A tooled house gathers ~2.5 food per LABOR against a 1.0 need -- the
+A tooled house gathers ~2.5 food per LABOR against a 0.5/hour need -- the
 surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
@@ -249,14 +269,18 @@ def create_content(session: Session, verify: bool = True) -> None:
 
 
 def _create_goods(session: Session) -> None:
-    # The action ration: one auto-issued LABOR per INDIVIDUAL per tick.
+    # The action ration: one auto-issued labor-HOUR per hour of DAYLIGHT
+    # (14 a day, none at night — the clock, run 18). Unspent labor
+    # fades fast: use it or lose it.
     goods.create_good(
         session, "LABOR", name="Labor",
-        description="One unit of action per tick, auto-issued to every "
-                    "individual. Unspent labor fades fast: use it or lose it.",
+        description="One labor-hour, auto-issued to every individual each "
+                    "HOUR OF DAYLIGHT (06..19; night issues nothing). "
+                    "Unspent labor fades fast: use it or lose it.",
         decay_per_tick=Decimal("0.5"),
         auto_issue_quantity=Decimal("1"),
         auto_issue_entity_type=EntityType.INDIVIDUAL,
+        auto_issue_daylight_only=True,
     )
     # Food -- everything edible rots. MEAT fastest (raw), COOKED slightly
     # slower, BERRIES in between: preserving food is a real problem, and
@@ -354,13 +378,14 @@ def _create_recipes(session: Session) -> None:
     # by the ground itself (production credits a banked symbol to the
     # account, production._credit_output). The bare table finds none:
     # scarcity first, then the supply grows with better tools.
-    # Expected food value 1.35/tick against a need of 1.0 -- bare
-    # subsistence spends ~3/4 of the LABOR budget on food.
+    # Expected food value 1.35/hour against a need of 0.5/hour -- bare
+    # subsistence spends ~1/3 of the 14 daylight hours on food.
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
-                    "you find. Bare-handed subsistence.",
+                    "you find. Bare-handed subsistence. Daylight only.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
+        requires_daylight=True,
         branches=[
             {"weight": D("45"), "outputs": {"BERRIES": D("3")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"WOOD": D("2")}, "label": "wood"},
@@ -371,9 +396,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "GATHER_BAG", name="Gather with a Bag",
         description="The doubled table — and a small chance the ground itself "
-                    "has minted a coin.",
+                    "has minted a coin. Daylight only.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         good_requirements={"BAG": D("1")},
+        requires_daylight=True,
         branches=[
             {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
             {"weight": D("22"), "outputs": {"WOOD": D("4")}, "label": "wood"},
@@ -388,8 +414,10 @@ def _create_recipes(session: Session) -> None:
     # the supply chain: wood+yarn per hunt).
     production.create_recipe(
         session, "HUNT", name="Hunt",
-        description="Slow, and bare-handed: mostly nothing, sometimes dinner.",
+        description="Slow, and bare-handed: mostly nothing, sometimes "
+                    "dinner. Daylight only.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        requires_daylight=True,
         branches=[
             {"weight": D("55"), "outputs": {}, "label": "nothing"},
             {"weight": D("35"), "outputs": {"MEAT": D("2")}, "label": "small"},
@@ -399,9 +427,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT_SPEAR", name="Hunt with a Spear",
         description="A held spear (never consumed) turns a desperate hunt "
-                    "into a living.",
+                    "into a living. Daylight only.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         good_requirements={"SPEAR": D("1")},
+        requires_daylight=True,
         branches=[
             {"weight": D("25"), "outputs": {}, "label": "nothing"},
             {"weight": D("55"), "outputs": {"MEAT": D("3")}, "label": "small"},
@@ -411,9 +440,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT_TRAPS", name="Hunt with Traps",
         description="The best odds craft can buy, at the price of a consumed "
-                    "trap per hunt.",
+                    "trap per hunt. Daylight only.",
         inputs={"LABOR": D("1"), "TRAP": D("1")},
         outputs={}, duration_ticks=3,
+        requires_daylight=True,
         branches=[
             {"weight": D("15"), "outputs": {}, "label": "nothing"},
             {"weight": D("60"), "outputs": {"MEAT": D("4")}, "label": "small"},
@@ -436,9 +466,9 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "TEND_FIRE", name="Tend Fire",
         description="Burns a log into a warmth stock: a tended fire covers "
-                    "you for a few ticks, not forever.",
+                    "you well into the night — bank warmth before dark.",
         inputs={"LABOR": D("1"), "WOOD": D("1")},
-        outputs={"WARMTH": D("8")}, duration_ticks=1, requires_facility="FIRE",
+        outputs={"WARMTH": D("10")}, duration_ticks=1, requires_facility="FIRE",
     )
     production.create_recipe(
         session, "COOK_MEAT", name="Cook Meat",
@@ -518,10 +548,12 @@ def _create_recipes(session: Session) -> None:
     # craftable and tradeable now, mechanically idle (the expansion hook).
     production.create_recipe(
         session, "MAKE_SPEAR", name="Make Spear",
-        description="The hunter's upgrade: held, never worn.",
+        description="An afternoon at the whetstone: three honest hours of "
+                    "hafting and binding. Daylight only.",
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
-        outputs={"SPEAR": D("1")}, duration_ticks=1,
+        outputs={"SPEAR": D("1")}, duration_ticks=3,
+        requires_daylight=True,
     )
     production.create_recipe(
         session, "MAKE_BAG", name="Make Bag",
@@ -558,16 +590,21 @@ def _create_needs(session: Session) -> None:
         condition_symbol="HUNGER", condition_quantity=Decimal("1"),
     )
     # WARMTH: a flow good, stocked by fire/shelter/clothes. Unmet ->
-    # EXPOSURE. 1.5/tick so that clothes (0.5) + shelter (1.0) exactly
-    # cover it: full capital coverage is achievable but requires BOTH.
+    # EXPOSURE. The clock (run 18): 1/hour by day, 3/hour at night --
+    # shelter+clothes still cover the day exactly (1.0 + 0.5 drips vs 1
+    # draw is surplus), but no capital covers a 3-draw night alone:
+    # every night wants either the fire tended at dusk or the warmth
+    # stock banked against it. Night is the expensive half of the day.
     needs.create_need(
         session, "WARMTH", WARMTH_PER_TICK, ["WARMTH"],
         name="Warmth",
         description="Drawn from the WARMTH stock made by fires, shelter and "
-                    "clothes. Miss it and exposure accrues: clothes and "
-                    "shelter together cover it exactly.",
+                    "clothes: 1 per hour of day, 3 per hour of night. Miss "
+                    "it and exposure accrues -- nights bite three times as "
+                    "hard, and only a tended fire covers them.",
         entity_type=EntityType.INDIVIDUAL, priority=1,
         condition_symbol="EXPOSURE", condition_quantity=Decimal("1"),
+        night_quantity_per_tick=WARMTH_PER_NIGHT_TICK,
     )
 
 
