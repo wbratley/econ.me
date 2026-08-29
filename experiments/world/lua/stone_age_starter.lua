@@ -1,7 +1,9 @@
 -- stone_age_starter.lua  (BEHAVIOUR) -- the default a player inherits.
 --
 -- A hand-to-mouth loop: keep a fire, feed it logs when the warmth runs
--- low, cook meat when there is any, gather whatever the forest offers.
+-- low, EAT when the stomach runs low (eating is your decision now --
+-- the engine no longer chews for you), cook meat when there is any,
+-- gather whatever the forest offers.
 -- It survives -- barely. It never builds capital (no spear, no bag, no
 -- shelter, no clothes) and spends nearly every tick on the next meal or
 -- the next log: that is the point. The stone-age seat is POOR, and this
@@ -29,12 +31,28 @@ local fire = std.facility_parcel("FIRE")
 local warmth = std.holding_qty("WARMTH")
 local wood   = std.holding_qty("WOOD")
 local meat   = std.holding_qty("MEAT")
-local food   = std.holding_qty("BERRIES") + std.holding_qty("COOKED_MEAT")
+local berries = std.holding_qty("BERRIES")
+local cooked = std.holding_qty("COOKED_MEAT")
+local jerky  = std.holding_qty("JERKY")
+local food   = berries + cooked + jerky
 
--- 0. Desperate: nothing to eat but raw meat. Take the risk -- disease is
---    a chance, starvation is a schedule. (EAT_RAW is labor-free.)
-if food + std.holding_qty("SATIETY") < 1 and meat >= 1 then
-  ctx.action.start_process("EAT_RAW")
+-- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
+--    Meals are labor-free, instant and night-legal -- but they do
+--    not happen by themselves.
+--    Eat what spoils first (berries, then cooked); jerky never rots,
+--    so it is the deep pantry; raw meat is the desperate last resort
+--    (a one-in-four chance of disease).
+local satiety = std.holding_qty("SATIETY")
+if satiety < 1.5 then
+  if berries >= 2 then
+    ctx.action.start_process("EAT_BERRIES")
+  elseif cooked >= 1 then
+    ctx.action.start_process("EAT_COOKED")
+  elseif jerky >= 1 then
+    ctx.action.start_process("EAT_JERKY")
+  elseif meat >= 1 then
+    ctx.action.start_process("EAT_RAW")
+  end
 end
 
 -- 1. The fire: build it, then keep it fed. Night draws 3 warmth an
@@ -58,7 +76,7 @@ end
 
 -- 3. Everything else is gathering: food first, then wood for the fire.
 --    Daylight only -- the dark refuses the work (std.is_night()).
-if (food < 3 or wood < 3) and not std.is_night() then
+if (food < 4 or wood < 3) and not std.is_night() then
   if not std.running_recipe("GATHER") then
     ctx.action.start_process("GATHER")
   end

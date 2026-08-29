@@ -179,7 +179,7 @@ def test_gather_loot_table(session):
     """Every gather lands on the declared branch table -- one resource per
     roll, quantities exact."""
     create_content(session)
-    w = _seat(session)
+    w = _biz(session, "Roller")   # no needs: nothing eats mid-test (run 19)
     for _ in range(24):
         _act_day(session, w, "GATHER")
         run_tick(session); session.commit()
@@ -283,13 +283,44 @@ def test_smoke_meat_converts_slowly_and_keeps(session):
     # ...and unlike every other food, time does not eat it
     _run(session, 10)
     assert _hold(session, w.id, "JERKY") == Decimal("2")
-    # a larder of house-smoked jerky feeds the FOOD need like shelf food
+    # conscious eating (run 19): a jerky larder feeds nobody by itself --
+    # the FOOD need drinks only SATIETY. Feeding is a meal, not a draw.
     seat = _seat(session, "JerkyEater")
     markets.adjust_holding(session, seat, "BERRIES", -BERRY_BUFFER)
     markets.adjust_holding(session, seat, "JERKY", Decimal("5"))
-    before = _hold(session, seat.id, "JERKY")
+    hunger0 = _hold(session, seat.id, "HUNGER")
+    _run(session, 4)                       # four hungry hours beside a full larder
+    assert _hold(session, seat.id, "JERKY") == Decimal("5")   # untouched
+    assert _hold(session, seat.id, "HUNGER") > hunger0         # the engine did not chew
+    assert _act(session, seat, "EAT_JERKY")                    # the meal is the decision
+    assert _hold(session, seat.id, "JERKY") == Decimal("4")
+    assert _hold(session, seat.id, "SATIETY") == Decimal("3.6")
+
+
+def test_conscious_eating_makes_meals_decisions(session):
+    """Run 19's variable: the FOOD need drinks only SATIETY, and only
+    EAT recipes fill the stomach -- a larder is not a meal. The density
+    ladder is real: berries thin (~3h fed), jerky dense (~6h)."""
+    create_content(session)
+    w = _seat(session, "Diner")
+    markets.adjust_holding(session, w, "BERRIES", -BERRY_BUFFER)
+    markets.adjust_holding(session, w, "JERKY", Decimal("3"))
+    hunger0 = _hold(session, w.id, "HUNGER")
+    _run(session, 4)                     # four hungry hours beside the larder
+    assert _hold(session, w.id, "JERKY") == Decimal("3")   # untouched
+    assert _hold(session, w.id, "SATIETY") == Decimal("0")
+    assert _hold(session, w.id, "HUNGER") > hunger0        # nothing was auto-eaten
+    # EAT_BERRIES: instant, labor-free, night-legal (hours 0-4 are dark)
+    markets.adjust_holding(session, w, "BERRIES", Decimal("2"))
+    assert _act(session, w, "EAT_BERRIES")
+    assert _hold(session, w.id, "SATIETY") == Decimal("2")
+    assert _hold(session, w.id, "BERRIES") == Decimal("0")
     _run(session, 1)
-    assert _hold(session, seat.id, "JERKY") < before
+    assert _hold(session, w.id, "SATIETY") == Decimal("1.35")  # 0.5 need + 10% of the 1.5 left
+    # the dense meal: one strip carries ~5½ hours
+    assert _act(session, w, "EAT_JERKY")
+    assert _hold(session, w.id, "SATIETY") == Decimal("4.95")   # 1.35 + 3.6
+    assert _hold(session, w.id, "JERKY") == Decimal("2")
 
 
 def test_the_clock_rations_labor_and_gates_the_dark(session):
@@ -422,6 +453,11 @@ def test_shelter_alone_is_misery_not_death(session):
                                      _camp(session, w).id)   # labor-free
         except Exception:
             pass
+        if _hold(session, w.id, "SATIETY") < 1:      # conscious eating (run 19):
+            try:                                      # gathered food is not a meal
+                production.start_process(session, w, "EAT_BERRIES")
+            except Exception:
+                pass
         _act_day(session, w, "GATHER")
     assert session.get(Entity, w.id).status == EntityStatus.ACTIVE
     assert _hold(session, w.id, "EXPOSURE") < Decimal("15")
@@ -690,7 +726,7 @@ def test_post_dark_bids_freeze_instead_of_drifting(session):
 
 
 def test_post_jerky_never_rots_and_feeds(session):
-    """JERKY is the salted shelf: it does not decay, it satisfies FOOD,
+    """JERKY is the salted shelf: it does not decay, it feeds EAT_JERKY,
     and the post spawns stocking it -- late coin always has something
     to buy (run 4: OSS died holding 17 COIN beside a rotted-empty
     larder)."""
@@ -704,11 +740,12 @@ def test_post_jerky_never_rots_and_feeds(session):
         == Decimal("30")
     assert markets.get_holding(session, post.id, "BERRIES").quantity \
         < POST_FOOD["BERRIES"]
-    # and it feeds: a seat whose only food is JERKY draws FOOD from it
+    # and it feeds: a seat whose only food is JERKY runs the densest
+    # meal out of it (run 19: feeding is a decision, not a draw)
     seat = _seat(session, "JerkyEater")
     markets.adjust_holding(session, seat, "BERRIES", -BERRY_BUFFER)
     markets.adjust_holding(session, seat, "JERKY", Decimal("5"))
-    before = markets.get_holding(session, seat.id, "JERKY").quantity
-    _run(session, 1)
-    after = markets.get_holding(session, seat.id, "JERKY").quantity
-    assert after < before                    # eaten, not rotted (0 decay)
+    assert _act(session, seat, "EAT_JERKY")
+    assert markets.get_holding(session, seat.id, "JERKY").quantity \
+        == Decimal("4")                    # eaten, not rotted (0 decay)
+    assert _hold(session, seat.id, "SATIETY") == Decimal("3.6")
