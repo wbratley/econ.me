@@ -42,6 +42,21 @@ berries thin, jerky dense, exactly the trade a trader should
 arbitrage. The predicted failure mode is the point: starving beside a
 full larder is economics, not a bug.
 
+WOLVES (run 20): the night has teeth. A generic engine pass
+(threats.py, declared content rows like needs) credits a condition
+per dark hour: ambient pressure for the fireless, extra per delivered
+say (noise carries at night), quartered by a lit hearth (WARMTH >= 1).
+WOLF fades a fifth an hour (dawn scatters the pack) and kills at 6.0; it is
+consumed by FIGHT_WOLF (spear: 90% driven off with a pelt, 10%
+mauled; the spear is an input and breaks) or SCARE_WOLF (bare hands:
+60/40, slower). WOUNDS heal at 0.1/hour and kill at 8.0 -- a mauling
+is a wound, not a limp (conditions that throttle LABOR floor it below
+the 1.0 every recipe costs: a shave would be a stoppage). Fire and shelter keep them at bay -- shelter works
+through the hearth rule (REST_SHELTERED drips the WARMTH that deters)
+-- and speech is free by day but priced at night. The failure modes
+to watch: the fireless eaten inside one dark night, and the all-night
+trader who out-shouts his own hearth.
+
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
 JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
 WARMTH/SATIETY and the
@@ -69,7 +84,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from econengine import goods, markets, needs, parcels, production, scripting, services
+from econengine import goods, markets, needs, parcels, production, scripting, services, threats
 from experiments.world import manifest
 from econengine.models import (
     Entity, EntityType, Parcel, Script, ScriptType, WorldSetting,
@@ -168,6 +183,16 @@ EAT_RAW (~1h, one-in-four disease). A full larder feeds nobody until
 someone runs the recipe: starving beside one is a choice, and the
 clock will make it for you if you let it -- two meals a day is the
 natural cadence.
+
+THE NIGHT HAS TEETH: wolves circle the fireless after dark -- wolf
+pressure (WOLF) builds every night-hour you have no lit hearth
+(WARMTH ≥ 1), and EVERY say at night carries to them. A lit hearth
+keeps them shy, not deaf. Dawn scatters them slowly; at 6.0 they stop
+circling and come in. Pressure is answered, not waited out:
+FIGHT_WOLF (a spear, an hour, usually clean -- the spear may break,
+sometimes a pelt) or SCARE_WOLF (bare hands, two hours, two nights in
+five it goes badly -- wounds heal slow, and enough of them kill).
+Speech is free by day. At night it has a price.
 
 A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
@@ -275,6 +300,7 @@ def create_content(session: Session, verify: bool = True) -> None:
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
+    _create_threats(session)
     spawn_trading_post(session)
     if verify:
         manifest.verify_manifest()
@@ -398,6 +424,66 @@ def _create_goods(session: Session) -> None:
                     "at this threshold.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
+    )
+    # Wolves (run 20). WOLF is the pack at the door: pressure that
+    # accrues in the dark (see the WOLF threat row below) and fades by
+    # daylight -- 0.4/hour of the wolves losing interest, so dawn scatters
+    # what the night gathered unless you let it build. WOUNDS is what a
+    # mauling leaves: it heals slowly (0.1/hour) and a wounded house
+    # works at three-quarters hands. PELT is the only trophy -- what a
+    # spear sometimes buys off a driven-off wolf, and the post pays for.
+    goods.create_good(
+        session, "WOLF", name="Wolf Pressure",
+        description="The pack at the door: it circles the fireless and the "
+                    "loud at night, and loses interest fast -- a fifth of "
+                    "whatever is left, each hour, so dawn scatters what the "
+                    "night gathered. At 6.0 they stop circling.",
+        decay_per_tick=Decimal("0.2"),
+        incapacitates_at=Decimal("6"),
+    )
+    goods.create_good(
+        session, "WOUNDS", name="Wounds",
+        description="A mauling remembered in the body: heals slowly "
+                    "(a tenth an hour), and enough of it kills.",
+        decay_per_tick=Decimal("0.1"),
+        incapacitates_at=Decimal("8"),
+    )
+    goods.create_good(
+        session, "PELT", name="Wolf Pelt",
+        description="What a spear sometimes buys off a driven-off wolf; the "
+                    "post pays for trophies.",
+        decay_per_tick=Decimal("0.05"),
+    )
+
+
+def _create_threats(session: Session) -> None:
+    """The demand side of the night (run 20): what circles, what it
+    hears, and what keeps it shy. The engine (threats.py) does the
+    arithmetic; the numbers here are the world's ecology.
+
+    Numerics -- decay is PROPORTIONAL (a fifth of the pressure left,
+    each hour), so the fireless converge on equilibrium 1.5/0.2 = 7.5,
+    comfortably past the kill at 6.0:
+    - fireless and silent: eaten ~8 hours into the dark -- one fireless
+      night is death
+    - fireless and loud (1 say/h): ~7 hours
+    - lit hearth (WARMTH >= 1) and silent: inflow 0.375 -> peaks ~1.5 by
+      dawn, gone by noon -- fire and shelter (whose drip keeps the hearth
+      lit) keep them at bay
+    - lit hearth and chatty (1 say/h): peaks ~4 -- pressure and a FIGHT
+      window, not death; the all-night trader (3+ says/h) out-shouts
+      his own hearth and is eaten before dawn
+    Speech is free by day. At night it has a price."""
+    threats.create_threat(
+        session, "WOLF", condition_symbol="WOLF",
+        entity_type=EntityType.INDIVIDUAL,
+        ambient_night_per_tick=Decimal("1.5"),
+        per_say_night=Decimal("0.5"),
+        deterred_by_symbol="WARMTH", deterred_by_quantity=Decimal("1"),
+        deterrence_factor=Decimal("0.25"),
+        name="Wolves",
+        description="Circles individuals at night: louder with every say, "
+                    "shy of a lit hearth (WARMTH ≥ 1).",
     )
 
 
@@ -573,6 +659,35 @@ def _create_recipes(session: Session) -> None:
         ],
     )
 
+    # --- The night has teeth: fighting the pack off (run 20) ----------
+    # Wolf pressure is consumed, not waited out: FIGHT with a spear is
+    # fast and mostly clean (the spear may break -- it is an input, and
+    # unlike hunting, fighting spends it); SCARE bare-handed is slow and
+    # gets you mauled two nights in five. Both are labor-free (night has
+    # no labor ration) and night-legal: adrenaline does not keep hours.
+    # The pelt makes the fight an economic act, not just survival.
+    production.create_recipe(
+        session, "FIGHT_WOLF", name="Fight the Wolf",
+        description="Answer the pack with a spear: fast, and it usually "
+                    "works. The spear may break; sometimes there is a pelt "
+                    "in it.",
+        inputs={"WOLF": D("2"), "SPEAR": D("1")}, outputs={}, duration_ticks=1,
+        branches=[
+            {"weight": D("90"), "outputs": {"PELT": D("1")}, "label": "driven off"},
+            {"weight": D("10"), "outputs": {"WOUNDS": D("1.5")}, "label": "mauled"},
+        ],
+    )
+    production.create_recipe(
+        session, "SCARE_WOLF", name="Scare the Wolf",
+        description="Bare hands and firelight and shouting: slow, and two "
+                    "nights in five it goes badly.",
+        inputs={"WOLF": D("2")}, outputs={}, duration_ticks=2,
+        branches=[
+            {"weight": D("60"), "outputs": {}, "label": "driven off"},
+            {"weight": D("40"), "outputs": {"WOUNDS": D("2")}, "label": "mauled"},
+        ],
+    )
+
     # --- Shelter and clothing: warmth as capital ---------------------------
     # SHELTER + CLOTHES together cover the whole WARMTH need forever, for
     # free (their recipes carry no LABOR: capital pays once, then drips).
@@ -685,9 +800,11 @@ def _create_markets(session: Session) -> None:
         "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
         "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "BAG": "Bag",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
+        "PELT": "Wolf Pelt",
     }
     for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
-                   "YARN", "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED"):
+                   "YARN", "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED",
+                   "PELT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol])
 
 

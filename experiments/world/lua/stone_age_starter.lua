@@ -35,6 +35,8 @@ local berries = std.holding_qty("BERRIES")
 local cooked = std.holding_qty("COOKED_MEAT")
 local jerky  = std.holding_qty("JERKY")
 local food   = berries + cooked + jerky
+local wolf   = std.holding_qty("WOLF")
+local spear  = std.holding_qty("SPEAR")
 
 -- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
 --    Meals are labor-free, instant and night-legal -- but they do
@@ -64,9 +66,26 @@ if not fire then
   if wood >= 2 then
     ctx.action.start_process("MAKE_FIRE", camp)
   end
-elseif warmth < (std.hour() and std.hour() >= 17 and 12 or 3)
+elseif warmth < (std.hour() and std.hour() >= 15 and 12 or 4)
        and wood >= 1 and not std.running_recipe("TEND_FIRE") then
   ctx.action.start_process("TEND_FIRE", fire)
+end
+
+-- 1b. Wolves: pressure at the door is answered, not waited out --
+--     and a lit hearth (warmth >= 1) keeps them shy in the first
+--     place. With a spear, fight (fast, usually clean, the spear may
+--     break); without one, scare (slow, sometimes it goes badly).
+--     The floor never says at night: speech carries to the pack.
+if wolf >= 2 then
+  if spear >= 1 then
+    if not std.running_recipe("FIGHT_WOLF") then
+      ctx.action.start_process("FIGHT_WOLF")
+    end
+  else
+    if not std.running_recipe("SCARE_WOLF") then
+      ctx.action.start_process("SCARE_WOLF")
+    end
+  end
 end
 
 -- 2. Cooking: fire + 2 raw meat -> 2 safe food.
@@ -74,9 +93,10 @@ if fire and meat >= 2 and food < 4 then
   ctx.action.start_process("COOK_MEAT", fire)
 end
 
--- 3. Everything else is gathering: food first, then wood for the fire.
+-- 3. Everything else is gathering: food first, then wood for the fire
+--    (wolves or no wolves, a dark camp is the expensive one).
 --    Daylight only -- the dark refuses the work (std.is_night()).
-if (food < 4 or wood < 3) and not std.is_night() then
+if (food < 4 or wood < 5) and not std.is_night() then
   if not std.running_recipe("GATHER") then
     ctx.action.start_process("GATHER")
   end

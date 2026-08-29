@@ -18,6 +18,7 @@ from .process import Process, ProcessStatus
 from .parcel import Parcel, Facility, Deposit
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
+from .threat import Threat
 from .setting import WorldSetting
 from .technology import Technology, TechnologyPrerequisite, TechScope, Unlock
 from .proposal import Proposal, Vote, ProposalStatus, VoteChoice, ProposalType
@@ -60,6 +61,7 @@ __all__ = [
     "Need",
     "NeedSatisfier",
     "NeedState",
+    "Threat",
     "WorldSetting",
     "Technology",
     "TechnologyPrerequisite",

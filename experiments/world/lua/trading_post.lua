@@ -34,7 +34,7 @@ local S = ctx.state
 if not S.ask then
   S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00, JERKY = 3.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
-            YARN = 2.00, FLINT = 2.00 }
+            YARN = 2.00, FLINT = 2.00, PELT = 3.00 }
   S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
   S.live = {}    -- the (qty, price) placed per key, to spot drift
   S.ids = {}     -- order id per key, from applied place_order events
