@@ -277,6 +277,11 @@ def advance_round(session: Session) -> dict[str, Any]:
         # ends still counts. It stops itself the moment the epoch ends.
         stamps_made.extend(epochs_mod.observe_tick(session, tick.number))
 
+    # Population renews at the round boundary (spawns.py): what the
+    # world's SPAWN_RULES call for, after the round's ticks committed.
+    from econengine import spawns as spawns_mod
+    spawns_mod.apply_on_round(session, rounds_before + 1)
+
     # Upsert the round counter. WorldSetting.value is plain JSON (not a
     # mutable wrapper), so reassign the whole dict to persist. The payload
     # carries N (rounds per window) so scripts -- the content-pack clerk

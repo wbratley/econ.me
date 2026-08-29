@@ -146,15 +146,22 @@ EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
 25%-per-meal DISEASE lottery). Meals are labor-free, instant and
 night-legal; the stomach spills a tenth an hour, so a day costs ~14 —
 the treadmill arithmetic is unchanged, but a full larder now feeds
-nobody until someone runs the recipe. **Wolves (run 20)**: the night
-has teeth — a `threats` pass (declared content, like needs) credits
-**WOLF** pressure every dark hour: +1.5 fireless, +0.5 per say
-(noise carries at night), quartered while a hearth is lit (WARMTH ≥ 1;
-shelter works through its drip). Pressure fades a fifth an hour and
-kills at 6.0 — eaten in the dark, and rivals *hear* it (loud fact).
-It is consumed, not waited out: FIGHT_WOLF (spear in, may break; 90%
-driven off with a PELT / 10% WOUNDS) or SCARE_WOLF (bare hands, 60/40,
-slower). WOUNDS heal 0.1/hour and kill at 8.0; the post bids pelts.
+nobody until someone runs the recipe. **Wolves (run 20)**: creatures,
+not mechanics — spawned ENTITIES with stats (ATK/DEFENSE rows), health
+(a **HITS** holding: 12 for a wolf, 20 for a house, never regrown),
+the same needs as a house, and a hunting program: they hunt at night
+because they are hungry, target the loudest speaker they *heard*
+(the witness feed is their ears), eat raw meat, and keep warm by
+PACE. Combat (engine `combat.py`) is entity-vs-entity under declared
+`COMBAT_RULES`: daylight refuses the hunt, a lit hearth (WARMTH ≥ 1)
+turns an attacker at the door (a loud miss), hit% = 50 + 5×(ATK−DEF)
+clamped 5–95 on the commit-reveal RNG, damage = max(1, ATK−DEF);
+zero HITS is the ordinary death machinery, and the victor seizes the
+loot (PELT + MEAT — the post bids pelts). Weapons are carried, not
+born: SPEAR +3 ATTACK, CLOTHES +1 DEFENSE; any entity may `attack()`
+anyone it can name, and every fight is a loud fact every house hears.
+Population renews at round boundaries (`spawns.py`): from round 5,
+every 5 rounds, up to 3 more packs, never more than 4 alive.
 Food comes from GATHER (a
 loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
 warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log

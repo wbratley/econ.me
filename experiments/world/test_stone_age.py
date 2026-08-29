@@ -536,9 +536,9 @@ def test_world_ships_a_legible_manual(session):
     # all there: actions, tools, conditions, thresholds, threats.
     cat = " ".join(catalog_text(catalog_state(session)).split()).lower()
     for needle in ("gather_bag", "hunt_spear", "make_shelter", "eat_raw",
-                   "fight_wolf", "spear", "bag", "incapacitates at 15",
-                   "incapacitates at 2.5", "== needs", "== markets",
-                   "== threats", "per say you make"):
+                   "pace", "hits", "pelt", "spear", "bag",
+                   "incapacitates at 15",
+                   "incapacitates at 2.5", "== needs", "== markets"):
         assert needle in cat, needle
 
 
@@ -752,80 +752,99 @@ def test_post_jerky_never_rots_and_feeds(session):
     assert _hold(session, seat.id, "SATIETY") == Decimal("3.6")
 
 
-def test_wolves_press_the_fireless_and_hear_the_loud(session):
-    """Run 20's variable: the night has teeth. Ambient pressure lands on
-    the fireless every dark hour, says add to it, a lit hearth (WARMTH
-    >= 1) quarters the whole rate, and daylight scatters what the night
-    gathered. The BUSINESS post may talk all night unharmed."""
+def test_wolves_are_creatures_with_stats_and_health(session):
+    """Run 20's variable: a wolf is an ENTITY -- same physics as a house
+    (needs, hunger), stats it was born with, health it can lose, and a
+    hunting program. Genesis installs two; the breeding rule renews
+    them (from day 5, every 5 days, up to 3, never more than 4 alive)."""
+    from econengine import combat, spawns
+    from econengine.models import Script
     create_content(session)
-    cold = _seat(session, "Fireless")
-    markets.adjust_holding(session, cold, "WARMTH", -WARMTH_BUFFER)
-    warm = _seat(session, "Hearthlit")
-    post = _post(session)                      # talks at night, unharmed
-    _run(session, 1)                           # hour 0: night
-    cold_p = _hold(session, cold.id, "WOLF")
-    warm_p = _hold(session, warm.id, "WOLF")
-    assert cold_p == Decimal("1.2")            # +1.5, then -20% of the stock
-    assert 0 < warm_p < Decimal("0.5")         # (1.5*0.25) then -20%: 0.3
-    # daylight (tick 25 = hour 0 is night; run to hour 8 = tick 32)
-    _run(session, 24)
-    before = _hold(session, cold.id, "WOLF")
-    _run(session, 8)
-    assert _hold(session, cold.id, "WOLF") < before     # dawn scatters
-    assert _hold(session, post.id, "WOLF") == Decimal("0")  # scoped out
+    wolves = [e for e in session.execute(select(Entity)).scalars()
+              if e.name.startswith("Wolf Pack")]
+    assert len(wolves) == 2
+    w = wolves[0]
+    assert w.entity_type.value == "individual"      # same physics
+    assert combat.get_stats(session, w.id) == {
+        "ATTACK": Decimal("4"), "DEFENSE": Decimal("1")}
+    assert _hold(session, w.id, "HITS") == Decimal("12")
+    assert _hold(session, w.id, "MEAT") == Decimal("1")
+    assert session.execute(select(Script).where(
+        Script.entity_id == w.id)).scalars().first() is not None
+    # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 4;
+    # round 10 caps at 4 alive
+    assert spawns.apply_on_round(session, 4) == []
+    born5 = spawns.apply_on_round(session, 5)
+    assert len(born5) == 2                          # 2 alive, cap 4
+    assert spawns.apply_on_round(session, 9) == []
+    assert spawns.apply_on_round(session, 10) == []  # already at cap
 
 
-def test_fighting_wolves_spends_the_spear_and_sometimes_pays(session):
-    """Pressure is answered, not waited out: FIGHT_WOLF consumes the
-    pressure and the spear (an input -- unlike hunting, fighting breaks
-    it) at START, and pays out at completion an hour later; SCARE_WOLF
-    works bare-handed. 50 fights with zero pelts is a 0.5% event;
-    zero maulings is 0.9^50 = 0.5%."""
+def test_combat_between_entities(session):
+    """Fighting is between creatures: a lit hearth turns the wolf at the
+    door (a loud miss), a spear prices into the fight, and a kill
+    seizes the loot through the ordinary estate machinery."""
+    from econengine import combat
+    from econengine.models import EntityStatus
     create_content(session)
-    w = _biz(session, "Wolfbait")              # needs-free: mechanics only
-    pelts, mauls, fights = 0, 0, 0
-    for _ in range(50):
-        markets.adjust_holding(session, w, "WOLF", Decimal("2"))
-        markets.adjust_holding(session, w, "SPEAR", Decimal("1"))
-        assert _act(session, w, "FIGHT_WOLF")
-        fights += 1
-        # the pressure and the spear are gone the moment the fight starts
-        assert _hold(session, w.id, "WOLF") == Decimal("0")
-        assert _hold(session, w.id, "SPEAR") == Decimal("0")
-        _run(session, 1)                       # the hour passes; it resolves
-        if _hold(session, w.id, "PELT") > 0:
-            pelts += 1
-            markets.adjust_holding(
-                session, w, "PELT", -_hold(session, w.id, "PELT"))
-        if _hold(session, w.id, "WOUNDS") > 0:
-            mauls += 1
-            markets.adjust_holding(
-                session, w, "WOUNDS", -_hold(session, w.id, "WOUNDS"))
-    assert fights == 50
-    assert pelts > 0 and mauls > 0
-    # SCARE: bare hands, two hours, no spear spent
-    markets.adjust_holding(session, w, "WOLF", Decimal("2"))
-    assert _act(session, w, "SCARE_WOLF")
-    assert _hold(session, w.id, "WOLF") == Decimal("0")
+    house = _seat(session, "Doomed")
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    # firelight: a warm house cannot be bitten (the miss is loud)
+    markets.adjust_holding(session, house, "WARMTH", Decimal("5"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)
+    assert ev["deterred"] is True and ev["hit"] is False
+    assert _hold(session, house.id, "HITS") == Decimal("20")
+    # the fire dies; the hunt is on. Unarmed house vs wolf: 4 v 1.
+    # (One attack per (attacker, defender, tick) is the honest cadence --
+    # the RNG seed is the triple -- so the hunt spans the dark hours.)
+    markets.adjust_holding(session, house, "WARMTH", -_hold(session, house.id, "WARMTH"))
+    night_hours = [d * 24 + h for d in range(9) for h in (1, 2, 3, 4, 5, 21, 22, 23)]
+    hits = 0
+    for tick in night_hours:                       # ~65% each: plenty
+        if session.get(Entity, house.id).status != EntityStatus.ACTIVE:
+            break
+        ev = combat.resolve_attack(session, wolf.id, house.id, tick)
+        assert ev["hit"] in (True, False)
+        if ev.get("hit"):
+            hits += 1
+    assert hits >= 4                                # 20 HITS, 3 a bite
+    assert session.get(Entity, house.id).status != EntityStatus.ACTIVE
+    # the victor ate: loot lands on the wolf
+    assert _hold(session, wolf.id, "PELT") == Decimal("1")
+    assert _hold(session, wolf.id, "MEAT") >= Decimal("3")
+    # and the house can fight back: a spear makes it a duel (stats are
+    # born, weapons are carried)
+    hunter = _seat(session, "Hunter")
+    wolf2 = spawns_spawn(session, "Wolf Pack X")
+    markets.adjust_holding(session, hunter, "SPEAR", Decimal("1"))
+    assert combat.effective_attack(session, hunter.id) == Decimal("4")
+    ev = combat.resolve_attack(session, hunter.id, wolf2.id, 1)
+    assert Decimal(ev["attack"]) == Decimal("4")         # 1 born + 3 carried
+    # daylight refuses the hunt entirely
+    ev = combat.resolve_attack(session, hunter.id, wolf2.id, 10)
+    assert ev.get("status") == "rejected" and "too bright" in ev["reason"]
 
 
-def test_wounds_heal_slowly_and_kill_at_the_threshold(session):
-    """A mauling is a wound, not a limp: WOUNDS holds no LABOR modifier
-    (a throttle would floor the ration below the 1.0 every recipe costs
-    -- a shave would be a stoppage); it heals a tenth an hour and
-    kills at 8.0."""
+def spawns_spawn(session, name):
+    return stone_age.make_wolf(session, name)
+
+
+def test_starter_floor_survives_the_wolves(session):
+    """The integration contract: two hunting packs, a silent floor with
+    a fire -- no incapacity across two days. Wolves that find nothing
+    loud pace and starve or prowl; the floor banks warmth and answers
+    what bites it."""
     create_content(session)
-    whole = _seat(session, "Whole")
-    hurt = _seat(session, "Hurt")
-    for s in (whole, hurt):                   # keep them fed to dusk:
-        markets.adjust_holding(session, s, "SATIETY", Decimal("30"))
-    markets.adjust_holding(session, hurt, "WOUNDS", Decimal("6"))
-    _run(session, 10)                         # ten hours of healing
-    assert _hold(session, hurt.id, "WOUNDS") < Decimal("6")   # it heals
-    assert _hold(session, whole.id, "WOUNDS") == Decimal("0")
-    # and 8.0 is the end: the mauling that does not stop (the check
-    # runs after decay, so 9.0 lands at 8.1)
-    markets.adjust_holding(session, hurt, "WOUNDS",
-                           Decimal("9") - _hold(session, hurt.id, "WOUNDS"))
-    _run(session, 1)
-    assert session.get(Entity, hurt.id).status != EntityStatus.ACTIVE
+    seat = _seat(session, "Starter")
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=seat.id,
+        timeout_ms=200,
+        state={},
+    ))
+    session.commit()
+    _run(session, 48)                               # two full days
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE

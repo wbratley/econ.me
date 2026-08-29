@@ -643,6 +643,21 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=100,
         ))
 
+    def _attack(target_id, *rest):
+        _arity("attack", rest, "(target_id_or_nil)")
+        # Fighting is an intent like any other (run 20: wolves as
+        # entities): resolve_intent hands it to combat.py. A nil target
+        # is a desperate prowl -- the engine picks the noisiest speaker
+        # of the night.
+        target = str(target_id) if target_id is not None else None
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="attack",
+            params={"target_id": target} if target else {},
+            resource_ids=[target] if target else [],
+            priority=50,
+        ))
+
     def _levy(from_id, to_id, amount, rule_ref, *rest):
         _arity("levy", rest, "(from, to, amount, rule_ref)")
         # The privileged transfer: money leaves `from_id` (an account the
@@ -919,6 +934,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["start_process"] = _start_process
     action_tbl["cancel_process"] = _cancel_process
     action_tbl["transfer_parcel"] = _transfer_parcel
+    action_tbl["attack"]         = _attack
     action_tbl["say"]              = _say
 
     ctx_tbl = lua.table()

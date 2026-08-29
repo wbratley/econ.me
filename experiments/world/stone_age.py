@@ -42,20 +42,23 @@ berries thin, jerky dense, exactly the trade a trader should
 arbitrage. The predicted failure mode is the point: starving beside a
 full larder is economics, not a bug.
 
-WOLVES (run 20): the night has teeth. A generic engine pass
-(threats.py, declared content rows like needs) credits a condition
-per dark hour: ambient pressure for the fireless, extra per delivered
-say (noise carries at night), quartered by a lit hearth (WARMTH >= 1).
-WOLF fades a fifth an hour (dawn scatters the pack) and kills at 6.0; it is
-consumed by FIGHT_WOLF (spear: 90% driven off with a pelt, 10%
-mauled; the spear is an input and breaks) or SCARE_WOLF (bare hands:
-60/40, slower). WOUNDS heal at 0.1/hour and kill at 8.0 -- a mauling
-is a wound, not a limp (conditions that throttle LABOR floor it below
-the 1.0 every recipe costs: a shave would be a stoppage). Fire and shelter keep them at bay -- shelter works
-through the hearth rule (REST_SHELTERED drips the WARMTH that deters)
--- and speech is free by day but priced at night. The failure modes
-to watch: the fireless eaten inside one dark night, and the all-night
-trader who out-shouts his own hearth.
+WOLVES (run 20, second cut): creatures, not pressure. Wolves are
+spawned ENTITIES -- stats rows (ATTACK 4 / DEFENSE 1), health as a
+HITS holding (12), the same FOOD/WARMTH needs as a house, and a
+hunting program (wolf_pack.lua): they hunt at night because they are
+hungry, target the loudest speaker they heard (the witness feed is
+their ears), eat raw meat (their constitution, same 25% disease), and
+keep warm by PACE. Combat (combat.py) is entity-vs-entity under the
+pack's COMBAT_RULES: daylight refuses, a lit hearth DETERS (a loud
+miss), hit% = clamp(50 + 5*(ATK-DEF), 5, 95) on the commit-reveal RNG,
+damage = max(1, ATK-DEF) (+1 crit), HITS drain, zero = the ordinary
+incapacity/estate machinery, victor seizes {PELT 1, MEAT 3}. Houses
+are ATTACK 1 / DEFENSE 1 / 20 HITS; weapons are carried, not born
+(SPEAR +3 ATK, CLOTHES +1 DEF). Population renews via spawns.py at
+round boundaries: from round 5, every 5 rounds, up to 3 more packs,
+never more than 4 alive. The failure modes to watch: the fireless
+hunted down over two cold nights, and the loud targeted by name --
+speech is free by day, priced at night.
 
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
 JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
@@ -84,7 +87,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from econengine import goods, markets, needs, parcels, production, scripting, services, threats
+from econengine import combat, goods, markets, needs, parcels, production, scripting, services, spawns
 from experiments.world import manifest
 from econengine.models import (
     Entity, EntityType, Parcel, Script, ScriptType, WorldSetting,
@@ -103,6 +106,7 @@ COIN = "COIN"
 #: FOUND, not endowed (a gather branch can mint it), so 10 is walking
 #: money -- the supply grows as people dig.
 SEAT_COIN = Decimal("10")
+HOUSE_HITS = Decimal("20")        # a body: drained by combat, never regrown
 #: Branch weight of the shiny-stone roll on both gather tables. ~5% of
 #: gathers find a COIN: over a 200-tick run a house that gathers ~2/3 of
 #: its ticks mints ~6-7 -- money supply creeps from 30 toward ~50.
@@ -300,8 +304,10 @@ def create_content(session: Session, verify: bool = True) -> None:
     _create_recipes(session)
     _create_needs(session)
     _create_markets(session)
-    _create_threats(session)
+    _create_combat(session)
     spawn_trading_post(session)
+    make_wolf(session, "Wolf Pack I")
+    make_wolf(session, "Wolf Pack II")
     if verify:
         manifest.verify_manifest()
     scripting.pin_std_version(session)
@@ -425,66 +431,58 @@ def _create_goods(session: Session) -> None:
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
     )
-    # Wolves (run 20). WOLF is the pack at the door: pressure that
-    # accrues in the dark (see the WOLF threat row below) and fades by
-    # daylight -- 0.4/hour of the wolves losing interest, so dawn scatters
-    # what the night gathered unless you let it build. WOUNDS is what a
-    # mauling leaves: it heals slowly (0.1/hour) and a wounded house
-    # works at three-quarters hands. PELT is the only trophy -- what a
-    # spear sometimes buys off a driven-off wolf, and the post pays for.
+    # Wolves (run 20): creatures, not pressure. A wolf is an ENTITY --
+    # stats, health, needs, a hunting program -- and combat happens
+    # between entities (combat.py, rules below). HITS is every
+    # creature's health: a holding, drained by damage, zero is death
+    # through the ordinary incapacity/estate machinery. PELT is the
+    # trophy the victor seizes; the post pays for it.
     goods.create_good(
-        session, "WOLF", name="Wolf Pressure",
-        description="The pack at the door: it circles the fireless and the "
-                    "loud at night, and loses interest fast -- a fifth of "
-                    "whatever is left, each hour, so dawn scatters what the "
-                    "night gathered. At 6.0 they stop circling.",
-        decay_per_tick=Decimal("0.2"),
-        incapacitates_at=Decimal("6"),
-    )
-    goods.create_good(
-        session, "WOUNDS", name="Wounds",
-        description="A mauling remembered in the body: heals slowly "
-                    "(a tenth an hour), and enough of it kills.",
-        decay_per_tick=Decimal("0.1"),
-        incapacitates_at=Decimal("8"),
+        session, "HITS", name="Hits",
+        description="Health of the body: every creature spawns with a "
+                    "stock, combat drains it, and zero is death -- the "
+                    "same estate rule as any other. It does not grow back.",
     )
     goods.create_good(
         session, "PELT", name="Wolf Pelt",
-        description="What a spear sometimes buys off a driven-off wolf; the "
-                    "post pays for trophies.",
+        description="Seized from a killed wolf; the post pays for "
+                    "trophies.",
         decay_per_tick=Decimal("0.05"),
     )
 
 
-def _create_threats(session: Session) -> None:
-    """The demand side of the night (run 20): what circles, what it
-    hears, and what keeps it shy. The engine (threats.py) does the
-    arithmetic; the numbers here are the world's ecology.
-
-    Numerics -- decay is PROPORTIONAL (a fifth of the pressure left,
-    each hour), so the fireless converge on equilibrium 1.5/0.2 = 7.5,
-    comfortably past the kill at 6.0:
-    - fireless and silent: eaten ~8 hours into the dark -- one fireless
-      night is death
-    - fireless and loud (1 say/h): ~7 hours
-    - lit hearth (WARMTH >= 1) and silent: inflow 0.375 -> peaks ~1.5 by
-      dawn, gone by noon -- fire and shelter (whose drip keeps the hearth
-      lit) keep them at bay
-    - lit hearth and chatty (1 say/h): peaks ~4 -- pressure and a FIGHT
-      window, not death; the all-night trader (3+ says/h) out-shouts
-      his own hearth and is eaten before dawn
-    Speech is free by day. At night it has a price."""
-    threats.create_threat(
-        session, "WOLF", condition_symbol="WOLF",
-        entity_type=EntityType.INDIVIDUAL,
-        ambient_night_per_tick=Decimal("1.5"),
-        per_say_night=Decimal("0.5"),
-        deterred_by_symbol="WARMTH", deterred_by_quantity=Decimal("1"),
-        deterrence_factor=Decimal("0.25"),
-        name="Wolves",
-        description="Circles individuals at night: louder with every say, "
-                    "shy of a lit hearth (WARMTH ≥ 1).",
-    )
+def _create_combat(session: Session) -> None:
+    """The physics of fighting (run 20): stats are born, weapons are
+    carried, rules are declared. Resolution: hit% = clamp(50 + 5 x
+    (ATK - DEF), 5, 95); damage = max(1, ATK - DEF), +1 on a clean
+    opening; daylight refuses the hunt; a lit hearth (WARMTH >= 1)
+    turns the attacker at the door (a loud miss -- the world hears
+    it); the victor seizes the loot. Wolves: ATK 4 / DEF 1 / 12 HITS.
+    Houses: ATK 1 / DEF 1 / 20 HITS, +3 ATK with a spear, +1 DEF in
+    clothes. A cold unarmed house bleeds ~3 a night-hour at 65% --
+    roughly two dark nights of being hunted; a spear makes the duel
+    even (65% both ways, 4 hits kills a wolf: pelt + 3 meat)."""
+    combat.set_rules(session, {
+        "night_only": True,
+        "deterrence": {"WARMTH": 1},
+        "weapons": {"SPEAR": 3},
+        "armor": {"CLOTHES": 1},
+        "loot": {"PELT": 1, "MEAT": 3},
+        "base_hit": 50, "per_point": 5,
+    })
+    spawns.set_script_source(
+        session, "wolf", _gate_pack_script("wolf_pack.lua"))
+    spawns.set_rules(session, {
+        "from_round": 5, "every_rounds": 5, "up_to": 3, "max_alive": 4,
+        "name_prefix": "Wolf Pack",
+        "template": {
+            "entity_type": "individual",
+            "stats": {"ATTACK": 4, "DEFENSE": 1},
+            "holdings": {"HITS": 12, "MEAT": 1},
+            "script_setting": "wolf",
+            "account": {"COIN": 0},
+        },
+    })
 
 
 def _create_recipes(session: Session) -> None:
@@ -659,33 +657,18 @@ def _create_recipes(session: Session) -> None:
         ],
     )
 
-    # --- The night has teeth: fighting the pack off (run 20) ----------
-    # Wolf pressure is consumed, not waited out: FIGHT with a spear is
-    # fast and mostly clean (the spear may break -- it is an input, and
-    # unlike hunting, fighting spends it); SCARE bare-handed is slow and
-    # gets you mauled two nights in five. Both are labor-free (night has
-    # no labor ration) and night-legal: adrenaline does not keep hours.
-    # The pelt makes the fight an economic act, not just survival.
+    # --- The night has teeth: fighting, between creatures (run 20) ----
+    # Combat is not a recipe: it is the attack intent resolved by
+    # combat.py under the declared rules (see _create_combat). Any
+    # entity may attack any entity it can name; the spear simply prices
+    # into ATTACK (+3). The recipes that matter here are the wolf's
+    # biology: raw meat is dinner (their constitution, not ours), and
+    # PACE is a moving animal keeping itself warm.
     production.create_recipe(
-        session, "FIGHT_WOLF", name="Fight the Wolf",
-        description="Answer the pack with a spear: fast, and it usually "
-                    "works. The spear may break; sometimes there is a pelt "
-                    "in it.",
-        inputs={"WOLF": D("2"), "SPEAR": D("1")}, outputs={}, duration_ticks=1,
-        branches=[
-            {"weight": D("90"), "outputs": {"PELT": D("1")}, "label": "driven off"},
-            {"weight": D("10"), "outputs": {"WOUNDS": D("1.5")}, "label": "mauled"},
-        ],
-    )
-    production.create_recipe(
-        session, "SCARE_WOLF", name="Scare the Wolf",
-        description="Bare hands and firelight and shouting: slow, and two "
-                    "nights in five it goes badly.",
-        inputs={"WOLF": D("2")}, outputs={}, duration_ticks=2,
-        branches=[
-            {"weight": D("60"), "outputs": {}, "label": "driven off"},
-            {"weight": D("40"), "outputs": {"WOUNDS": D("2")}, "label": "mauled"},
-        ],
+        session, "PACE", name="Pace",
+        description="A moving animal stays warm: wolves den awake. "
+                    "Labor-free, night-legal.",
+        inputs={}, outputs={"WARMTH": D("6")}, duration_ticks=1,
     )
 
     # --- Shelter and clothing: warmth as capital ---------------------------
@@ -814,11 +797,29 @@ def _create_markets(session: Session) -> None:
 
 def make_house(session: Session, name: str = "House") -> Entity:
     """One symmetric stone-age seat: coins, a day of berries, a night of
-    warmth, and a bare CAMP parcel -- no fire, no shelter, no tools, no
-    unlocks. Everything beyond the body is the player's to build."""
+    warmth, a body (20 HITS, ATTACK 1 / DEFENSE 1 -- the spear is
+    carried, not born), and a bare CAMP parcel -- no fire, no shelter,
+    no tools, no unlocks. Everything beyond the body is the player's
+    to build."""
     house = services.create_entity(session, name, EntityType.INDIVIDUAL)
     services.create_account(session, house, COIN, initial_balance=SEAT_COIN)
     markets.adjust_holding(session, house, "BERRIES", BERRY_BUFFER)
     markets.adjust_holding(session, house, "WARMTH", WARMTH_BUFFER)
+    markets.adjust_holding(session, house, "HITS", HOUSE_HITS)
+    combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
+    combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
     parcels.create_parcel(session, "LAND", name=f"{name}'s Camp", owner=house)
     return house
+
+
+def make_wolf(session: Session, name: str) -> Entity:
+    """One wolf: a creature, not a mechanic. Same needs as a house
+    (hunger is why it hunts), 12 HITS, ATTACK 4 / DEFENSE 1, a starting
+    strip of meat, and the pack's hunting program."""
+    return spawns.spawn_one(session, name, {
+        "entity_type": "individual",
+        "stats": {"ATTACK": 4, "DEFENSE": 1},
+        "holdings": {"HITS": 12, "MEAT": 1},
+        "script_setting": "wolf",
+        "account": {"COIN": 0},
+    })
