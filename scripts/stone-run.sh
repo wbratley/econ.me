@@ -22,9 +22,9 @@ ROUNDS=${2:-40}
 # Under $HOME, not /tmp: a reboot wiped /tmp mid-run-15 (attempt 5 died ~12
 # minutes into its 40 rounds). $HOME survives.
 OUT=$HOME/econ-runs/stone-run$N
-PORT=8922      # world API
-DASH=8123      # dashboard (served by the run itself)
-LAN=8124       # LAN sidecar for $OUT
+PORT=8923      # world API
+DASH=8125      # dashboard (served by the run itself)
+LAN=8126       # LAN sidecar for $OUT
 MODELS=(openai/gpt-oss-20b openai/gpt-oss-20b openai/gpt-oss-20b)
 # (Seat history: llama-3.3-70b EOL'd 2026-08-26; nemotron-3-super played 3
 #  lukewarm rounds; llama-3.2-90b-vision brains-but-glacial (>15min calls
