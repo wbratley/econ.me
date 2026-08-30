@@ -194,11 +194,14 @@ dark, guided by sound: EVERY say at night tells a listening pack where
 you are. A lit hearth (WARMTH >= 1) turns a wolf at the door; a spear
 (+3 ATTACK) or clothes (+1 DEFENSE) prices into the fight: hit% =
 50 + 5 x (ATTACK - DEFENSE), damage = max(1, ATK - DEF). A landed
-bite feeds the wolf (it tears flesh); a kill pays it a PELT and 3
-MEAT; by day wolves hunt the same game you do (HUNT) -- starve them
+bite feeds the wolf (it tears flesh); a kill is a carcass: MEAT is
+torn from it by any victor, while everything the dead CARRIED moves
+only to victors with hands -- wolves cannot loot, what a beast kills
+rots where it fell; by day wolves hunt the same game you do (HUNT) --
+starve them
 out and they die like anything else. A house has 20 HITS and never
-regrows them; a wolf has 12, and killing one pays YOU the pelt and
-the meat. Combat is an action anyone may take: attack(<entity id>) --
+regrows them; a wolf has 12, and it WEARS its pelt: kill one and the
+pelt and the meat it carried are yours. Combat is an action anyone may take: attack(<entity id>) --
 you learn a wolf's id by hearing it hunt (combat is loud: every house
 hears every fight). The packs breed: from day 5, every fifth day, up
 to three more, never more than four alive.
@@ -229,13 +232,19 @@ this: it is the floor you inherit, not the ceiling.
 == THE TRADING POST ==
 THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT and BERRIES, and it
 sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
-salted meat that never rots, so the shop always has food). It is a
-BUSINESS entity standing in every market with its own COIN: your
-surplus sold to the post becomes COIN, and COIN becomes food when your
-own gathering fails. Its prices haggle: each sale raises its ask 5%,
+salted meat that never rots, so the shop always has food). The trader
+is a man who has done this a while, and it shows: his hearth never
+dies, he never speaks after dark, and what comes at him in the night
+he answers armed (he hits like a wolf and guards like one tooled up
+-- worse things than wolves have tried). He is killable flesh all
+the same -- 20 HITS like yours -- and he cannot be everywhere. Kill
+him and his shelf and his purse go to whoever has hands: his death
+is an estate, the estate is loot, and the market dies with him. He
+is a BUSINESS (no needs): he does not starve, freeze, or age; only
+violence ends him. His prices haggle: each sale raises its ask 5%,
 each purchase it fills lowers its bid 5%, and 3 quiet ticks move prices
-the other way (ask -5%, bid +3%). Its bids are small (4 units, and
-never more than its COIN covers) and it stops bidding for a good it
+the other way (ask -5%, bid +3%). His bids are small (4 units, and
+never more than his COIN covers) and he stops bidding for a good he
 holds 20 of.
 
 == SPEECH ==
@@ -280,15 +289,24 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
 
 
 def spawn_trading_post(session: Session) -> Entity:
-    """The market maker: a BUSINESS (no needs -- it cannot starve or
-    freeze, and it draws no LABOR) with a purse of COIN, a larder of
-    safe food, and the haggling behaviour. It is the standing
-    counterparty every run lacked: a bid for surplus, an ask for food,
-    and a public price for both."""
+    """The market maker: a man who has done this a while (a BUSINESS
+    body: no needs -- he does not starve or freeze; his hearth is the
+    world's doing, auto-issued WARMTH), with a purse of COIN, a
+    larder of safe food, and the haggling behaviour. He is killable
+    flesh like anyone -- 20 innate HITS -- but very hard to kill:
+    ATTACK 4 / DEFENSE 4 (careful, tooled up), firelit and sheltered
+    (deterrence turns wolves at his door), silent after dark, and he
+    answers what bites him. Kill him and his shelf and purse go to
+    whoever has hands: he is a man, not a building -- his death is an
+    estate, and the estate is loot."""
     post = services.create_entity(session, "Trading Post", EntityType.BUSINESS)
     services.create_account(session, post, COIN, initial_balance=POST_COIN)
     for sym, qty in POST_FOOD.items():
         markets.adjust_holding(session, post, sym, qty)
+    combat.create_stat(session, post.id, "HITS", Decimal("20"))
+    combat.create_stat(session, post.id, "ATTACK", Decimal("4"))
+    combat.create_stat(session, post.id, "DEFENSE", Decimal("4"))
+    combat.create_stat(session, post.id, "CARRY", Decimal("100"))
     session.add(Script(
         name=f"trading-post-{post.id}",
         script_type=ScriptType.BEHAVIOUR,
@@ -404,11 +422,18 @@ def _create_goods(session: Session) -> None:
     # for you), drawn by the FOOD need every hour, and spilling a tenth
     # of itself each hour besides -- a banked belly keeps about a day,
     # no more (compound spill: a full stomach is a wasting asset).
+    # The trader's hearth: the world keeps a standing fire lit for
+    # its businesses (he has done this a while; fire and shelter are
+    # why wolves almost never reach him). Houses get no such mercy --
+    # their warmth is their own labor. Top-up of 1 survives the night
+    # pass order (issues before scripts resolve attacks, decay after).
     goods.create_good(session, "WARMTH", name="Warmth",
                       description="A flow, not a stock to hoard: made by fires, "
                                   "shelter and clothes, fades fast. The WARMTH "
                                   "need drinks it every tick.",
-                      decay_per_tick=Decimal("0.2"))
+                      decay_per_tick=Decimal("0.2"),
+                      auto_issue_quantity=Decimal("1"),
+                      auto_issue_entity_type=EntityType.BUSINESS)
     goods.create_good(session, "SATIETY", name="Satiety",
                       description="The stomach. Only EAT recipes fill it "
                                   "(berries thin, jerky dense, raw meat a "
@@ -467,13 +492,18 @@ def _create_combat(session: Session) -> None:
     Houses: ATK 1 / DEF 1 / 20 HITS, +3 ATK with a spear, +1 DEF in
     clothes. A cold unarmed house bleeds ~3 a night-hour at 65% --
     roughly two dark nights of being hunted; a spear makes the duel
-    even (65% both ways, 4 hits kills a wolf: pelt + 3 meat)."""
+    even (65% both ways, 4 hits kills a wolf: pelt + 3 meat). A kill
+    is a carcass: MEAT 3 is torn from it by any victor; the "*"
+    estate (everything the dead carried, purse included) moves only
+    to a victor with the CARRY stat -- houses inherit, wolves just
+    eat."""
     combat.set_rules(session, {
         "night_only": True,
         "deterrence": {"WARMTH": 1},
         "weapons": {"SPEAR": 3},
         "armor": {"CLOTHES": 1},
-        "loot": {"PELT": 1, "MEAT": 3},
+        "loot": {"*": 1, "MEAT": 3},
+        "carry_stat": "CARRY",
         "bite_loot": {"MEAT": 1},
         "base_hit": 50, "per_point": 5,
     })
@@ -484,8 +514,8 @@ def _create_combat(session: Session) -> None:
         "name_prefix": "Wolf Pack",
         "template": {
             "entity_type": "individual",
-            "stats": {"ATTACK": 4, "DEFENSE": 1},
-            "holdings": {"HITS": 12, "MEAT": 1},
+            "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
+            "holdings": {"MEAT": 1, "PELT": 1},
             "script_setting": "wolf",
             "account": {"COIN": 0},
         },
@@ -815,18 +845,24 @@ def make_house(session: Session, name: str = "House") -> Entity:
     markets.adjust_holding(session, house, "HITS", HOUSE_HITS)
     combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
     combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
+    combat.create_stat(session, house.id, "HITS", HOUSE_HITS)
+    # Hands: a house can carry what it kills. Wolves lack the stat --
+    # what a beast kills rots where it fell.
+    combat.create_stat(session, house.id, "CARRY", Decimal("20"))
     parcels.create_parcel(session, "LAND", name=f"{name}'s Camp", owner=house)
     return house
 
 
 def make_wolf(session: Session, name: str) -> Entity:
     """One wolf: a creature, not a mechanic. Same needs as a house
-    (hunger is why it hunts), 12 HITS, ATTACK 4 / DEFENSE 1, a starting
-    strip of meat, and the pack's hunting program."""
+    (hunger is why it hunts), 12 innate HITS, ATTACK 4 / DEFENSE 1,
+    a starting strip of meat, and the pelt it wears -- killing one
+    pays whoever can carry it. No CARRY: what a wolf kills rots where
+    it fell; it eats the bite and the carcass, never the estate."""
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
-        "stats": {"ATTACK": 4, "DEFENSE": 1},
-        "holdings": {"HITS": 12, "MEAT": 1},
+        "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
+        "holdings": {"MEAT": 1, "PELT": 1},
         "script_setting": "wolf",
         "account": {"COIN": 0},
     })

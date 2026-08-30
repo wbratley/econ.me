@@ -10,8 +10,8 @@ can be cleaned out between waves:
     {"from_round": 5, "every_rounds": 5, "up_to": 3, "max_alive": 4,
      "name_prefix": "Wolf Pack",
      "template": {"entity_type": "individual",
-                  "stats": {"ATTACK": 4, "DEFENSE": 1},
-                  "holdings": {"HITS": 12, "MEAT": 1},
+                  "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
+                  "holdings": {"MEAT": 1, "PELT": 1},
                   "script_setting": "wolf.pack_source",
                   "account": {"COIN": 0}}}
 
@@ -83,10 +83,17 @@ def spawn_one(session: Session, name: str, template: dict) -> Entity:
         (template.get("account") or {"COIN": 0}).items()))
     services.create_account(session, entity, currency,
                             initial_balance=Decimal(str(balance)))
-    for symbol, qty in sorted((template.get("holdings") or {}).items()):
+    stats = {str(k).upper(): Decimal(str(v))
+             for k, v in (template.get("stats") or {}).items()}
+    for stat, value in sorted(stats.items()):
+        combat.create_stat(session, entity.id, stat, value)
+    holdings = dict(template.get("holdings") or {})
+    if "HITS" in stats and not holdings.get("HITS"):
+        # Health is assigned, not chosen: the innate HITS stat is the
+        # body; the holding starts whole and only combat drains it.
+        holdings["HITS"] = stats["HITS"]
+    for symbol, qty in sorted(holdings.items()):
         markets.adjust_holding(session, entity, symbol, Decimal(str(qty)))
-    for stat, value in sorted((template.get("stats") or {}).items()):
-        combat.create_stat(session, entity.id, stat, Decimal(str(value)))
     source = get_script_source(session, template.get("script_setting", ""))
     if source:
         session.add(Script(
