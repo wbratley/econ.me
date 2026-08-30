@@ -32,6 +32,8 @@ def _world(session, **rules_over):
     house = create_entity(session, "House", EntityType.INDIVIDUAL)
     markets.adjust_holding(session, wolf, "HITS", Decimal("12"))
     markets.adjust_holding(session, house, "HITS", Decimal("20"))
+    combat.create_stat(session, wolf.id, "HITS", Decimal("12"))
+    combat.create_stat(session, house.id, "HITS", Decimal("20"))
     combat.create_stat(session, wolf.id, "ATTACK", Decimal("4"))
     combat.create_stat(session, wolf.id, "DEFENSE", Decimal("1"))
     combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
@@ -106,6 +108,72 @@ def test_hits_math_damage_and_the_kill_with_loot(session):
         combat.resolve_attack(session, wolf.id, house.id, t)
     assert session.get(Entity, house.id).status != EntityStatus.ACTIVE
     assert markets.get_holding(session, wolf.id, "PELT").quantity \
+        == Decimal("1")
+
+
+def test_creature_hood_is_a_stat_not_a_holding(session):
+    """The exploit, closed: creature-ness cannot be gained or shed by
+    holding goods. A pile of HITS in the locker makes nothing
+    fightable; the stat the WORLD assigned cannot be dumped to opt
+    out either."""
+    wolf, house = _world(session)
+    ghost = create_entity(session, "Ghost", EntityType.INDIVIDUAL)
+    markets.adjust_holding(session, ghost, "HITS", Decimal("99"))  # no stat
+    session.commit()
+    ev = combat.resolve_attack(session, wolf.id, ghost.id, 1)
+    assert ev["status"] == "rejected" and "no HITS stat" in ev["reason"]
+    assert combat.is_creature(session, house.id) is True
+    assert combat.is_creature(session, ghost.id) is False
+
+
+def test_the_estate_goes_to_hands_not_jaws(session):
+    """A kill is a carcass: any victor tears the declared MEAT, but
+    the "*" estate (everything the dead carried, purse included)
+    moves only to a victor with the carry stat. What a beast kills
+    rots where it fell; what a person kills is inheritance."""
+    goods.create_good(session, "HITS")
+    goods.create_good(session, "MEAT")
+    goods.create_good(session, "WOOD")
+    from econengine import services
+    beast = create_entity(session, "Beast", EntityType.INDIVIDUAL)
+    trader = create_entity(session, "Trader", EntityType.BUSINESS)
+    hunter = create_entity(session, "Hunter", EntityType.INDIVIDUAL)
+    for e, hits in ((beast, 12), (trader, 20), (hunter, 20)):
+        markets.adjust_holding(session, e, "HITS", Decimal(hits))
+        combat.create_stat(session, e.id, "HITS", Decimal(hits))
+    combat.create_stat(session, beast.id, "ATTACK", Decimal("6"))
+    combat.create_stat(session, hunter.id, "ATTACK", Decimal("6"))
+    combat.create_stat(session, hunter.id, "CARRY", Decimal("20"))
+    combat.create_stat(session, trader.id, "CARRY", Decimal("100"))
+    services.create_account(session, trader, "COIN", initial_balance=Decimal("25"))
+    markets.adjust_holding(session, trader, "WOOD", Decimal("7"))
+    goods.create_good(session, "PELT")
+    markets.adjust_holding(session, beast, "PELT", Decimal("1"))
+    combat.set_rules(session, {
+        "night_only": False, "base_hit": 100, "per_point": 5,
+        "loot": {"*": 1, "MEAT": 3}, "carry_stat": "CARRY",
+        "bite_loot": {},
+    })
+    session.commit()
+    # the beast kills the trader: carcass MEAT only, estate burns
+    for t in range(1, 40):
+        ev = combat.resolve_attack(session, beast.id, trader.id, t)
+        if ev.get("killed"):
+            break
+    assert session.get(Entity, trader.id).status != EntityStatus.ACTIVE
+    assert ev["loot"] == {"MEAT": "3.0000"}          # no hands, no estate
+    w = markets.get_holding(session, beast.id, "WOOD")  # the trader's wood
+    assert (w.quantity if w else Decimal("0")) == Decimal("0")   # burned
+    # the hunter kills the beast: it wears its pelt -- seized whole
+    for t in range(41, 80):
+        ev = combat.resolve_attack(session, hunter.id, beast.id, t)
+        if ev.get("killed"):
+            break
+    assert session.get(Entity, beast.id).status != EntityStatus.ACTIVE
+    assert Decimal(ev["loot"]["PELT"]) == Decimal("1")
+    assert Decimal(ev["loot"]["MEAT"]) == Decimal("6")  # 3 it tore from the
+    # trader, carried, + 3 carcass of its own -- estates compound
+    assert markets.get_holding(session, hunter.id, "PELT").quantity \
         == Decimal("1")
 
 

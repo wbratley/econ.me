@@ -31,6 +31,19 @@
 -- ctx.events (the post's own fills and applied orders from last tick).
 
 local S = ctx.state
+
+-- 0. The trader is a man, not a building: something came at him in
+--    the night, he answers -- armed and by the door he keeps. The
+--    world keeps his hearth lit; the fire turns wolves; his hands
+--    close the account.
+for _, e in ipairs(ctx.events or {}) do
+  if e.type == "combat" and e.target_id == ctx.entity.id
+     and e.entity_id and e.entity_id ~= ctx.entity.id
+     and (e.hit or e.deterred) then
+    ctx.action.attack(e.entity_id)
+  end
+end
+
 if not S.ask then
   S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00, JERKY = 3.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
@@ -179,7 +192,10 @@ end
 --    where coin stands behind them -- and twice a round (every 10th
 --    tick) keeps it ambient without drowning rival speech in the
 --    50-tick digest houses read.
-if ctx.tick % 10 == 0 then
+--    AFTER DARK THE COUNTER GOES QUIET: at night, speech is a beacon
+--    (wolves hunt by ear). He is old, careful, and tooled up -- he
+--    does not draw maps to his firelight.
+if ctx.tick % 10 == 0 and not std.is_night() then
   local sells, buys = {}, {}
   for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
     if want["sell_" .. sym] then

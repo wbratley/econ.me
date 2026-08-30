@@ -9,16 +9,28 @@ pack's COMBAT_RULES world setting:
      "deterrence": {"WARMTH": 1},   # holdings that turn attackers away
      "weapons": {"SPEAR": 3},       # attack bonus per unit held
      "armor": {"CLOTHES": 1},       # defense bonus per unit held
-     "loot": {"PELT": 1, "MEAT": 3},# granted to the victor on a kill
+     "loot": {"*": 1, "MEAT": 3},  # "*": the estate, to CARRYing victors
+     "carry_stat": "CARRY",        # victors with this stat seize "*"
+     "bite_loot": {"MEAT": 1},      # a landed bite feeds the attacker
      "base_hit": 50, "per_point": 5}
 
 Resolution: hit% = clamp(base_hit + per_point x (ATK - DEF), 5, 95),
 damage = max(1, ATK - DEF) (+1 on a roll >= 90), rolled on the
 commit-reveal RNG (sha over the previous tick's events hash). Health is
-the HITS holding; a defender at zero crosses into the existing
-incapacity/estate machinery — dying to a wolf is dying, one rule.
-Loot is engine-granted on the kill (the victor seizes the pelt and the
-meat; the rest of the estate burns as ever).
+two-layered: innate HITS is a STAT row -- world-assigned at spawn,
+immutable, and what marks a creature as fightable at all (an entity
+cannot opt out of combat by shedding a holding); current health is
+the HITS holding, drained by damage, never regrown. A defender at
+zero crosses into the existing incapacity/estate machinery -- dying
+to a wolf is dying, one rule.
+
+A kill is a carcass. The declared per-symbol loot (MEAT) is torn
+from it by ANY victor -- a wolf eats what it killed. The "*" entry
+is the estate: everything the dead carried (holdings and purse)
+moves to the victor, but only if the victor can CARRY (the
+carry_stat) -- there is no world-location layer yet, and a wolf
+toting the trader's shelf is wrong physics; what a beast kills
+rots where it fell, what a person kills is inheritance.
 
 Deterrence is a MISS, not a refusal: the attack happens, the world
 hears it, nobody bleeds — firelight turns the pack at the door. That is
@@ -149,11 +161,59 @@ def pick_prey(session: Session, tick_number: int,
     return candidates[roll % len(candidates)]
 
 
+def _seize_estate(session: Session, defender: Entity,
+                  attacker: Entity) -> dict[str, str]:
+    """Everything the dead carried moves to the victor: property
+    (non-condition holdings) and purse. Conditions were the body, not
+    the estate — they burn with it. Must run BEFORE _incapacitate,
+    whose estate pass disposes of whatever remains."""
+    from . import markets
+    from .models import Account, Good
+
+    condition_symbols = {
+        symbol for (symbol,) in session.execute(
+            select(Good.symbol).where(
+                (Good.modifies_pattern.is_not(None))
+                | (Good.incapacitates_at.is_not(None))
+            )
+        ).all()
+    }
+    taken: dict[str, str] = {}
+    for holding in session.execute(
+        select(Holding).where(Holding.entity_id == defender.id,
+                              Holding.quantity > 0)
+        .order_by(Holding.symbol)
+    ).scalars():
+        if holding.symbol not in condition_symbols:
+            markets.adjust_holding(session, attacker, holding.symbol,
+                                   holding.quantity)
+            taken[holding.symbol] = str(holding.quantity.quantize(_QUANTUM))
+        holding.quantity = Decimal("0")
+    for account in session.execute(
+        select(Account).where(Account.entity_id == defender.id,
+                              Account.balance != 0)
+        .order_by(Account.currency, Account.id)
+    ).scalars():
+        conditions._credit_account(session, attacker, account.currency,
+                                   account.balance)
+        taken[account.currency] = str(account.balance.quantize(_QUANTUM))
+        account.balance = Decimal("0")
+    return taken
+
+
 def _prev_hash(session: Session, tick_number: int) -> str:
     row = session.execute(
         select(Tick).where(Tick.number == tick_number - 1)
     ).scalar_one_or_none()
     return rng.hash_events(row.events or []) if row is not None else rng.GENESIS_HASH
+
+
+def is_creature(session: Session, entity_id: str) -> bool:
+    """Creature-ness is a STAT, not a holding: the world assigns HITS
+    at spawn and no intent can shed it. An entity cannot opt out of
+    combat by dumping what it holds — health is what the world says
+    it is."""
+    return "HITS" in get_stats(session, entity_id)
 
 
 def resolve_attack(session: Session, attacker_id: str,
@@ -180,12 +240,12 @@ def resolve_attack(session: Session, attacker_id: str,
     defender = session.get(Entity, defender_id)
     if defender is None or defender.status != EntityStatus.ACTIVE:
         return {**event, "status": "rejected", "reason": "target cannot be fought"}
-    if _holding_qty(session, defender_id, "HITS") <= 0:
-        # Health opts a creature into combat: infrastructure and the
-        # unspawned cannot be fought -- the market maker is not meat,
-        # whatever its nightly quoting sounds like.
+    if not is_creature(session, defender_id):
+        # No innate HITS: infrastructure, scenery, the unspawned. It
+        # cannot be fought — creature-ness is declared by the world,
+        # never chosen by the entity.
         return {**event, "status": "rejected",
-                "reason": "target is not a creature (no HITS)"}
+                "reason": "target is not a creature (no HITS stat)"}
     if attacker_id == defender_id:
         return {**event, "status": "rejected", "reason": "cannot attack self"}
     if rules.get("night_only") and not clock.is_night(tick_number):
@@ -226,16 +286,26 @@ def resolve_attack(session: Session, attacker_id: str,
                                  .quantize(_QUANTUM)))
     if hits - dealt <= 0:
         event["killed"] = True
-        # The kill rides the standard machinery: incapacity + estate
-        # burn, then the victor seizes the declared loot.
+        # A kill is a carcass. The estate ("*") moves only to a
+        # victor that can CARRY — seized BEFORE the incapacity pass
+        # burns what remains. What a beast kills rots where it fell.
+        loot_rules = rules.get("loot") or {}
+        seized: dict[str, str] = {}
+        if "*" in loot_rules and \
+                rules.get("carry_stat", "CARRY") in get_stats(session, attacker_id):
+            seized = _seize_estate(session, defender, attacker)
         death = conditions._incapacitate(
             session, defender, tick_number,
             condition="HITS", quantity=hits - dealt, threshold=Decimal("0"),
         )
         event["condition"] = death.get("condition")
         event["quantity"] = death.get("quantity")
-        for symbol, qty in sorted((rules.get("loot") or {}).items()):
+        for symbol, qty in sorted(loot_rules.items()):
+            if symbol == "*":
+                continue
             markets.adjust_holding(session, attacker, symbol, Decimal(qty))
-        event["loot"] = {s: str(Decimal(q).quantize(_QUANTUM)) for s, q in
-                         sorted((rules.get("loot") or {}).items())}
+            prev = Decimal(seized.get(symbol, "0"))
+            seized[symbol] = str((prev + Decimal(qty)).quantize(_QUANTUM))
+        if seized:
+            event["loot"] = dict(sorted(seized.items()))
     return event

@@ -147,21 +147,33 @@ EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
 night-legal; the stomach spills a tenth an hour, so a day costs ~14 —
 the treadmill arithmetic is unchanged, but a full larder now feeds
 nobody until someone runs the recipe. **Wolves (run 20)**: creatures,
-not mechanics — spawned ENTITIES with stats (ATK/DEFENSE rows), health
-(a **HITS** holding: 12 for a wolf, 20 for a house, never regrown),
-the same needs as a house, and a hunting program: they hunt at night
-because they are hungry, target the loudest speaker they *heard*
-(the witness feed is their ears), eat raw meat, and keep warm by
+not mechanics — spawned ENTITIES with stats (ATK/DEFENSE rows), innate
+health (a **HITS stat**: world-assigned, immutable — creature-ness
+cannot be opted into or out of by holdings; 12 for a wolf, 20 for a
+house, never regrown; current health is the HITS holding, drained by
+combat), the same needs as a house, and a hunting program: they hunt
+at night because they are hungry, target the loudest speaker they
+*heard* (the witness feed is their ears), eat raw meat (every landed
+bite feeds), hunt the same game as houses by day, and keep warm by
 PACE. Combat (engine `combat.py`) is entity-vs-entity under declared
 `COMBAT_RULES`: daylight refuses the hunt, a lit hearth (WARMTH ≥ 1)
 turns an attacker at the door (a loud miss), hit% = 50 + 5×(ATK−DEF)
 clamped 5–95 on the commit-reveal RNG, damage = max(1, ATK−DEF);
-zero HITS is the ordinary death machinery, and the victor seizes the
-loot (PELT + MEAT — the post bids pelts). Weapons are carried, not
+zero HITS is the ordinary death machinery. A kill is a carcass:
+any victor tears the declared MEAT, but the "\*" estate —
+everything the dead carried, purse included — moves only to victors
+with the **CARRY** stat (houses, the trader): what a beast kills rots
+where it fell, what a person kills is inheritance. A wolf wears its
+pelt; killing one pays whoever has hands. Weapons are carried, not
 born: SPEAR +3 ATTACK, CLOTHES +1 DEFENSE; any entity may `attack()`
 anyone it can name, and every fight is a loud fact every house hears.
 Population renews at round boundaries (`spawns.py`): from round 5,
 every 5 rounds, up to 3 more packs, never more than 4 alive.
+**The trader is a man, not a building**: killable flesh (20 HITS),
+armed and careful (ATTACK 4 / DEFENSE 4), firelit (the world keeps a
+standing hearth for him — deterrence), silent after dark, and he
+answers what bites him; kill him and his shelf and purse go to
+whoever has hands — and the market dies with him.
 Food comes from GATHER (a
 loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
 warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log

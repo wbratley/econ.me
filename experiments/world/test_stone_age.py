@@ -179,6 +179,7 @@ def test_gather_loot_table(session):
     """Every gather lands on the declared branch table -- one resource per
     roll, quantities exact."""
     create_content(session)
+    _no_wolves(session)
     w = _biz(session, "Roller")   # no needs: nothing eats mid-test (run 19)
     for _ in range(24):
         _act_day(session, w, "GATHER")
@@ -196,6 +197,7 @@ def test_bag_doubles_the_gather(session):
     """The advantage contract, part one: a BAG holder gathers far more loot
     over the same ticks (event-based totals, so rot cannot blur it)."""
     create_content(session)
+    _no_wolves(session)
     bare, bagged = _biz(session, "Bare"), _biz(session, "Bagged")
     # Two BAGs: one stays reserved by the running gather between ticks
     # (scripts act in-tick after completions and need only one; the
@@ -350,6 +352,7 @@ def test_warmth_draws_three_an_hour_at_night(session):
     """Night is the expensive half of the day: the consumption pass
     takes 3 WARMTH per dark hour and 1 per daylight hour."""
     create_content(session)
+    _no_wolves(session)
     w = _seat(session, "Cold")
     markets.adjust_holding(session, w, "WARMTH", -WARMTH_BUFFER)
     markets.adjust_holding(session, w, "WARMTH", Decimal("3"))
@@ -421,11 +424,22 @@ def test_spear_hunt_beats_bare_hunt(session):
 # POLICY TESTS -- the balance contract
 # ===========================================================================
 
+def _no_wolves(session):
+    """Isolate a mechanics test from the predator variable: the packs
+    go dormant (rows stay -- spawn math counts ACTIVE only). Tests that
+    are ABOUT wolves (creature, combat, floor) do not call this."""
+    for e in session.execute(select(Entity)).scalars():
+        if e.name.startswith("Wolf Pack"):
+            e.status = EntityStatus.INCAPACITATED
+    session.commit()
+
+
 def test_neglect_kills(session):
     """Doing nothing is fatal: the buffers run out and the conditions --
     EXPOSURE first, then HUNGER -- reach their thresholds. Death lands
     inside two DAYS (24-tick days): after tick 18, before tick 40."""
     create_content(session)
+    _no_wolves(session)
     w = _seat(session, "Doomed")
     _run(session, 40)
     assert session.get(Entity, w.id).status == EntityStatus.INCAPACITATED
@@ -444,6 +458,7 @@ def test_shelter_alone_is_misery_not_death(session):
     threshold. Cold, uncomfortable, alive (REST is labor-free, so the
     daylight LABOR budget still goes to gathering food)."""
     create_content(session)
+    _no_wolves(session)
     w = _seat(session, "Sheltered")
     parcels.add_facility(session, _camp(session, w), "SHELTER")
     for _ in range(60):
@@ -468,6 +483,7 @@ def test_starter_survives(session):
     hand-to-mouth pace: no incapacity, no script errors, both conditions
     well under their thresholds."""
     create_content(session)
+    _no_wolves(session)
     seat = _seat(session, "Starter")
     session.add(Script(
         name=f"starter-behaviour-{seat.id}",
@@ -607,6 +623,7 @@ def test_post_peddles_its_menu_on_the_cadence(session):
     """The post hawks its counter through say: the standing menu,
     twice a 20-tick round, pitched at both directions of trade."""
     create_content(session)
+    _no_wolves(session)
     _run(session, 21)
     heard = [
         (t.number, e)
@@ -766,11 +783,23 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     w = wolves[0]
     assert w.entity_type.value == "individual"      # same physics
     assert combat.get_stats(session, w.id) == {
-        "ATTACK": Decimal("4"), "DEFENSE": Decimal("1")}
+        "ATTACK": Decimal("4"), "DEFENSE": Decimal("1"),
+        "HITS": Decimal("12")}
     assert _hold(session, w.id, "HITS") == Decimal("12")
     assert _hold(session, w.id, "MEAT") == Decimal("1")
+    assert _hold(session, w.id, "PELT") == Decimal("1")   # it wears it
     assert session.execute(select(Script).where(
         Script.entity_id == w.id)).scalars().first() is not None
+    # the trader is a man, not a building: killable flesh (innate HITS),
+    # armed and careful (4/4), with hands -- and the world keeps his
+    # hearth lit, so wolves are turned at his door
+    post = [e for e in session.execute(select(Entity)).scalars()
+            if e.name == "Trading Post"][0]
+    assert combat.is_creature(session, post.id) is True
+    assert combat.get_stats(session, post.id)["DEFENSE"] == Decimal("4")
+    markets.adjust_holding(session, post, "WARMTH", Decimal("1"))
+    ev = combat.resolve_attack(session, w.id, post.id, 21)
+    assert ev.get("deterred") is True and not ev.get("hit")
     # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 4;
     # round 10 caps at 4 alive
     assert spawns.apply_on_round(session, 4) == []
@@ -810,9 +839,12 @@ def test_combat_between_entities(session):
             hits += 1
     assert hits >= 4                                # 20 HITS, 3 a bite
     assert session.get(Entity, house.id).status != EntityStatus.ACTIVE
-    # the victor ate: loot lands on the wolf
+    # a kill is a carcass: the wolf ate (bites + MEAT torn from it),
+    # but it cannot CARRY -- the house's estate burned, and the pelt
+    # on the wolf's back is still the one it was born wearing
     assert _hold(session, wolf.id, "PELT") == Decimal("1")
-    assert _hold(session, wolf.id, "MEAT") >= Decimal("3")
+    assert _hold(session, wolf.id, "MEAT") >= Decimal("4")
+    assert _hold(session, house.id, "HITS") == Decimal("0")
     # and the house can fight back: a spear makes it a duel (stats are
     # born, weapons are carried)
     hunter = _seat(session, "Hunter")
@@ -824,6 +856,19 @@ def test_combat_between_entities(session):
     # daylight refuses the hunt entirely
     ev = combat.resolve_attack(session, hunter.id, wolf2.id, 10)
     assert ev.get("status") == "rejected" and "too bright" in ev["reason"]
+    # hands inherit: the hunter kills wolf2 and takes everything it
+    # carried (pelt, meat) plus the carcass MEAT -- that is what
+    # CARRY means
+    for t in range(49, 120):
+        if session.get(Entity, wolf2.id).status != EntityStatus.ACTIVE:
+            break
+        markets.adjust_holding(session, hunter, "WARMTH", -_hold(session, hunter.id, "WARMTH"))
+        ev = combat.resolve_attack(session, hunter.id, wolf2.id, t)
+        if ev.get("killed"):
+            assert ev["loot"]["PELT"] == "1.0000"
+    assert session.get(Entity, wolf2.id).status != EntityStatus.ACTIVE
+    assert _hold(session, hunter.id, "PELT") == Decimal("1")
+    assert _hold(session, hunter.id, "MEAT") >= Decimal("4")
 
 
 def spawns_spawn(session, name):
