@@ -19,8 +19,9 @@ local satiety = std.holding_qty("SATIETY")
 local meat    = std.holding_qty("MEAT")
 local warmth  = std.holding_qty("WARMTH")
 
--- Ears: tonight's says name tonight's prey. Remember the loudest; the
--- memory fades at dawn.
+-- Ears: tonight's says name tonight's prey. Remember the loudest;
+-- the memory fades at dawn. A target that cannot be fought (the
+-- refused attacks in the feed) is dropped -- a corpse is not prey.
 if std.is_night() then
   S.night_says = S.night_says or {}
   for _, e in ipairs(ctx.events or {}) do
@@ -28,24 +29,37 @@ if std.is_night() then
        and e.status ~= "rejected" then
       S.night_says[e.entity_id] = (S.night_says[e.entity_id] or 0) + 1
     end
+    if e.type == "combat" and e.entity_id == ctx.entity.id
+       and e.status == "rejected" then
+      S.prey = nil
+      S.night_says = {}
+    end
   end
   local best, best_n = nil, -1
   for id, n in pairs(S.night_says) do
     if n > best_n then best, best_n = id, n end
   end
-  S.prey = best
+  if S.night_says and next(S.night_says) then
+    S.prey = best
+  end
 else
   S.night_says = {}
   S.prey = nil
 end
 
--- The hunt: hungry and dark. Desperation (HUNGER > 8) prowls blind.
-if std.is_night() and hunger > 3 then
-  if S.prey then
-    ctx.action.attack(S.prey)
-  elseif hunger > 8 then
-    ctx.action.attack(nil)
+-- The hunt: by dark, the loud (a starving pack prowls blind); by
+-- day, the same game the houses hunt -- a wolf's hunger does not
+-- care whose larder fills it.
+if std.is_night() then
+  if hunger > 3 then
+    if S.prey then
+      ctx.action.attack(S.prey)
+    elseif hunger > 8 then
+      ctx.action.attack(nil)
+    end
   end
+elseif hunger > 2 and not std.running_recipe("HUNT") then
+  ctx.action.start_process("HUNT")
 end
 
 -- The meal: meat, raw. Wolves do not cook.

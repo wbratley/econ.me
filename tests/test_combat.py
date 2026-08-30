@@ -24,6 +24,7 @@ def session():
 
 def _world(session, **rules_over):
     goods.create_good(session, "HITS")
+    goods.create_good(session, "MEAT")
     goods.create_good(session, "SPEAR")
     goods.create_good(session, "WARMTH", decay_per_tick=Decimal("0"))
     goods.create_good(session, "PELT")
@@ -37,7 +38,8 @@ def _world(session, **rules_over):
     combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
     rules = {"night_only": True, "deterrence": {"WARMTH": 1},
              "weapons": {"SPEAR": 3}, "armor": {"CLOTHES": 1},
-             "loot": {"PELT": 1}, "base_hit": 50, "per_point": 5}
+             "loot": {"PELT": 1}, "bite_loot": {"MEAT": 1},
+             "base_hit": 50, "per_point": 5}
     rules.update(rules_over)
     combat.set_rules(session, rules)
     session.commit()
@@ -59,9 +61,14 @@ def test_stats_are_born_weapons_are_carried(session):
 
 
 def test_daylight_refuses_and_the_hearth_deters(session):
-    """No hunting by day (a clear error naming the window), and a lit
-    hearth is a loud miss, not a refusal: the world hears the attempt."""
+    """No hunting by day (a clear error naming the window), a lit hearth
+    is a loud miss, and infrastructure without HITS is not meat: the
+    loudest night quoter in the world cannot be fought."""
     wolf, house = _world(session)
+    post = create_entity(session, "Post", EntityType.BUSINESS)   # no HITS
+    session.commit()
+    ev = combat.resolve_attack(session, wolf.id, post.id, 1)
+    assert ev["status"] == "rejected" and "not a creature" in ev["reason"]
     ev = combat.resolve_attack(session, wolf.id, house.id, 10)
     assert ev["status"] == "rejected" and "too bright" in ev["reason"]
     markets.adjust_holding(session, house, "WARMTH", Decimal("1"))
@@ -72,14 +79,17 @@ def test_daylight_refuses_and_the_hearth_deters(session):
 
 def test_hits_math_damage_and_the_kill_with_loot(session):
     """hit% = clamp(50 + 5*(ATK-DEF), 5, 95), damage = max(1, ATK-DEF),
-    and zero HITS crosses into the ordinary incapacity machinery with
-    the loot granted to the victor."""
+    a landed bite feeds the attacker, and zero HITS crosses into the
+    ordinary incapacity machinery with the kill loot to the victor."""
     wolf, house = _world(session, night_only=False, base_hit=100)
     for t in range(1, 30):                          # 95% clamp: scan for
         ev = combat.resolve_attack(session, wolf.id, house.id, t)  # a hit
         if ev.get("hit"):
             break
     assert ev["hit"] is True and Decimal(ev["damage"]) == Decimal("3")
+    # the bite fed the wolf
+    assert markets.get_holding(session, wolf.id, "MEAT").quantity \
+        == Decimal("1")
     hits_after = _hits(session, house)
     assert hits_after in (Decimal("17"), Decimal("14"))  # 3 a bite
     # a weak attacker still scratches: damage floors at 1 (scan ticks:

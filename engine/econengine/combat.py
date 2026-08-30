@@ -180,6 +180,12 @@ def resolve_attack(session: Session, attacker_id: str,
     defender = session.get(Entity, defender_id)
     if defender is None or defender.status != EntityStatus.ACTIVE:
         return {**event, "status": "rejected", "reason": "target cannot be fought"}
+    if _holding_qty(session, defender_id, "HITS") <= 0:
+        # Health opts a creature into combat: infrastructure and the
+        # unspawned cannot be fought -- the market maker is not meat,
+        # whatever its nightly quoting sounds like.
+        return {**event, "status": "rejected",
+                "reason": "target is not a creature (no HITS)"}
     if attacker_id == defender_id:
         return {**event, "status": "rejected", "reason": "cannot attack self"}
     if rules.get("night_only") and not clock.is_night(tick_number):
@@ -211,6 +217,10 @@ def resolve_attack(session: Session, attacker_id: str,
     dealt = min(damage, hits)
     if dealt > 0:
         markets.adjust_holding(session, defender, "HITS", -dealt)
+    # A landed bite feeds the attacker (it tears flesh): the pack that
+    # hunts houses eats by the bite, not only by the kill.
+    for symbol, qty in sorted((rules.get("bite_loot") or {}).items()):
+        markets.adjust_holding(session, attacker, symbol, Decimal(qty))
     event.update(hit=True, damage=str(dealt.quantize(_QUANTUM)),
                  target_hits=str(max(Decimal("0"), hits - dealt)
                                  .quantize(_QUANTUM)))
