@@ -188,14 +188,20 @@ someone runs the recipe: starving beside one is a choice, and the
 clock will make it for you if you let it -- two meals a day is the
 natural cadence.
 
-THE NIGHT HAS TEETH: wolves circle the fireless after dark -- wolf
-pressure (WOLF) builds every night-hour you have no lit hearth
-(WARMTH ≥ 1), and EVERY say at night carries to them. A lit hearth
-keeps them shy, not deaf. Dawn scatters them slowly; at 6.0 they stop
-circling and come in. Pressure is answered, not waited out:
-FIGHT_WOLF (a spear, an hour, usually clean -- the spear may break,
-sometimes a pelt) or SCARE_WOLF (bare hands, two hours, two nights in
-five it goes badly -- wounds heal slow, and enough of them kill).
+THE NIGHT HAS TEETH: wolves are creatures -- entities with stats,
+health (HITS) and hunger, the same physics as you. They hunt in the
+dark, guided by sound: EVERY say at night tells a listening pack where
+you are. A lit hearth (WARMTH >= 1) turns a wolf at the door; a spear
+(+3 ATTACK) or clothes (+1 DEFENSE) prices into the fight: hit% =
+50 + 5 x (ATTACK - DEFENSE), damage = max(1, ATK - DEF). A landed
+bite feeds the wolf (it tears flesh); a kill pays it a PELT and 3
+MEAT; by day wolves hunt the same game you do (HUNT) -- starve them
+out and they die like anything else. A house has 20 HITS and never
+regrows them; a wolf has 12, and killing one pays YOU the pelt and
+the meat. Combat is an action anyone may take: attack(<entity id>) --
+you learn a wolf's id by hearing it hunt (combat is loud: every house
+hears every fight). The packs breed: from day 5, every fifth day, up
+to three more, never more than four alive.
 Speech is free by day. At night it has a price.
 
 A fed
@@ -468,6 +474,7 @@ def _create_combat(session: Session) -> None:
         "weapons": {"SPEAR": 3},
         "armor": {"CLOTHES": 1},
         "loot": {"PELT": 1, "MEAT": 3},
+        "bite_loot": {"MEAT": 1},
         "base_hit": 50, "per_point": 5,
     })
     spawns.set_script_source(
