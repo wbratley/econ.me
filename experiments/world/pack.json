@@ -9,10 +9,10 @@
    "threats": 0
   },
   "stone_age": {
-   "goods": 20,
-   "markets": 14,
+   "goods": 21,
+   "markets": 15,
    "needs": 2,
-   "recipes": 22,
+   "recipes": 24,
    "technologies": 0,
    "threats": 0
   }

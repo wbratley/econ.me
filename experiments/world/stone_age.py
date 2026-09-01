@@ -221,6 +221,9 @@ where each one kills.
 4. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
    or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
    ~6 hours fed per strip) -> sell MEAT.
+4a. AXE (flint+wood+yarn, an afternoon): CHOP_WOOD = 3 certain logs an
+   hour, six times the bare gather's wood -- the fire never wants again;
+   and +2 ATK at the door, the half of a spear in a fist.
 5. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
@@ -404,6 +407,10 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "SPEAR", name="Spear",
                       description="Held while hunting, never consumed: turns a "
                                   "desperate hunt into a living.")
+    goods.create_good(session, "AXE", name="Stone Axe",
+                      description="Held while chopping, never consumed: certain "
+                                  "firewood, and a fighting chance the spear "
+                                  "does not have to give alone.")
     goods.create_good(session, "BAG", name="Bag",
                       description="Held while gathering, never consumed: "
                                   "doubles the day's find.")
@@ -489,8 +496,9 @@ def _create_combat(session: Session) -> None:
     opening; daylight refuses the hunt; a lit hearth (WARMTH >= 1)
     turns the attacker at the door (a loud miss -- the world hears
     it); the victor seizes the loot. Wolves: ATK 4 / DEF 1 / 12 HITS.
-    Houses: ATK 1 / DEF 1 / 20 HITS, +3 ATK with a spear, +1 DEF in
-    clothes. A cold unarmed house bleeds ~3 a night-hour at 65% --
+    Houses: ATK 1 / DEF 1 / 20 HITS, +3 ATK with a spear, +2 more with
+    an axe, +1 DEF in clothes. A cold unarmed house bleeds ~3 a night-hour
+    at 65% --
     roughly two dark nights of being hunted; a spear makes the duel
     even (65% both ways, 4 hits kills a wolf: pelt + 3 meat). A kill
     is a carcass: MEAT 3 is torn from it by any victor; the "*"
@@ -500,7 +508,7 @@ def _create_combat(session: Session) -> None:
     combat.set_rules(session, {
         "night_only": True,
         "deterrence": {"WARMTH": 1},
-        "weapons": {"SPEAR": 3},
+        "weapons": {"SPEAR": 3, "AXE": 2},
         "armor": {"CLOTHES": 1},
         "loot": {"*": 1, "MEAT": 3},
         "carry_stat": "CARRY",
@@ -562,6 +570,15 @@ def _create_recipes(session: Session) -> None:
             {"weight": COIN_WEIGHT, "outputs": {COIN: D("1")}, "label": "shiny"},
             {"weight": D("7"), "outputs": {}, "label": "nothing"},
         ],
+    )
+    production.create_recipe(
+        session, "CHOP_WOOD", name="Chop Wood",
+        description="The axe's whole point: an hour at the treeline, three "
+                    "certain logs -- no loot table, no gamble. Daylight only.",
+        inputs={"LABOR": D("1")},
+        outputs={"WOOD": D("3")}, duration_ticks=1,
+        good_requirements={"AXE": D("1")},
+        requires_daylight=True,
     )
     # Hunting: slow (2 ticks), risky bare-handed (55% total loss), better
     # with a SPEAR held (never consumed) and best with TRAPs (consumed --
@@ -744,9 +761,11 @@ def _create_recipes(session: Session) -> None:
     )
 
     # --- Tools ---------------------------------------------------------------
-    # SPEAR (held, never worn) and BAG (held) upgrade hunt and gather.
-    # TRAP is ammunition. BED is declared for the future REST mechanics --
-    # craftable and tradeable now, mechanically idle (the expansion hook).
+    # SPEAR (held, never worn) and BAG (held) upgrade hunt and gather;
+    # AXE (held) makes the wood certain and fights at +2 when the spear
+    # is on the wall. TRAP is ammunition. BED is declared for the future
+    # REST mechanics -- craftable and tradeable now, mechanically idle
+    # (the expansion hook).
     production.create_recipe(
         session, "MAKE_SPEAR", name="Make Spear",
         description="An afternoon at the whetstone: three honest hours of "
@@ -754,6 +773,15 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"SPEAR": D("1")}, duration_ticks=3,
+        requires_daylight=True,
+    )
+    production.create_recipe(
+        session, "MAKE_AXE", name="Make Axe",
+        description="An afternoon of knapping and lashing: a stone head on a "
+                    "haft. Held, never consumed. Daylight only.",
+        inputs={"LABOR": D("1"), "FLINT": D("1"),
+                                        "WOOD": D("1"), "YARN": D("1")},
+        outputs={"AXE": D("1")}, duration_ticks=3,
         requires_daylight=True,
     )
     production.create_recipe(
@@ -818,12 +846,13 @@ def _create_markets(session: Session) -> None:
     _NAMES = {
         "LABOR": "Labor", "BERRIES": "Berries", "MEAT": "Raw Meat",
         "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
-        "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "BAG": "Bag",
+        "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "AXE": "Stone Axe",
+        "BAG": "Bag",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
         "PELT": "Wolf Pelt",
     }
     for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
-                   "YARN", "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED",
+                   "YARN", "FLINT", "SPEAR", "AXE", "BAG", "TRAP", "CLOTHES", "BED",
                    "PELT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol])
 

@@ -160,7 +160,7 @@ def test_content_and_coin_markets(session):
     rows = list(session.execute(select(markets.Market)).scalars())
     assert {m.symbol for m in rows} == {
         "LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD", "YARN",
-        "FLINT", "SPEAR", "BAG", "TRAP", "CLOTHES", "BED", "PELT"}
+        "FLINT", "SPEAR", "AXE", "BAG", "TRAP", "CLOTHES", "BED", "PELT"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -246,6 +246,39 @@ def test_tool_and_facility_gates(session):
     assert _act(session, w, "TEND_FIRE", camp.id)
     _run(session, 2)
     assert _hold(session, w.id, "WARMTH") > 0
+
+
+def test_axe_chops_certain_wood_and_fights_at_two(session):
+    """Run 22's variable: the stone axe. A held tool like the spear --
+    MAKE_AXE costs an afternoon, CHOP_WOOD turns an hour at the treeline
+    into three certain logs (no loot table: the fire never wants again),
+    and the weapons table prices it at +2 ATK, behind the spear's 3."""
+    from econengine import combat
+    create_content(session)
+    _no_wolves(session)
+    w = _biz(session, "Woodcutter")
+    # the gate: no axe, no chop (the world starts at hour 00: wait for
+    # dawn first -- the daylight gate raises before the tool gate)
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session)
+        session.commit()
+    with pytest.raises(Exception, match="AXE"):
+        production.start_process(session, w, "CHOP_WOOD")
+    # the craft: flint + wood + yarn + an afternoon
+    for sym in ("FLINT", "WOOD", "YARN"):
+        markets.adjust_holding(session, w, sym, Decimal("1"))
+    assert _act_day(session, w, "MAKE_AXE")
+    _run(session, 4)
+    assert _hold(session, w.id, "AXE") == 1
+    # the certain logs: deterministic, no branch -- the gather table's
+    # wood is a 25% shot at 2; the axe pays 3, every time
+    assert _act_day(session, w, "CHOP_WOOD")
+    _run(session, 2)
+    assert _hold(session, w.id, "WOOD") == Decimal("3")
+    # the weapon: priced behind the spear, stacked when both are held
+    assert combat.get_rules(session)["weapons"] == {
+        "SPEAR": 3, "AXE": 2}
 
 
 def test_cook_meat_converts(session):
