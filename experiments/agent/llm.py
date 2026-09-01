@@ -506,7 +506,21 @@ class NimModel(OpenAIModel):
             if attempt:
                 time.sleep(2.0 * attempt)          # 2s, 4s — polite, bounded
             try:
-                r = httpx.post(
+                # Streamed, always. With the 32k completion budget a
+                # reasoning model thinks for many minutes, and a NON-
+                # streaming NIM sends no bytes until generation ends —
+                # so the 120s read timeout kills any long authoring
+                # call before a byte can arrive (run 21: every round-2+
+                # authoring died exactly there; the houses ran on their
+                # round-1 scripts for the whole run while 19-minute
+                # rounds burned on timeout ladders). Streamed, the read
+                # timeout is a BETWEEN-chunks budget: a slow generation
+                # keeps both the bytes and the deadline alive.
+                chunks: list[str] = []
+                reasoning = False
+                finish: str | None = None
+                with httpx.stream(
+                    "POST",
                     f"{self._base_url}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     timeout=self._timeout,
@@ -519,13 +533,45 @@ class NimModel(OpenAIModel):
                         "temperature": self._temperature,
                         "max_tokens": self._max_tokens,
                         "top_p": 0.95,
+                        "stream": True,
                     },
-                )
-                if r.status_code in (429,) or r.status_code >= 500:
-                    last_error = f"HTTP {r.status_code}: {r.text[:200]}"
-                    continue
-                r.raise_for_status()
-                return _final_content(r.json())
+                ) as r:
+                    if r.status_code == 429 or r.status_code >= 500:
+                        last_error = (f"HTTP {r.status_code}: "
+                                      f"{r.read()[:200]!r}")
+                        continue
+                    r.raise_for_status()
+                    for line in r.iter_lines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:"):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except ValueError:
+                            continue   # keep-alive comments, blanks
+                        if isinstance(obj.get("error"), dict):
+                            raise RuntimeError(
+                                "NIM stream error: "
+                                + str(obj["error"].get("message"))[:200])
+                        for choice in obj.get("choices") or []:
+                            finish = choice.get("finish_reason") or finish
+                            delta = choice.get("delta") or {}
+                            if delta.get("reasoning_content"):
+                                reasoning = True
+                            piece = delta.get("content")
+                            if piece:
+                                chunks.append(str(piece))
+                text = "".join(chunks)
+                if not text.strip():
+                    why = ("; reasoning consumed the token budget — "
+                           "raise max_tokens") if reasoning else ""
+                    raise RuntimeError(
+                        f"empty final content (finish_reason="
+                        f"{finish or '?'}{why})")
+                return text
             except httpx.HTTPError as exc:
                 last_error = str(exc)
         raise RuntimeError(f"NIM {self._model} failed after 3 attempts: "
