@@ -330,9 +330,14 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                       f"stopping after round {last}")
                 break
             if admin_advance is None:
+                refusals = "; ".join(
+                    f"{name}: {e['refusal']}" for name, e in
+                    sorted(entries.items()) if "refusal" in e)
                 raise RuntimeError(
                     f"round {round_no} did not resolve after every dynasty "
-                    "readied (gate not in readiness mode?)")
+                    "readied (gate not in readiness mode?)"
+                    + (f" -- readies refused: {refusals}" if refusals
+                       else ""))
             resolved = admin_advance(round_no)
 
         snap = _snapshot(mcps, resolved, entries)

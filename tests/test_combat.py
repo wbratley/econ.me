@@ -221,4 +221,29 @@ def test_spawn_cadence_caps_and_templates(session):
     # ...until one dies: room again
     beast.status = EntityStatus.INCAPACITATED
     session.commit()
-    assert len(spawns.apply_on_round(session, 15)) == 1
+    born15 = spawns.apply_on_round(session, 15)
+    assert len(born15) == 1
+    # names number the EVER-count: the dead keep their name (and their
+    # script row -- scripts.name is UNIQUE), so a replacement must not
+    # re-use a dead sibling's name (run 21 died on exactly this)
+    assert born15[0]["name"] == "Beast III"
+
+
+def test_a_batch_of_spawns_numbers_consecutively(session):
+    """Within one spawn batch the numerals run I, II, III -- no skipping:
+    the old index arithmetic double-counted (a 3-batch leapt I, III, V),
+    which masked the name-collision bug above in exactly this suite."""
+    goods.create_good(session, "HITS")
+    spawns.set_script_source(session, "beast", "-- prowl")
+    spawns.set_rules(session, {
+        "from_round": 1, "every_rounds": 1, "up_to": 3, "max_alive": 4,
+        "name_prefix": "Beast",
+        "template": {"entity_type": "individual",
+                     "stats": {"ATTACK": 2},
+                     "holdings": {"HITS": 5},
+                     "script_setting": "beast",
+                     "account": {"COIN": 0}},
+    })
+    session.commit()
+    born = spawns.apply_on_round(session, 1)
+    assert [b["name"] for b in born] == ["Beast I", "Beast II", "Beast III"]
