@@ -84,23 +84,27 @@ def test_hits_math_damage_and_the_kill_with_loot(session):
     a landed bite feeds the attacker, and zero HITS crosses into the
     ordinary incapacity machinery with the kill loot to the victor."""
     wolf, house = _world(session, night_only=False, base_hit=100)
-    for t in range(1, 30):                          # 95% clamp: scan for
+    for t in range(1, 40):                          # 95% clamp: scan for
         ev = combat.resolve_attack(session, wolf.id, house.id, t)  # a hit
         if ev.get("hit"):
             break
-    assert ev["hit"] is True and Decimal(ev["damage"]) == Decimal("3")
+    # base damage 3, or 4 on a crit (roll >= 90 deals +1)
+    dmg = Decimal(ev["damage"])
+    assert ev["hit"] is True and dmg in (Decimal("3"), Decimal("4"))
     # the bite fed the wolf
     assert markets.get_holding(session, wolf.id, "MEAT").quantity \
         == Decimal("1")
     hits_after = _hits(session, house)
-    assert hits_after in (Decimal("17"), Decimal("14"))  # 3 a bite
-    # a weak attacker still scratches: damage floors at 1 (scan ticks:
-    # each tick's roll is deterministic, 95% hits land within a few)
-    for t in range(3, 30):
+    assert hits_after == Decimal("20") - dmg      # one bite, 3 or 4 deep
+    # a weak attacker still scratches: damage floors at 1, 2 on a crit
+    # (scan ticks: each tick's roll is deterministic; 95% hits land
+    # within a few)
+    for t in range(3, 40):
         ev = combat.resolve_attack(session, house.id, wolf.id, t)
         if ev.get("hit"):
             break
-    assert ev["hit"] is True and Decimal(ev["damage"]) == Decimal("1")
+    assert ev["hit"] is True \
+        and Decimal(ev["damage"]) in (Decimal("1"), Decimal("2"))
     # the house dies over repeated certain hits; loot lands on the wolf
     for t in range(40, 90):
         if session.get(Entity, house.id).status != EntityStatus.ACTIVE:
