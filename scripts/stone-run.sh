@@ -6,12 +6,15 @@
 #         scripts/stone-run.sh 14 20       # 20 rounds
 #         scripts/stone-run.sh 14 40 resume # continue run 14 after a crash
 #
-# Ports are allocated per run number -- keep this table current:
-#   run 10 -> 8915/8109/8110   run 11 -> 8916/8111/8112
-#   run 12 -> 8917/8113/8114   run 13 -> 8917/8113/8114 (reused after reboot)
-#   run 14 -> 8918/8115/8116   run 15 -> 8919/8117/8118
-#   run 16 -> 8920/8119/8120   run 17 -> 8921/8121/8122
-#   run 18 -> 8922/8123/8124 (defaults)
+# Ports are FIXED, every run, forever (the user bookmarks these):
+#   world API 8925   dashboard backend 8129   LAN dashboard 8130
+# http://192.168.8.184:8130/ is THE dashboard URL for every stone run.
+# (Historical, runs <=17, when ports roamed per run:
+#   10 -> 8915/8109/8110   11 -> 8916/8111/8112
+#   12 -> 8917/8113/8114   13 -> 8917/8113/8114 (reused after reboot)
+#   14 -> 8918/8115/8116   15 -> 8919/8117/8118
+#   16 -> 8920/8119/8120   17 -> 8921/8121/8122
+#   18 -> 8922/8123/8124)  18+ -> 8925/8129/8130
 set -euo pipefail
 
 REPO=/home/ice52/git/econ.me
@@ -67,9 +70,12 @@ setsid nohup "$PY" -m experiments.agent.nim_run \
   > "$OUT/run.log" 2>&1 &
 
 cd "$OUT"
+# Bare URL: http.server serves index.html at / -- symlink to the
+# rewritten-every-round dashboard.html so the bookmark never changes.
+ln -sfn dashboard.html "$OUT/index.html"
 setsid nohup "$PY" -m http.server "$LAN" --bind 0.0.0.0 > side.log 2>&1 &
 
 sleep 5
 echo "run $N: rounds=$ROUNDS world=:$PORT dash=:$DASH out=$OUT"
-echo "LAN dashboard: http://192.168.8.184:$LAN/dashboard.html"
+echo "LAN dashboard (fixed port, every run): http://192.168.8.184:$LAN/"
 echo "watch: tail -f $OUT/run.log   |   health: pgrep -af nim_run"
