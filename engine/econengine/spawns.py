@@ -73,6 +73,20 @@ def alive_count(session: Session, name_prefix: str) -> int:
     ).scalar_one())
 
 
+def ever_count(session: Session, name_prefix: str) -> int:
+    """Every creature ever named under the prefix, the dead included.
+    Numbering must use this: the dead keep their name (and their script
+    row -- ``scripts.name`` is UNIQUE), so numbering from the living
+    alone repeats a name and the spawn INSERT collides (run 21 died at
+    its first respawn boundary exactly this way)."""
+    like = f"{name_prefix}%"
+    return int(session.execute(
+        select(func.count()).select_from(Entity).where(
+            Entity.name.like(like),
+        )
+    ).scalar_one())
+
+
 def spawn_one(session: Session, name: str, template: dict) -> Entity:
     """Materialize one creature from a template dict."""
     from . import markets  # deferred
@@ -121,12 +135,17 @@ def apply_on_round(session: Session, round_no: int) -> list[dict]:
         return []
     prefix = rules.get("name_prefix", "")
     alive = alive_count(session, prefix)
+    # numbering counts every wolf that ever lived: names are for the
+    # dead too, and a repeated name is a script-row collision
+    ever = ever_count(session, prefix)
     room = int(rules.get("max_alive", 0)) - alive
     n = max(0, min(int(rules.get("up_to", 0)), room))
     born: list[dict] = []
     for i in range(n):
+        # ever+i+1 (not ever+len(born)+i+1: len(born) grows with i and
+        # the pair double-steps, skipping numerals inside a batch)
         creature = spawn_one(
-            session, f"{prefix} {roman(alive + len(born) + i + 1)}",
+            session, f"{prefix} {roman(ever + i + 1)}",
             rules.get("template", {}))
         born.append({"name": creature.name, "entity_id": creature.id})
     if born:
