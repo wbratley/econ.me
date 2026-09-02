@@ -80,6 +80,83 @@ class ScriptedModel:
         return cls(responses)
 
 
+class LiveSeatTimeout(RuntimeError):
+    """The live seat never answered its rendezvous within budget."""
+
+
+class FileModel:
+    """A live player in the model seat — the exhibition run's fourth
+    house (run 25, House Excalibur: a human-driven agent instead of a
+    hosted model). Every complete() drops a prompt file beside the run
+    and waits for a response file; whoever holds the keys on the other
+    side of the wire IS the seat. Same contract, same --max-attempts,
+    same failure isolation as any model.
+
+    Protocol (the player's whole job): watch for
+    `seat-<slug>.prompt.md` in the run dir, read it, decide, then
+    ATOMICALLY write `seat-<slug>.response.txt` (write a .tmp and
+    `mv` it — the poller may read the moment the file exists). Both
+    files are removed once the answer is consumed; a stale response
+    left by a dead cycle is dropped before the next prompt is issued.
+    """
+
+    HEARTBEAT_S = 300.0
+
+    def __init__(self, name: str, seat_dir: str | Path,
+                 poll_s: float = 2.0, timeout_s: float = 86400.0):
+        self.name = name
+        self.seat_dir = Path(seat_dir)
+        self.slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        self.poll_s = poll_s
+        self.timeout_s = timeout_s
+        self._seq = 0
+
+    def _path(self, kind: str) -> Path:
+        return self.seat_dir / f"seat-{self.slug}.{kind}"
+
+    def complete(self, system: str, user: str) -> str:
+        import datetime as _dt
+
+        self._seq += 1
+        self.seat_dir.mkdir(parents=True, exist_ok=True)
+        resp = self._path("response.txt")
+        prompt = self._path("prompt.md")
+        if resp.exists():         # stale answer from a dead cycle
+            resp.unlink()
+        tmp = prompt.with_suffix(".tmp")
+        tmp.write_text(
+            f"# live seat {self.name} — call {self._seq} of this run\n"
+            f"# answer by ATOMICALLY writing (tmp + mv):\n"
+            f"#   {resp}\n"
+            f"# written {_dt.datetime.now(_dt.timezone.utc).isoformat()}\n\n"
+            f"===== SYSTEM =====\n\n{system}\n\n"
+            f"===== USER =====\n\n{user}\n")
+        tmp.replace(prompt)
+        print(f"live seat {self.name}: call {self._seq} waiting for "
+              f"{resp.name} in {self.seat_dir}", flush=True)
+        deadline = time.monotonic() + self.timeout_s
+        heartbeat = 0.0
+        while time.monotonic() < deadline:
+            if resp.exists():
+                text = resp.read_text()
+                resp.unlink()
+                prompt.unlink(missing_ok=True)
+                print(f"live seat {self.name}: call {self._seq} answered "
+                      f"({len(text)} chars)", flush=True)
+                return text
+            if time.monotonic() - heartbeat >= self.HEARTBEAT_S:
+                print(f"live seat {self.name}: call {self._seq} still "
+                      f"waiting ({time.monotonic() - heartbeat:.0f}s)",
+                      flush=True)
+                heartbeat = time.monotonic()
+            time.sleep(self.poll_s)
+        # The prompt file STAYS: a timed-out seat's last ask is exactly
+        # what the postmortem wants to see.
+        raise LiveSeatTimeout(
+            f"{self.name}: no response within {self.timeout_s:.0f}s "
+            f"(call {self._seq})")
+
+
 def strip_fences(text: str) -> str:
     """Defensively unwrap a ```lua fence a model may add around the
     source. Raw Lua passes through untouched.

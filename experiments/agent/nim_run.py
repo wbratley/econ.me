@@ -210,9 +210,19 @@ def main(argv=None) -> int:
                          "an existing world this just runs fresh.")
     ap.add_argument("--keep-server", action="store_true")
     ap.add_argument("--seed-script", default=None, metavar="PATH",
-                    help="lua file installed as EVERY dynasty's starting "
-                         "behaviour instead of the scenario starter (the "
-                         "champions run); smoke-run gated at build time")
+                    help="lua file installed as every dynasty's starting "
+                         "behaviour instead of the scenario starter, "
+                         "EXCEPT a live seat (a real player earns their "
+                         "own script); smoke-run gated at build time")
+    ap.add_argument("--live-seat", default=None, metavar="NAME",
+                    help="the --names entry played live through a file "
+                         "rendezvous (seat-<slug>.prompt.md / .response."
+                         "txt in --out) instead of a hosted model — the "
+                         "exhibition run's fourth house")
+    ap.add_argument("--live-timeout-s", type=float, default=86400.0,
+                    metavar="SEC",
+                    help="how long a live seat's call waits before "
+                         "failing the attempt (default 24h)")
     args = ap.parse_args(argv)
 
     if not args.models and not args.scripted:
@@ -222,6 +232,9 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     models: list[Model]
+    if args.scripted and args.live_seat:
+        ap.error("--live-seat can't ride --scripted (it needs a run dir "
+                 "for the rendezvous files)")
     if args.scripted:
         models = [ScriptedModel.from_file(p) for p in args.scripted]
         model_names = [Path(p).name for p in args.scripted]
@@ -230,8 +243,29 @@ def main(argv=None) -> int:
         if not key:
             raise SystemExit("no NIM key: set NVIDIA_API_KEY / NIM_API_KEY, "
                              "or put it in ~/.nim_api_key")
-        models = [NimModel(key, slug) for slug in args.models]
-        model_names = args.models
+        names = (args.names or [f"House {i + 1}"
+                                for i in range(len(args.models))])
+        if args.live_seat and args.live_seat not in names:
+            ap.error(f"--live-seat {args.live_seat!r} is not among "
+                     f"--names {names}")
+        # NIM seats cover every name except the live one; stone-run
+        # pairs them 1:1, the exhibition run 3:1.
+        nim_names = [n for n in names if n != args.live_seat]
+        if len(nim_names) != len(args.models):
+            ap.error(f"--models lists {len(args.models)} but "
+                     f"{len(nim_names)} seats need one "
+                     "(--names minus the live seat)")
+        pairs = dict(zip(nim_names, args.models))
+        models, model_names = [], []
+        for n in names:
+            if n == args.live_seat:
+                from .llm import FileModel
+                models.append(FileModel(n, out,
+                                        timeout_s=args.live_timeout_s))
+                model_names.append(f"live:{n}")
+            else:
+                models.append(NimModel(key, pairs[n]))
+                model_names.append(pairs[n])
 
     names = args.names or [f"House {i + 1}" for i in range(len(model_names))]
     seed_source = (Path(args.seed_script).read_text()
@@ -288,7 +322,9 @@ def main(argv=None) -> int:
         else:
             world_meta = build_agent_world(
                 s, dynasties, scenario=args.scenario,
-                seeds={n: seed_source for n in names} if seed_source else None)
+                seeds=({n: seed_source for n in names
+                        if n != args.live_seat}
+                       if seed_source else None))
     manual = (world_meta or {}).get("manual")
     catalog = (world_meta or {}).get("catalog")
     world = {d.name: {"user_id": d.user_id,

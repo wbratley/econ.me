@@ -190,3 +190,76 @@ def test_nim_complete_retries_429_then_succeeds(monkeypatch):
     monkeypatch.setattr(httpx, "stream", fake_stream)
     out = NimModel("k", "openai/gpt-oss-20b").complete("s", "u")
     assert out == "ok" and len(posts) == 2
+
+
+# --- FileModel: the live fourth seat (exhibition run 25) ---------------------
+
+def test_file_model_roundtrip(tmp_path):
+    """The rendezvous contract: prompt file appears, player answers
+    atomically, the model returns the answer and cleans up both files."""
+    import threading
+    from experiments.agent.llm import FileModel
+
+    m = FileModel("House Excalibur", tmp_path, poll_s=0.02, timeout_s=10)
+    prompt = tmp_path / "seat-house-excalibur.prompt.md"
+    answer = tmp_path / "seat-house-excalibur.response.txt"
+
+    def player():
+        import time
+        for _ in range(500):
+            if prompt.exists():
+                break
+            time.sleep(0.02)
+        assert prompt.exists(), "player never saw the prompt"
+        tmp = answer.with_suffix(".tmp")
+        tmp.write_text("KEEP")
+        tmp.replace(answer)
+
+    t = threading.Thread(target=player)
+    t.start()
+    assert m.complete("be the house", "the world, round 1") == "KEEP"
+    t.join()
+    assert not answer.exists() and not prompt.exists()
+
+
+def test_file_model_prompt_carries_both_halves(tmp_path):
+    from experiments.agent.llm import FileModel
+
+    m = FileModel("House Excalibur", tmp_path, poll_s=0.02, timeout_s=0.2)
+    import pytest
+    from experiments.agent.llm import LiveSeatTimeout
+    with pytest.raises(LiveSeatTimeout):
+        m.complete("SYSTEM TEXT", "USER TEXT")
+    body = (tmp_path / "seat-house-excalibur.prompt.md")
+    # timed out — but the NEXT call re-issues its own prompt
+    with pytest.raises(LiveSeatTimeout):
+        m.complete("SYSTEM TEXT", "USER TEXT")
+    text = body.read_text()
+    assert "===== SYSTEM =====" in text and "SYSTEM TEXT" in text
+    assert "===== USER =====" in text and "USER TEXT" in text
+    assert "call 2" in text
+
+
+def test_file_model_drops_stale_response(tmp_path):
+    """A response left by a dead cycle must never leak into the next
+    call — the seat waits for a FRESH answer, not a ghost."""
+    import threading, time
+    from experiments.agent.llm import FileModel
+
+    m = FileModel("House Excalibur", tmp_path, poll_s=0.02, timeout_s=10)
+    prompt = tmp_path / "seat-house-excalibur.prompt.md"
+    stale = tmp_path / "seat-house-excalibur.response.txt"
+    stale.write_text("GHOST FROM A DEAD CYCLE")
+
+    def player():
+        while not prompt.exists():
+            time.sleep(0.01)
+        time.sleep(0.1)              # let complete() enter its wait loop
+        tmp = stale.with_suffix(".tmp")
+        tmp.write_text("FRESH ANSWER")
+        tmp.replace(stale)
+
+    t = threading.Thread(target=player)
+    t.start()
+    assert m.complete("s", "u") == "FRESH ANSWER"
+    t.join()
