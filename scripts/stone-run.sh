@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Launch a stone-age dynasty run, detached, with its LAN dashboard sidecar.
 #
-# usage: scripts/stone-run.sh <run-number> [rounds]
+# usage: scripts/stone-run.sh <run-number> [rounds] [resume] [seed.lua]
 #   e.g.: scripts/stone-run.sh 14          # 40 rounds (default)
 #         scripts/stone-run.sh 14 20       # 20 rounds
+#         scripts/stone-run.sh 14 40 resume # continue run 14 after a crash
+#         scripts/stone-run.sh 24 40 "" ~/econ-runs/script-archive/.../rev029.lua
+#                                      # champions run: that lua is EVERY
+#                                      # house's starting behaviour
 #         scripts/stone-run.sh 14 40 resume # continue run 14 after a crash
 #
 # Ports are FIXED, every run, forever (the user bookmarks these):
@@ -46,6 +50,10 @@ cd "$REPO"
 EXTRA=()
 if [ "${3:-}" = "resume" ]; then
   EXTRA+=(--resume)
+fi
+SEED=${4:-}
+if [ -n "$SEED" ]; then
+  EXTRA+=(--seed-script "$SEED")
 fi
 
 # Pre-flight: a port still held by a previous run's orphaned uvicorn

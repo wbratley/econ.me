@@ -52,7 +52,8 @@ class Dynasty:
     entity_id: str | None = None
 
 
-def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier") -> dict:
+def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier",
+                       seeds: dict[str, str] | None = None) -> dict:
     """Content-pack substrate + symmetric, agent-owned seats.
 
     `scenario` names the pack (SCENARIOS below): it provides goods/tech/
@@ -62,6 +63,14 @@ def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "fronti
     pack's identical endowment — no role priming, no seat-specific starter
     — and the readiness gate is switched to `readiness` mode: from here the
     world paces itself.
+
+    `seeds` (the champions program, run 24+): house name -> lua source,
+    installed INSTEAD of the stock starter for that house. A seed is a
+    banked winner from a finished run (script_archive), gated by the
+    same smoke-run the pack's own lua passes — API drift between eras
+    dies at launch, not at the seat's first tick. Unlisted houses keep
+    the starter; from round 1 the owner remains free to rewrite or KEEP
+    (edit-mode): seeding is world config, not steering.
     """
     from econengine.models import Script, ScriptType, WorldSetting
 
@@ -83,10 +92,21 @@ def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "fronti
         entity = pack.make_house(session, d.name)
         entity.owner_id = d.user_id          # the join-tool pattern: the
         d.entity_id = entity.id               # seat becomes a player's own
+        seed = (seeds or {}).get(d.name)
+        source = pack._read_lua(pack.STARTER)
+        if seed is not None:
+            from econengine import scripting
+            libs = {"world": pack._read_lua("world_lib.lua"),
+                    "pack": pack._read_lua("pack.lua")}
+            problems = scripting.validate_script_source(seed, libs)
+            if problems:
+                raise ValueError(
+                    f"seed script for {d.name} rejected: {problems}")
+            source = seed
         session.add(Script(
             name=f"house-behaviour-{entity.id}",
             script_type=ScriptType.BEHAVIOUR,
-            source=pack._read_lua(pack.STARTER),
+            source=source,
             entity_id=entity.id,
             timeout_ms=200,
             state={},

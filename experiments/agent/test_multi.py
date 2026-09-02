@@ -613,3 +613,41 @@ def test_run_rounds_all_extinct_from_start_returns_empty(client, tmp_path):
     loops = make_loops(client, [["-- never used"]] * 3)
     assert run_rounds(loops, 2, tmp_path) == []
     assert list(tmp_path.glob("round-*.json")) == []
+
+
+# --- Champions seeding (run 24) ---------------------------------------------
+
+def _seed_world(seeds):
+    """A fresh in-memory world built WITH seeds: one queryable session."""
+    engine = create_engine("sqlite://",
+                           connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        from econengine.models import Entity, Script
+        dynasties = [
+            Dynasty(user_id="u1", name="House Alice", model_name="m",
+                    token="u1"),
+            Dynasty(user_id="u2", name="House Bob", model_name="m",
+                    token="u2"),
+        ]
+        build_agent_world(s, dynasties, seeds=seeds)
+        sources = {r.entity_id: r.source for r in s.query(Script).all()}
+        ents = {e.name: e.id for e in s.query(Entity).all()}
+    return sources, ents
+
+
+def test_seed_script_replaces_starter_for_the_seeded_house_only():
+    """The champions contract: a listed house starts from the banked
+    winner, everyone else keeps the stock starter, and the seed's bytes
+    arrive unmodified (the smoke-run gate validates, never rewrites)."""
+    from experiments.world import scenario as pack
+    sources, ents = _seed_world({"House Alice": "local champion = true\n"})
+    assert sources[ents["House Alice"]] == "local champion = true\n"
+    assert sources[ents["House Bob"]] == pack._read_lua(pack.STARTER)
+
+
+def test_seed_script_gate_rejects_drifted_source():
+    """A seed that no longer runs (API drift between eras) dies at world
+    build — not at the seat's first tick three model-rounds later."""
+    with pytest.raises(ValueError, match="seed script for House Alice"):
+        _seed_world({"House Alice": "nope("})
