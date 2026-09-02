@@ -806,7 +806,7 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     """Run 20's variable: a wolf is an ENTITY -- same physics as a house
     (needs, hunger), stats it was born with, health it can lose, and a
     hunting program. Genesis installs two; the breeding rule renews
-    them (from day 5, every 5 days, up to 3, never more than 4 alive)."""
+    them (from day 5, every 5 days, up to 2, never more than 3 alive)."""
     from econengine import combat, spawns
     from econengine.models import Script
     create_content(session)
@@ -833,11 +833,11 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     markets.adjust_holding(session, post, "WARMTH", Decimal("1"))
     ev = combat.resolve_attack(session, w.id, post.id, 21)
     assert ev.get("deterred") is True and not ev.get("hit")
-    # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 4;
-    # round 10 caps at 4 alive
+    # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 3;
+    # round 10 stays at the cap
     assert spawns.apply_on_round(session, 4) == []
     born5 = spawns.apply_on_round(session, 5)
-    assert len(born5) == 2                          # 2 alive, cap 4
+    assert len(born5) == 1                          # 2 alive, cap 3
     assert spawns.apply_on_round(session, 9) == []
     assert spawns.apply_on_round(session, 10) == []  # already at cap
 

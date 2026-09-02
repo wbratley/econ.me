@@ -55,8 +55,10 @@ damage = max(1, ATK-DEF) (+1 crit), HITS drain, zero = the ordinary
 incapacity/estate machinery, victor seizes {PELT 1, MEAT 3}. Houses
 are ATTACK 1 / DEFENSE 1 / 20 HITS; weapons are carried, not born
 (SPEAR +3 ATK, CLOTHES +1 DEF). Population renews via spawns.py at
-round boundaries: from round 5, every 5 rounds, up to 3 more packs,
-never more than 4 alive. The failure modes to watch: the fireless
+round boundaries: from round 5, every 5 rounds, up to 2 more packs,
+never more than 3 alive (run 23 eased the wave from 3-and-4: the
+siege was scenery, but 11 packs a run fed the post six kills and a
+jerky empire while houses starved beside noise). The failure modes to watch: the fireless
 hunted down over two cold nights, and the loud targeted by name --
 speech is free by day, priced at night.
 
@@ -518,7 +520,7 @@ def _create_combat(session: Session) -> None:
     spawns.set_script_source(
         session, "wolf", _gate_pack_script("wolf_pack.lua"))
     spawns.set_rules(session, {
-        "from_round": 5, "every_rounds": 5, "up_to": 3, "max_alive": 4,
+        "from_round": 5, "every_rounds": 5, "up_to": 2, "max_alive": 3,
         "name_prefix": "Wolf Pack",
         "template": {
             "entity_type": "individual",
