@@ -209,6 +209,10 @@ def main(argv=None) -> int:
                          "(round-XX.json), append to its journals. Without "
                          "an existing world this just runs fresh.")
     ap.add_argument("--keep-server", action="store_true")
+    ap.add_argument("--seed-script", default=None, metavar="PATH",
+                    help="lua file installed as EVERY dynasty's starting "
+                         "behaviour instead of the scenario starter (the "
+                         "champions run); smoke-run gated at build time")
     args = ap.parse_args(argv)
 
     if not args.models and not args.scripted:
@@ -230,6 +234,8 @@ def main(argv=None) -> int:
         model_names = args.models
 
     names = args.names or [f"House {i + 1}" for i in range(len(model_names))]
+    seed_source = (Path(args.seed_script).read_text()
+                   if args.seed_script else None)
     if len(names) != len(model_names):
         ap.error(f"{len(model_names)} models but {len(names)} names — "
                  "one name per dynasty")
@@ -280,7 +286,9 @@ def main(argv=None) -> int:
             print(f"resuming: world intact, rounds 1..{start_round - 1} "
                   f"on disk; continuing at {start_round}")
         else:
-            world_meta = build_agent_world(s, dynasties, scenario=args.scenario)
+            world_meta = build_agent_world(
+                s, dynasties, scenario=args.scenario,
+                seeds={n: seed_source for n in names} if seed_source else None)
     manual = (world_meta or {}).get("manual")
     catalog = (world_meta or {}).get("catalog")
     world = {d.name: {"user_id": d.user_id,
@@ -340,6 +348,7 @@ def main(argv=None) -> int:
             meta = {
                 "title": f"econ.me dynasty run — {args.rounds} rounds",
                 "ticks_per_round": args.ticks_per_round,
+                "seed_script": args.seed_script,
                 "generated": _dt.datetime.now(_dt.timezone.utc)
                              .isoformat(timespec="seconds"),
                 "elapsed_s": round(time.monotonic() - t0, 1),
