@@ -62,6 +62,20 @@ jerky empire while houses starved beside noise). The failure modes to watch: the
 hunted down over two cold nights, and the loud targeted by name --
 speech is free by day, priced at night.
 
+THE MAP (S4, docs/spatial.md): the world has places, and they are
+hours apart. Seats wake at the Hearth clearing (fires are made and
+tended there); the berry thicket is 1h (gather/chop), the river 2h
+(FISH: certain-ish meat, no wolves), the flint scrape 2h (certain
+flint), the deep forest 3h (the hunts, and the wolves' dens), the
+trading post 4h -- by the forest road (through the range) or the
+river road (quieter, same length). Presence gates bind work to
+places; EVERY market trades at the post and only there; travel is
+the TRAVEL_WALK recipe, one Process per hop (an hour a hop, priced
+by the road, night-legal, labor-free), and a traveller stands at a
+hop's origin until arrival -- the road exposes you place by place,
+and co-location gates both the bite and the prowl. The starter
+script walks: hand-to-mouth now has a commute.
+
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
 JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
 WARMTH/SATIETY and the
@@ -89,7 +103,10 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from econengine import combat, goods, markets, needs, parcels, production, scripting, services, spawns
+from econengine import (
+    combat, edges, goods, markets, needs, parcels, places, production,
+    scripting, services, spawns,
+)
 from experiments.world import manifest
 from econengine.models import (
     Entity, EntityType, Parcel, Script, ScriptType, WorldSetting,
@@ -214,6 +231,29 @@ entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
 where each one kills.
 
+== THE MAP ==
+THE WORLD HAS PLACES, AND THEY ARE HOURS APART. You wake at the
+Hearth clearing (the fire-ground: safe nights, fires made and tended
+there). The Berry thicket is one hour's walk (berries, wood, yarn);
+the river two (FISH: meat without wolves); the Flint scrape two
+(certain flint); the Deep forest three (the hunts -- and the wolves'
+range); the Trading post FOUR (every market trades there, and only
+there). Roads run both ways; the post is four hours by the forest road
+(through the wolves) or by the river road (quieter, same length).
+WALKING is the TRAVEL_WALK recipe: an hour per hop, labor-free,
+night-legal -- and you stand where a hop started until it ends, so a
+road exposes you place by place. ctx.entity.place says where you
+stand; world.route(from, to) prices any walk before you take it;
+ctx.action.travel(to) sets out (nothing else may move you).
+WORK IS WHERE YOU ARE: gathering and chopping want the thicket,
+hunting wants the forest, fire-making and tending want the hearth,
+flint-digging wants the scrape, fishing wants the river. The refusal
+names where you stand and what the work wants.
+THE MARKETS LIVE AT THE POST: every order -- buying and selling both --
+requires standing there. Four hours out, four back: plan the trip
+(bank food and warmth first, mind the dark, mind the forest road) or
+stay home and stay poor. That is the whole question of this world.
+
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + an hour): cooking + warmth. Do not sleep fireless.
 2. EAT what spoils first: berries within hours, cooked within a day;
@@ -320,6 +360,9 @@ def spawn_trading_post(session: Session) -> Entity:
         timeout_ms=200,
         state={},
     ))
+    # His ground: the post stands at the post-place, where every
+    # market trades (S4). Killable flesh, but only reachable on foot.
+    places.move_entity(session, post, "POST")
     return post
 
 
@@ -329,6 +372,7 @@ def create_content(session: Session, verify: bool = True) -> None:
     verify=False is the manifest's counting pass (regen): measurement,
     not installation -- the shipped pins are stale by definition while
     the author is regenerating them."""
+    _create_map(session)   # the map first: everything sited below
     _create_goods(session)
     _create_recipes(session)
     _create_needs(session)
@@ -353,6 +397,65 @@ def create_content(session: Session, verify: bool = True) -> None:
     # every row, so the catalog attributes content and a later install
     # attempt on a claimed key is refused with the owner's name.
     manifest.stamp_pack(session)
+
+
+def _create_map(session: Session) -> None:
+    """The stone-age map (docs/spatial.md S4): six places, seven roads,
+    and the walk that binds them. Places first (everything sited below
+    resolves against them), then the roads, then the TRAVEL_WALK
+    template every hop runs against -- inputs-free, night-legal, and
+    priced by the ROAD (edge cost_ticks), not the template.
+
+    Topology, hours from the hearth: thicket 1 (the commute for food
+    and wood), river 2 (fish: meat without wolves), flint scrape 2
+    (certain flint), deep forest 3 (the hunts and the wolves' range),
+    trading post 4 -- via the forest (the wolfy road) or by the river
+    (the quiet one, same length; two equal roads, a real choice). The
+    thicket-forest cut (2h) makes the hunting circuit thicket ->
+    forest -> hearth a day's honest walk."""
+    for key, kind, name, description in (
+        ("HEARTH", "HEARTH", "Hearth clearing",
+         "The fire-ground where every seat wakes: sheltered, warm-stoned, "
+         "safe to sleep. Fires are made and tended here."),
+        ("THICKET", "THICKET", "Berry thicket",
+         "An hour out: berries, wood, yarn -- the subsistence walk."),
+        ("RIVER", "RIVER", "The river",
+         "Two hours out: fish from the bank, meat without wolves."),
+        ("FLINT", "FLINT", "Flint scrape",
+         "Two hours out: the ground gives certain flint to anyone who "
+         "digs."),
+        ("FOREST", "FOREST", "Deep forest",
+         "Three hours out: the spear game and the wolves' range. Be "
+         "firelit by dark, or be meat."),
+        ("POST", "POST", "Trading post",
+         "Four hours out by the forest road (or the river road, quieter "
+         "and no longer): every market trades here, and only here."),
+    ):
+        places.create_place(session, key, kind=kind, name=name,
+                            region_id="home-valley", description=description)
+    for a, b, cost in (
+        ("HEARTH", "THICKET", 1),
+        ("HEARTH", "RIVER", 2),
+        ("HEARTH", "FLINT", 2),
+        ("HEARTH", "FOREST", 3),
+        ("THICKET", "FOREST", 2),
+        ("FOREST", "POST", 1),
+        ("RIVER", "POST", 2),
+    ):
+        edges.create_edge(session, a, b, "walk", cost)
+    # The walk itself: an hour a hop against the road's true length.
+    # No LABOR (the day's ration is for work; walking spends the day),
+    # no daylight gate (roads run at night -- that is when they are
+    # dangerous), no outputs (arrival is the product).
+    production.create_recipe(
+        session, "TRAVEL_WALK", name="Walk",
+        description="One hour afoot along a road: an hour per hop of the "
+                    "journey's true length (the road prices the walk). "
+                    "Night-legal, labor-free -- but you stand where a hop "
+                    "started until it ends, so the road exposes you place "
+                    "by place.",
+        inputs={}, outputs={}, duration_ticks=1,
+    )
 
 
 def _create_goods(session: Session) -> None:
@@ -528,6 +631,10 @@ def _create_combat(session: Session) -> None:
             "holdings": {"MEAT": 1, "PELT": 1},
             "script_setting": "wolf",
             "account": {"COIN": 0},
+            # The den (S4): wolves wake, hunt, and range in the deep
+            # forest. Home range as spawn data -- a roaming wolf would
+            # be the same template with a travelling script.
+            "place": "FOREST",
         },
     })
 
@@ -547,9 +654,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
-                    "you find. Bare-handed subsistence. Daylight only.",
+                    "you find. Bare-handed subsistence. Daylight only, at "
+                    "the berry thicket.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="THICKET",
         branches=[
             {"weight": D("45"), "outputs": {"BERRIES": D("3")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"WOOD": D("2")}, "label": "wood"},
@@ -559,11 +667,11 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "GATHER_BAG", name="Gather with a Bag",
-        description="The doubled table — and a small chance the ground itself "
-                    "has minted a coin. Daylight only.",
+        description="The doubled table -- and a small chance the ground itself "
+                    "has minted a coin. Daylight only, at the berry thicket.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         good_requirements={"BAG": D("1")},
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="THICKET",
         branches=[
             {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
             {"weight": D("22"), "outputs": {"WOOD": D("4")}, "label": "wood"},
@@ -576,11 +684,23 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "CHOP_WOOD", name="Chop Wood",
         description="The axe's whole point: an hour at the treeline, three "
-                    "certain logs -- no loot table, no gamble. Daylight only.",
+                    "certain logs -- no loot table, no gamble. Daylight "
+                    "only, at the berry thicket.",
         inputs={"LABOR": D("1")},
         outputs={"WOOD": D("3")}, duration_ticks=1,
         good_requirements={"AXE": D("1")},
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="THICKET",
+    )
+    # The scrape's whole point: certain flint for an hour's work, two
+    # hours from home -- the toolmaker's walk (vs the thicket table's
+    # 15% flint rolls).
+    production.create_recipe(
+        session, "DIG_FLINT", name="Dig Flint",
+        description="An hour at the scrape: two certain flints, no gamble. "
+                    "Daylight only, at the flint scrape.",
+        inputs={"LABOR": D("1")},
+        outputs={"FLINT": D("2")}, duration_ticks=1,
+        requires_daylight=True, requires_place_kind="FLINT",
     )
     # Hunting: slow (2 ticks), risky bare-handed (55% total loss), better
     # with a SPEAR held (never consumed) and best with TRAPs (consumed --
@@ -588,9 +708,9 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT", name="Hunt",
         description="Slow, and bare-handed: mostly nothing, sometimes "
-                    "dinner. Daylight only.",
+                    "dinner. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="FOREST",
         branches=[
             {"weight": D("55"), "outputs": {}, "label": "nothing"},
             {"weight": D("35"), "outputs": {"MEAT": D("2")}, "label": "small"},
@@ -600,10 +720,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT_SPEAR", name="Hunt with a Spear",
         description="A held spear (never consumed) turns a desperate hunt "
-                    "into a living. Daylight only.",
+                    "into a living. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         good_requirements={"SPEAR": D("1")},
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="FOREST",
         branches=[
             {"weight": D("25"), "outputs": {}, "label": "nothing"},
             {"weight": D("55"), "outputs": {"MEAT": D("3")}, "label": "small"},
@@ -613,14 +733,31 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT_TRAPS", name="Hunt with Traps",
         description="The best odds craft can buy, at the price of a consumed "
-                    "trap per hunt. Daylight only.",
+                    "trap per hunt. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1"), "TRAP": D("1")},
         outputs={}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires_place_kind="FOREST",
         branches=[
             {"weight": D("15"), "outputs": {}, "label": "nothing"},
             {"weight": D("60"), "outputs": {"MEAT": D("4")}, "label": "small"},
             {"weight": D("25"), "outputs": {"MEAT": D("8")}, "label": "big"},
+        ],
+    )
+    # The river: meat without wolves. Slower than a bad hunt but far
+    # more certain, two hours from home -- the safe food walk. Fish
+    # come out of the river as MEAT (cleaned on the bank): no new
+    # pantry, just a second kitchen.
+    production.create_recipe(
+        session, "FISH", name="Fish",
+        description="Two hours' certain-ish meat from the bank: slower than "
+                    "a bad hunt, far more certain, and nothing here hunts "
+                    "YOU. Daylight only, at the river.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        requires_daylight=True, requires_place_kind="RIVER",
+        branches=[
+            {"weight": D("30"), "outputs": {}, "label": "nothing"},
+            {"weight": D("45"), "outputs": {"MEAT": D("2")}, "label": "small"},
+            {"weight": D("25"), "outputs": {"MEAT": D("3")}, "label": "big"},
         ],
     )
 
@@ -631,17 +768,21 @@ def _create_recipes(session: Session) -> None:
     # and superseded for warmth (not for cooking) by clothes + shelter.
     production.create_recipe(
         session, "MAKE_FIRE", name="Make Fire",
-        description="Erects the fire on your camp: the bootstrap technology — "
-                    "cheap, immediate, warm, and it cooks.",
+        description="Erects the fire on your camp at the hearth clearing: the "
+                    "bootstrap technology — cheap, immediate, warm, and it "
+                    "cooks.",
         inputs={"LABOR": D("1"), "WOOD": D("2")},
         outputs={}, duration_ticks=1, builds_facility="FIRE",
+        requires_place_kind="HEARTH",
     )
     production.create_recipe(
         session, "TEND_FIRE", name="Tend Fire",
         description="Burns a log into a warmth stock: a tended fire covers "
-                    "you well into the night — bank warmth before dark.",
+                    "you well into the night — bank warmth before dark, at "
+                    "the hearth.",
         inputs={"LABOR": D("1"), "WOOD": D("1")},
         outputs={"WARMTH": D("10")}, duration_ticks=1, requires_facility="FIRE",
+        requires_place_kind="HEARTH",
     )
     production.create_recipe(
         session, "COOK_MEAT", name="Cook Meat",
@@ -845,6 +986,10 @@ def _create_needs(session: Session) -> None:
 
 
 def _create_markets(session: Session) -> None:
+    """Every market trades AT the post (docs/spatial.md S4): a placed
+    market fills only orders from entities standing there -- four "
+    "hours' walk is the price of coin, and the whole question of the
+    "proving run."""
     _NAMES = {
         "LABOR": "Labor", "BERRIES": "Berries", "MEAT": "Raw Meat",
         "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
@@ -856,7 +1001,8 @@ def _create_markets(session: Session) -> None:
     for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
                    "YARN", "FLINT", "SPEAR", "AXE", "BAG", "TRAP", "CLOTHES", "BED",
                    "PELT"):
-        markets.create_market(session, symbol, COIN, name=_NAMES[symbol])
+        markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
+                              place="POST")
 
 
 # ---------------------------------------------------------------------------
@@ -880,7 +1026,11 @@ def make_house(session: Session, name: str = "House") -> Entity:
     # Hands: a house can carry what it kills. Wolves lack the stat --
     # what a beast kills rots where it fell.
     combat.create_stat(session, house.id, "CARRY", Decimal("20"))
-    parcels.create_parcel(session, "LAND", name=f"{name}'s Camp", owner=house)
+    parcels.create_parcel(session, "LAND", name=f"{name}'s Camp", owner=house,
+                          place="HEARTH")
+    # The seat wakes at the hearth clearing (S4: "start"): fire-ground,
+    # safe nights, and every walk out of the valley measured from here.
+    places.move_entity(session, house, "HEARTH")
     return house
 
 
@@ -889,11 +1039,13 @@ def make_wolf(session: Session, name: str) -> Entity:
     (hunger is why it hunts), 12 innate HITS, ATTACK 4 / DEFENSE 1,
     a starting strip of meat, and the pelt it wears -- killing one
     pays whoever can carry it. No CARRY: what a wolf kills rots where
-    it fell; it eats the bite and the carcass, never the estate."""
+    it fell; it eats the bite and the carcass, never the estate.
+    Dens in the deep forest (S4): the range is home."""
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
         "holdings": {"MEAT": 1, "PELT": 1},
         "script_setting": "wolf",
         "account": {"COIN": 0},
+        "place": "FOREST",
     })

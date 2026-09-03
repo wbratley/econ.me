@@ -369,5 +369,36 @@ census*: routes chosen, risks priced, a house that moves for flint.
   flagged `is_travel`, `world.route`/`world.distance_ticks` (read-only
   queries); the manifest counts+stamps `edges`. Zero edges installed by
   any pack: every journey is refused readably and the worlds run
-  exactly as before. **S4 (located danger + the stone-age map) is the
-  entry point now.**
+  exactly as before.
+- **S4 shipped (#152):** located danger + the stone-age map —
+  `threats.place_id` (nullable, migration `m5c1e9f4a7b3`): NULL stays
+  the ambient everywhere-dark, a placed threat pressures only the
+  entities standing at its spot (or mid-hop on a road that started
+  there — a traveller stands at the hop's origin until arrival, so
+  the road exposes you place by place, computed from the same rows;
+  no special cases). `create_threat(place_key=...)` binds the range at
+  install, loud on an unknown place (a home range over a place that
+  isn't installed is a content bug). Combat co-location: when BOTH
+  fighters are placed they must share a spot ("hunting is up close",
+  refusal names both ends); an unplaced fighter keeps the global
+  night — the gate fires on declared data only, and mapless worlds
+  are pinned unchanged. A placed predator's desperate prowl scopes to
+  its own ground (the loudest speaker it can reach), an unplaced
+  one still hears the whole world. The catalog renders the map
+  (`places` + `roads` with hours) and a threat's home in its line.
+  The stone_age pack authors the map: six places (hearth clearing,
+  berry thicket 1h, river 2h, flint scrape 2h, deep forest 3h,
+  trading post 4h — by the wolfy forest road or the quiet river one),
+  seven walk roads, the `TRAVEL_WALK` template; presence gates bind
+  work to places (gather/chop at THICKET, hunt at FOREST, fire at
+  HEARTH, DIG_FLINT at FLINT, FISH at RIVER — fish come out as MEAT,
+  a second kitchen not a second pantry); every market trades AT the
+  post (four hours is the price of coin — the proving run's
+  question); seats wake at the hearth with their camp parcel, wolves
+  den in the deep forest (spawn `place`), the post stands at its
+  seat. The starter script walks: hand-to-mouth now has a commute.
+  Found and fixed a latent S3 bug on the way: reverse hops on
+  bidirectional edges used to deliver the traveller back where they
+  started (`edge.to_place` blindly) — hops now resolve their far end
+  from where the traveller stands. **S5 (local markets made real:
+  carrying + fulfillment presence) is the entry point now.**
