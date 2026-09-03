@@ -640,6 +640,26 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=100,
         ))
 
+    def _travel(to, modes=None, *rest):
+        _arity("travel", rest, "(to, modes)")
+        # The road (docs/spatial.md S3): set out for a place by key.
+        # `modes` is optional -- a comma string ("WALK,RAFT") or a list
+        # -- and nil means every mode the map wires. The engine plans
+        # the cheapest itinerary; each hop is an ordinary process.
+        params = {"to": str(to)}
+        if modes is not None:
+            plist = _lua_to_python(modes)
+            if isinstance(plist, list):
+                modes = ",".join(str(m) for m in plist)
+            params["modes"] = str(modes)
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type="travel",
+            params=params,
+            resource_ids=[str(to)],
+            priority=100,
+        ))
+
     def _transfer_parcel(parcel_id, to_entity_id, *rest):
         _arity("transfer_parcel", rest, "(parcel_id, to_entity_id)")
         intents.append(Intent(
@@ -940,6 +960,7 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["cancel_order"] = _cancel_order
     action_tbl["start_process"] = _start_process
     action_tbl["cancel_process"] = _cancel_process
+    action_tbl["travel"] = _travel
     action_tbl["transfer_parcel"] = _transfer_parcel
     action_tbl["attack"]         = _attack
     action_tbl["say"]              = _say

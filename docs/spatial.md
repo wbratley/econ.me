@@ -347,4 +347,27 @@ census*: routes chosen, risks priced, a house that moves for flint.
   `rejected` results, reasons naming where you stand ("must be at a
   HEARTH -- The River is not one"); the catalog renders the requirement
   lines and the market seat. No new event types; gates fire only on
-  declared data. **S3 (topology + travel) is the entry point now.**
+  declared data.
+- **S3 shipped (#151):** topology + travel — `spatial_edges` (weighted,
+  mode-tagged, one-way-able roads between places; migration
+  `l9e2b5f7d1c8`) and the `travel` intent: the engine routes (Dijkstra
+  over mode-allowed edges, deterministic — the same map always yields
+  the same road) and the journey runs as ONE PROCESS PER HOP against
+  the pack's `TRAVEL_{MODE}` template — an ordinary recipe whose inputs
+  and requirements gate every hop, so a vehicle or mount is a
+  requirement, not mechanism; the road sets the hop's duration
+  (edge cost_ticks, not the template's). The auditable itinerary lives
+  on a `travel_routes` row (frozen hop list, next index, status);
+  `processes.is_travel`/`edge_id`/`route_id` mark the hops, whose
+  completions emit `travel_arrived` (with `carried` goods, if the
+  template yields any) instead of `process_completed` — production
+  statistics skip the road; arrivals move the entity through the single
+  writer. Stranding (cancellation, a failed per-tick input mid-road, a
+  next hop whose requirements went unmet) is a real state:
+  `travel_stranded` names the spot and the reason. Scripts see
+  `ctx.action.travel(to, modes)`, `ctx.entity.place`, hop processes
+  flagged `is_travel`, `world.route`/`world.distance_ticks` (read-only
+  queries); the manifest counts+stamps `edges`. Zero edges installed by
+  any pack: every journey is refused readably and the worlds run
+  exactly as before. **S4 (located danger + the stone-age map) is the
+  entry point now.**

@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -41,6 +41,16 @@ class Process(Base):
     # the selected row's position. NULL until completed / for plain recipes.
     outcome_branch: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outcome_roll: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Travel (docs/spatial.md S3): a hop in a TravelRoute. Ordinary
+    # start_process machinery (inputs, requirements, gates) created it,
+    # but the road sets its duration (completes_tick = start + edge
+    # cost_ticks) and its completion moves the entity (travel.complete_travel)
+    # instead of crediting production statistics.
+    is_travel: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    edge_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("spatial_edges.id"), nullable=True)
+    route_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("travel_routes.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

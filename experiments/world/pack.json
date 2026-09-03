@@ -1,6 +1,7 @@
 {
  "content": {
   "frontier": {
+   "edges": 0,
    "goods": 12,
    "markets": 10,
    "needs": 2,
@@ -10,6 +11,7 @@
    "threats": 0
   },
   "stone_age": {
+   "edges": 0,
    "goods": 21,
    "markets": 15,
    "needs": 2,
@@ -33,7 +35,7 @@
   "stone_age_starter.lua": "036f6b53bbac0c65",
   "trading_post.lua": "8ed14c89c30b0b20",
   "wolf_pack.lua": "891ff6e76a0407f0",
-  "world_lib.lua": "513bc09c8ac7a6fa"
+  "world_lib.lua": "00189c986a1e00bf"
  },
  "name": "demo-world",
  "pack_id": "demo-world",

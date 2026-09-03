@@ -60,4 +60,18 @@ function world.place(key)
   return nil
 end
 
+-- Roads (docs/spatial.md S3): the published itinerary. ----
+-- world.route(from, to, modes) returns {hops={{from,to,mode,cost_ticks},...},
+-- total_ticks} for the cheapest road, or nil when there is none -- the
+-- engine routes, scripts pick destinations. `modes` is optional: a
+-- comma string ("WALK,RAFT") or a list; nil means every mode.
+-- world.distance_ticks(from, to, modes) is the total cost alone (nil =
+-- no road). Distance is ticks-through-topology, never meters.
+function world.route(from, to, modes)
+  return ctx.query.route(from, to, modes)
+end
+function world.distance_ticks(from, to, modes)
+  return ctx.query.distance_ticks(from, to, modes)
+end
+
 return world
