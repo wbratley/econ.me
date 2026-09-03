@@ -57,6 +57,13 @@ def create_place(
     return place
 
 
+def label(place: "Place") -> str:
+    """How a place reads in reasons, refusals, and catalog lines: the
+    authored name when the pack wrote one, else the key. (S2 presence
+    gates refuse with this, so a place must always read as something.)"""
+    return place.name or place.key
+
+
 def get_place(session: Session, key: str) -> Place | None:
     return session.scalar(
         select(Place).where(Place.key == str(key).upper()))
@@ -100,6 +107,11 @@ def move_entity(session: Session, entity: Entity, place: Place | str | None) -> 
             raise ValueError(f"unknown place {place.upper()!r} -- install it before standing on it")
     else:
         resolved = place
+    # Write the column AND the relationship: a gate that already lazy-
+    # loaded ``entity.place`` (an earlier refusal) must not keep seeing
+    # the old view after the column moves — SQLAlchemy does not expire
+    # loaded relationships on direct column writes.
     entity.location_place_id = resolved.id if resolved is not None else None
+    entity.place = resolved
     session.flush()
     return resolved

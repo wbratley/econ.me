@@ -138,6 +138,12 @@ def recipe_effects(recipe: Recipe) -> list[str]:
         lines.append(f"must run at a {recipe.requires_facility} facility")
     if recipe.requires_daylight:
         lines.append("needs daylight (refused at night, hours 20..05)")
+    if recipe.requires_place_key is not None:
+        # the exact spot, by pack key — the name join lives in the places
+        # surface (world.places() / ctx.places); the key is the handle
+        lines.append(f"requires presence at {recipe.requires_place_key}")
+    elif recipe.requires_place_kind is not None:
+        lines.append(f"requires presence at a {recipe.requires_place_kind}")
     if recipe.requirements:
         for req in recipe.requirements:
             scope = req.technology.scope.value.lower()
@@ -259,6 +265,9 @@ def catalog_state(session: Session) -> dict:
                 "description": m.description,
                 "pack": m.pack_id,      # 15.4 provenance; None = platform
                 "currency": m.currency,
+                # S2: the seat this market trades at, by pack key —
+                # None = the global market, reachable from anywhere.
+                "place": m.place.key if m.place is not None else None,
             }
             for m in markets
         ],

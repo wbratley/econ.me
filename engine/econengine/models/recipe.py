@@ -31,6 +31,15 @@ class Recipe(Base):
     requires_daylight: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Spatial presence gates (docs/spatial.md S2): the entity's current
+    # place must match — kind is the coarse gate ("any HEARTH"), key pins
+    # the exact spot. Stored as the place KEY (data, resolved at gate
+    # time), not an FK: catalog recipes stay installable on worlds that
+    # never draw the map, and a gate naming an unknown place fails
+    # loudly at first use. NULL = ungated, the default everywhere (Fork 6:
+    # the legacy world, places and all, is the citizen S2 must not move).
+    requires_place_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    requires_place_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # construction: completion erects a facility of this type on the bound
     # parcel — the output is a facility rather than goods
     builds_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)

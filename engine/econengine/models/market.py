@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, String, Numeric, DateTime
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, String, Numeric, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 
@@ -19,6 +19,13 @@ class Market(Base):
         String(32), nullable=True
     )  # the pack that installed this row (§15.4); NULL = platform/legacy
     currency: Mapped[str] = mapped_column(String(8), nullable=False)  # quote currency, e.g. USD or COIN
+    # Spatial seat (docs/spatial.md S2, Fork 5): NULL = the global market
+    # of today, reachable from anywhere. A placed market trades only for
+    # entities standing there — place_order refuses the elsewhere.
+    place_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("places.id"), nullable=True
+    )
+    place: Mapped["Place | None"] = relationship("Place")
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(precision=18, scale=4), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
