@@ -316,9 +316,9 @@ scoped for; nothing built here forecloses it. A wall-clock backstop
 (`ECON_SUBMIT_WINDOW_SECONDS`, auto-ready on expiry) is deliberately
 deferred until a public world shows an AFK-human problem worth solving.
 
-## 10. Logistics — deliberately deferred
+## 10. Logistics — planned, triggered, and specified
 
-Distance/maps/transport are **out of scope for v0** and safely so:
+Distance/maps/transport were **out of scope for v0** and safely so:
 
 - **A single-region, single-market economy is already a deep game.** Produce,
   price-discover, specialise, borrow, tax, vote, die, inherit. The
@@ -330,9 +330,17 @@ Distance/maps/transport are **out of scope for v0** and safely so:
   opaque `extent_ref` (geometry the engine ignores *by design* — `design.md
   § parcels`). Adding an **edge/transport layer** beside parcels later will
   not require re-modelling anything built now.
-- **Trigger to revisit:** once v0–v2 prove the single-market game engaging,
-  add a region graph + transport-as-recipe (distance-based input cost) +
-  optional location-aware markets. Until then, one market, one region.
+- **Trigger to revisit:** ~~once v0–v2 prove the single-market game engaging,~~
+  **earned** — twenty-six postmortemed stone-age runs (through run 25's
+  live-seat exhibition) say the single-market loop is proven deep and its
+  frontier is now geography.
+
+The revisit has happened: the full spec — places, travel-as-process,
+presence gates, located markets and danger, six PR-sized steps (S1–S6),
+with the Luanti world-server boundary deliberately last — lives in
+`docs/spatial.md`. This section remains the record of *why it waited*
+and what the layer must not break (the abstract-economy modelling
+product, which still ships zero places).
 
 ## 11. Phase plan
 
@@ -342,7 +350,7 @@ Distance/maps/transport are **out of scope for v0** and safely so:
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
 | **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) ✅ — **complete** | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | The readable world — names/descriptions/effect docs for everything, readable text for every action, the per-entity audit trail on the dashboard, and the content-pack standard envelope (§15) | small additive engine surface (`describe` module + columns); rest platform + content |
-| **4** | Logistics (region graph + transport) — only if earned | engine, deferred |
+| **4** | Logistics (region graph + transport) — earned and specified: `docs/spatial.md` steps S1–S6; S1 (places + entity location) is the entry PR | engine, additive — every step green with zero spatial data |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
 every later phase depends on, so it goes first.
