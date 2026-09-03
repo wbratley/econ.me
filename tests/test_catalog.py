@@ -150,7 +150,7 @@ def test_market_renders_name_and_currency(session):
     state = catalog_state(session)
     assert state["markets"] == [
         {"symbol": "BERRIES", "name": "Berries", "description": "",
-         "pack": None, "currency": "COIN"}
+         "pack": None, "currency": "COIN", "place": None}
     ]
 
 

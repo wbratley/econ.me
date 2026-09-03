@@ -51,13 +51,29 @@ class MarketInactiveError(ValueError):
 # Services
 # ---------------------------------------------------------------------------
 
-def create_market(session: Session, symbol: str, currency: str, name: str = "", description: str = "") -> Market:
+def create_market(
+    session: Session, symbol: str, currency: str, name: str = "", description: str = "",
+    place: "Place | str | None" = None,
+) -> Market:
     existing = get_market(session, symbol)
     if existing is not None:
         raise ValueError(
             f"market {str(symbol).upper()} already installed by "
             f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
-    market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name, description=description)
+    place_id: str | None = None
+    if place is not None:
+        from . import places as places_mod
+
+        resolved = (
+            places_mod.get_place(session, place) if isinstance(place, str) else place
+        )
+        if resolved is None:
+            raise ValueError(
+                f"market {str(symbol).upper()!r} sits at unknown place "
+                f"{str(place).upper()!r} -- install the map before siting markets")
+        place_id = resolved.id
+    market = Market(symbol=symbol.upper(), currency=currency.upper(), name=name,
+                    description=description, place_id=place_id)
     session.add(market)
     session.flush()
     session.info.setdefault(_MARKET_CACHE, {})[market.symbol] = market
@@ -160,6 +176,20 @@ def place_order(
         raise ValueError("unknown entity")
     if entity.status != EntityStatus.ACTIVE:
         raise ValueError("entity is incapacitated")
+
+    if market.place_id is not None:
+        # The S2 seat (Fork 5): a placed market trades only for entities
+        # standing on it. NULL stays the global market of today.
+        from . import places as places_mod
+
+        where = entity.place
+        if where is None or where.id != market.place_id:
+            raise ValueError(
+                f"market {market.symbol} trades at "
+                f"{places_mod.label(market.place)} -- "
+                + (f"you are at {places_mod.label(where)}"
+                   if where is not None else "you are not on the map")
+            )
 
     if isinstance(side, str):
         try:

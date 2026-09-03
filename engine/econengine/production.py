@@ -96,6 +96,8 @@ def create_recipe(
     requires_facility: str | None = None,
     builds_facility: str | None = None,
     requires_daylight: bool = False,
+    requires_place_kind: str | None = None,
+    requires_place_key: str | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -153,6 +155,8 @@ def create_recipe(
         requires_facility=requires_facility.upper() if requires_facility else None,
         builds_facility=builds_facility.upper() if builds_facility else None,
         requires_daylight=requires_daylight,
+        requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
+        requires_place_key=requires_place_key.upper() if requires_place_key else None,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
@@ -229,6 +233,33 @@ def start_process(
                 f"too dark for {recipe.code} (hour {hour:02d}, night — "
                 f"daylight is hours {clock.DAY_START_HOUR:02d}.."
                 f"{clock.DAY_END_HOUR - 1:02d})"
+            )
+    if recipe.requires_place_kind or recipe.requires_place_key:
+        # The S2 presence gate (docs/spatial.md §6): where the entity
+        # STANDS gates what it may start. Unplaced satisfies no gate —
+        # the legacy NULL location is the unsubjected citizen, but a
+        # gated recipe is declared spatial data, and it fires on it.
+        from . import places as places_mod
+
+        where = entity.place
+        if recipe.requires_place_key is not None:
+            target = places_mod.get_place(session, recipe.requires_place_key)
+            if target is None:
+                raise ValueError(
+                    f"recipe {recipe.code} requires presence at "
+                    f"{recipe.requires_place_key!r} -- no such place is installed"
+                )
+            if where is None or where.id != target.id:
+                raise ValueError(
+                    f"must be at {places_mod.label(target)} for {recipe.code} -- "
+                    + (f"you are at {places_mod.label(where)}"
+                       if where is not None else "you are not on the map")
+                )
+        elif where is None or where.kind != recipe.requires_place_kind:
+            raise ValueError(
+                f"must be at a {recipe.requires_place_kind} for {recipe.code} -- "
+                + (f"{places_mod.label(where)} is not one"
+                   if where is not None else "you are not on the map")
             )
 
     missing = sorted(

@@ -335,5 +335,16 @@ census*: routes chosen, risks priced, a house that moves for flint.
   behaviour ctx's `ctx.place`/`ctx.places` and `world.places()`/
   `world.place(key)`, MCP `entity_state`'s `place`, spawn templates' optional
   `place` (dens). Dormant by construction: no pack ships a map until S4, so
-  every world runs exactly as before. **S2 (presence gates) is the entry
-  point now.**
+  every world runs exactly as before.
+- **S2 shipped (#150):** presence gates — `recipes.requires_place_kind`
+  ("any HEARTH") and `recipes.requires_place_key` (the exact spot, stored
+  as the pack key — data, resolved at gate time, so catalog recipes stay
+  installable on mapless worlds; the roadmap's `requires_place_id`
+  renamed for what it actually holds) checked in `start_process`'s
+  requirement pass; `markets.place_id` (nullable seat, migration
+  `k7c0e5a3b9d2`) checked in `place_order` — NULL stays the global market
+  of today. Unplaced satisfies no gate; refusals are the ordinary
+  `rejected` results, reasons naming where you stand ("must be at a
+  HEARTH -- The River is not one"); the catalog renders the requirement
+  lines and the market seat. No new event types; gates fire only on
+  declared data. **S3 (topology + travel) is the entry point now.**
