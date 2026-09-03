@@ -45,4 +45,19 @@ function world.settle_last_orders()
   return fills
 end
 
+-- The map (docs/spatial.md S1): places are world-public facts. ------
+-- world.places() lists the map; world.place(k) reads one by key; a bare
+-- world.place() answers "where do I stand" (nil when the world ships no
+-- map or the caller is unplaced -- abstract economies are citizens).
+function world.places()
+  return ctx.places
+end
+function world.place(key)
+  if key == nil then return ctx.place end
+  for _, p in ipairs(ctx.places) do
+    if p.key == key then return p end
+  end
+  return nil
+end
+
 return world

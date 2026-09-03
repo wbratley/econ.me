@@ -68,11 +68,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import clock, conditions, goods, markets, needs, parcels, production, rng, tech
+from . import clock, conditions, goods, markets, needs, parcels, places, production, rng, tech
 from . import threats, witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
-    Entity, EntityStatus, Holding, Need, NeedState, Parcel, Process,
+    Entity, EntityStatus, Holding, Need, NeedState, Parcel, Place, Process,
     ProcessStatus, Script, ScriptType, Tick, WorldSetting,
 )
 from .scripting import (
@@ -356,6 +356,14 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
                 .where(Parcel.owner_id == entity.id)
                 .order_by(Parcel.created_at, Parcel.id)
             ).scalars()
+        ],
+        # The map (docs/spatial.md S1): the world's places are public facts
+        # (fog-of-war is explicitly unbuilt), the entity's own place first.
+        # nil place = unplaced: abstract worlds are citizens (Fork 6).
+        "place": places.place_facts(entity.place) if entity.location_place_id else None,
+        "places": [
+            places.place_facts(p)
+            for p in session.execute(select(Place).order_by(Place.key)).scalars()
         ],
         "needs": _entity_needs(session, entity),
         "unlocks": tech.entity_unlocks(session, entity.id),

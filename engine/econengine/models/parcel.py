@@ -21,11 +21,17 @@ class Parcel(Base):
     region_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     extent_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     owner_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("entities.id"), nullable=True)
+    # The parcel's resource node (docs/spatial.md S1): where this parcel IS
+    # on the pack's map. Nullable — parcels predate places, and abstract
+    # worlds never set one. Presence gates read it in S2; S1 only records
+    # the join.
+    place_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("places.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     owner: Mapped["Entity"] = relationship("Entity")
+    place: Mapped["Place | None"] = relationship("Place", back_populates="parcels")
     facilities: Mapped[list["Facility"]] = relationship(
         "Facility", back_populates="parcel", cascade="all, delete-orphan",
         order_by="Facility.created_at",

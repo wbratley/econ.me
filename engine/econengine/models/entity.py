@@ -83,9 +83,18 @@ class Entity(Base):
     # governed mutation -- making a fixed entity editable would be a
     # policy decision layered above the engine, not inside it.
     is_fixed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Where the entity stands on the world's map (docs/spatial.md S1):
+    # an opaque place ref, never a coordinate. NULL = unplaced — the
+    # legacy citizen (Fork 6): abstract worlds run identically to today,
+    # subject to no spatial gate. Written only by ``places.move_entity``
+    # (genesis and tests) until travel arrives in S3 to write it too.
+    location_place_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("places.id"), nullable=True
+    )
 
     accounts: Mapped[list["Account"]] = relationship("Account", back_populates="entity")
     owner: Mapped["User | None"] = relationship("User", back_populates="entities")
+    place: Mapped["Place | None"] = relationship("Place")
 
     def has_capability(self, name: str) -> bool:
         """True if this entity holds capability `name`.

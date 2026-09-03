@@ -16,6 +16,7 @@ from .recipe import (
 )
 from .process import Process, ProcessStatus
 from .parcel import Parcel, Facility, Deposit
+from .place import Place
 from .good import Good
 from .need import Need, NeedSatisfier, NeedState
 from .threat import Threat
@@ -58,6 +59,7 @@ __all__ = [
     "Parcel",
     "Facility",
     "Deposit",
+    "Place",
     "Good",
     "Need",
     "NeedSatisfier",

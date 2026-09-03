@@ -328,6 +328,12 @@ census*: routes chosen, risks priced, a house that moves for flint.
 
 ## Status
 
-Planned. Nothing in this document is built yet; S1 is the entry point
-and is sized as a single PR (models + migration + manifest section +
-observation field + `move_entity`, suite green with zero users).
+- **S1 shipped (#149):** places + entity location — `models/place.py` and the
+  `places.py` helpers (create/claim/list/facts + `move_entity` as the single
+  writer), `entities.location_place_id` and `parcels.place_id` (nullable,
+  migration `j6b9d4f2a8c1`), the manifest's `places` counts + stamp, the
+  behaviour ctx's `ctx.place`/`ctx.places` and `world.places()`/
+  `world.place(key)`, MCP `entity_state`'s `place`, spawn templates' optional
+  `place` (dens). Dormant by construction: no pack ships a map until S4, so
+  every world runs exactly as before. **S2 (presence gates) is the entry
+  point now.**
