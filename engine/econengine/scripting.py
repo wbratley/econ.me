@@ -209,6 +209,10 @@ SYNTHETIC_CTX = {
                "is_monetary_authority": False},
     "accounts": [{"id": "gate-account", "currency": "USD", "balance": "1000.0000"}],
     "holdings": [], "processes": [], "parcels": [], "needs": [],
+    # The map (docs/spatial.md S1): an empty map is a real world-shape
+    # (abstract economies), so the gate ctx carries the keys -- a nil
+    # here would be a vocabulary lie, not a clean smoke run.
+    "places": [], "place": None,
     "unlocks": [], "events": [], "state": {},
     # _build_ctx exposes the executing tick as ctx.tick (scripting.py
     # "tick"); behaviours schedule off it (the post peddles every 10th

@@ -89,7 +89,7 @@ def ever_count(session: Session, name_prefix: str) -> int:
 
 def spawn_one(session: Session, name: str, template: dict) -> Entity:
     """Materialize one creature from a template dict."""
-    from . import markets  # deferred
+    from . import markets, places as places_mod  # deferred
 
     entity = services.create_entity(
         session, name, EntityType(str(template.get("entity_type", "individual"))))
@@ -118,6 +118,12 @@ def spawn_one(session: Session, name: str, template: dict) -> Entity:
             timeout_ms=200,
             state={},
         ))
+    # Where the creature wakes up (docs/spatial.md S1): template["place"]
+    # is a place key — the den, the nest. Optional: worlds without a map
+    # spawn unplaced creatures exactly as before.
+    spawn_place = template.get("place")
+    if spawn_place:
+        places_mod.move_entity(session, entity, str(spawn_place))
     session.flush()
     return entity
 
@@ -147,7 +153,8 @@ def apply_on_round(session: Session, round_no: int) -> list[dict]:
         creature = spawn_one(
             session, f"{prefix} {roman(ever + i + 1)}",
             rules.get("template", {}))
-        born.append({"name": creature.name, "entity_id": creature.id})
+        born.append({"name": creature.name, "entity_id": creature.id,
+                     "place": (creature.place.key if creature.place else None)})
     if born:
         session.flush()
     return born

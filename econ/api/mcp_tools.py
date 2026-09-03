@@ -33,7 +33,7 @@ from typing import Any, Callable
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from econengine import clock, scripting, services, tech
+from econengine import clock, places as places_mod, scripting, services, tech
 from econengine.catalog import catalog_state
 from econengine.describe import render_event, symbol_names
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
@@ -166,6 +166,10 @@ def tool_entity_state(session: Session, user: User, args: dict[str, Any]) -> dic
                 .order_by(Parcel.created_at)
             ).scalars()
         ],
+        # The map (docs/spatial.md S1), parity with the behaviour ctx:
+        # where this entity stands, or null when unplaced/no map.
+        "place": (places_mod.place_facts(entity.place)
+                  if entity.location_place_id else None),
         "unlocks": tech.entity_unlocks(session, entity.id),
         "behaviour": (
             {"id": behaviour.id, "description": behaviour.description,
@@ -462,7 +466,8 @@ TOOLS: list[Tool] = [
     {
         "name": "entity_state",
         "description": "Full state of one of your entities: accounts, holdings, "
-                       "needs, running processes, parcels, unlocks, and the active "
+                       "needs, running processes, parcels, place (where it "
+                       "stands, null on mapless worlds), unlocks, and the active "
                        "behaviour (id + state).",
         "inputSchema": {
             "type": "object",

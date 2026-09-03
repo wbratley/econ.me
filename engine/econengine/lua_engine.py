@@ -15,6 +15,11 @@ Scripts interact with the simulation via a `ctx` object injected as a Lua global
   ctx.holdings      read-only commodity holdings list
   ctx.processes     read-only running-production list
   ctx.needs         read-only need list with current satisfaction scores
+  ctx.places        read-only world map: every installed place (key, name,
+                   kind, region_id, description) -- public facts; worlds
+                   without a map ship an empty list
+  ctx.place         where THIS entity stands right now (same shape), or
+                   nil when unplaced -- abstract worlds are citizens
   ctx.unlocks       read-only technology codes the entity can use (own + world)
   ctx.events        outcomes from the previous tick
   ctx.state         persistent dict; mutations are returned to the caller
@@ -511,6 +516,8 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     holdings_tbl = _to_lua_list(ctx.get("holdings", []))
     processes_tbl = _to_lua_list(ctx.get("processes", []))
     parcels_tbl = _to_lua_list(ctx.get("parcels", []))
+    places_tbl  = _to_lua_list(ctx.get("places", []))
+    place_tbl   = (_to_lua_table(ctx["place"]) if ctx.get("place") else None)
     needs_tbl   = _to_lua_list(ctx.get("needs", []))
     unlocks_tbl = _to_lua_list(ctx.get("unlocks", []))
     events_tbl  = _to_lua_list(ctx.get("events", []))
@@ -946,6 +953,10 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     ctx_tbl["holdings"] = holdings_tbl
     ctx_tbl["processes"] = processes_tbl
     ctx_tbl["parcels"]  = parcels_tbl
+    ctx_tbl["places"]   = places_tbl
+    if place_tbl is not None:
+        # nil (absent key) when unplaced: scripts test `if ctx.place`
+        ctx_tbl["place"] = place_tbl
     ctx_tbl["needs"]    = needs_tbl
     ctx_tbl["unlocks"]  = unlocks_tbl
     ctx_tbl["events"]   = events_tbl

@@ -199,7 +199,7 @@ def test_entity_state_snapshot(client):
     assert state["entity"]["is_fixed"] is False
     assert set(state) == {
         "clock", "entity", "accounts", "holdings", "needs", "processes",
-        "parcels", "unlocks", "behaviour",
+        "parcels", "place", "unlocks", "behaviour",
     }
     assert len(state["accounts"]) == 1
     assert state["behaviour"] is None  # no starter configured

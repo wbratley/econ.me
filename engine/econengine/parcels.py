@@ -47,13 +47,30 @@ def create_parcel(
     region_id: str = "",
     extent_ref: str = "",
     owner: Entity | None = None,
+    place: "Place | str | None" = None,
 ) -> Parcel:
+    # ``place`` (docs/spatial.md S1): the parcel's node on the pack's map —
+    # genesis data, set once at creation. A string key resolves through
+    # places.get_place and must exist (a parcel standing nowhere named is a
+    # content bug, loud at setup).
+    from . import places as places_mod
+
+    resolved: "Place | None" = None
+    if place is not None:
+        if isinstance(place, str):
+            resolved = places_mod.get_place(session, place)
+            if resolved is None:
+                raise ValueError(
+                    f"unknown place {place.upper()!r} -- install the map before siting parcels")
+        else:
+            resolved = place
     parcel = Parcel(
         parcel_type=str(parcel_type).upper(),
         name=name,
         region_id=region_id,
         extent_ref=extent_ref,
         owner_id=owner.id if owner is not None else None,
+        place_id=resolved.id if resolved is not None else None,
     )
     session.add(parcel)
     session.flush()
