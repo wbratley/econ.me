@@ -136,6 +136,17 @@ def start_route(
     return route_row, process, facts
 
 
+def _hop_ends(edge: SpatialEdge, origin_id: str | None):
+    """A road walked either way: the near end is where the traveller
+    stands, the far end is the other side. Bidirectional edges carry
+    no inherent direction — the journey's does."""
+    if origin_id == edge.from_place_id:
+        return edge.from_place, edge.to_place
+    if origin_id == edge.to_place_id:
+        return edge.to_place, edge.from_place
+    return None, None
+
+
 def _start_hop(
     session: Session, route_row: TravelRoute, entity: Entity
 ) -> tuple[Process, dict]:
@@ -144,6 +155,11 @@ def _start_hop(
     refusals propagate to the caller), re-timed to the edge's cost and
     marked is_travel. Emits nothing; returns the departure facts."""
     edge = session.get(SpatialEdge, route_row.hops[route_row.next_index])
+    near, far = _hop_ends(edge, entity.location_place_id)
+    if near is None:
+        raise ValueError(
+            f"no road from where you stand -- the itinerary's next hop "
+            f"does not touch {places_mod.label(entity.place)}")
     recipe = _check_travel_recipe(session, edge.mode)
     process = production.start_process(session, entity, recipe.code)
     # the road, not the template, sets the hop's duration
@@ -158,8 +174,8 @@ def _start_hop(
         "entity_id": entity.id,
         "route_id": route_row.id,
         "process_id": process.id,
-        "from": edge.from_place.key,
-        "to": edge.to_place.key,
+        "from": near.key,
+        "to": far.key,
         "mode": edge.mode,
         "cost_ticks": edge.cost_ticks,
         "remaining_hops": len(route_row.hops) - route_row.next_index - 1,
@@ -194,7 +210,18 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
         entity = process.entity
         if process.status == ProcessStatus.COMPLETED:
             edge = session.get(SpatialEdge, process.edge_id)
-            places_mod.move_entity(session, entity, edge.to_place)
+            near, far = _hop_ends(edge, entity.location_place_id)
+            if far is None:
+                # moved off the road's ends mid-hop (the single writer
+                # runs elsewhere too): the itinerary no longer knows
+                # where this hop ends. A real state, named.
+                route_row.status = TravelRouteStatus.STRANDED
+                route_row.current_process_id = None
+                events.append(_stranded(
+                    route_row, entity,
+                    "the road moved under the traveller mid-hop"))
+                continue
+            places_mod.move_entity(session, entity, far)
             route_row.next_index += 1
             remaining = len(route_row.hops) - route_row.next_index
             arrived = {
@@ -202,7 +229,7 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
                 "entity_id": entity.id,
                 "route_id": route_row.id,
                 "process_id": process.id,
-                "place": edge.to_place.key,
+                "place": far.key,
                 "remaining_hops": remaining,
             }
             carried = production.credited_outputs(process)

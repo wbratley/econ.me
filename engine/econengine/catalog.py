@@ -31,7 +31,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from econengine.conditions import is_condition
-from econengine.models import Good, Market, Need, Recipe, Technology, Threat
+from econengine.models import (
+    Good, Market, Need, Place, Recipe, SpatialEdge, Technology, Threat,
+)
 
 
 def _num(value: Decimal | int | float | str) -> str:
@@ -185,6 +187,10 @@ def catalog_state(session: Session) -> dict:
     recipes = list(session.execute(select(Recipe).order_by(Recipe.code)).scalars())
     techs = list(session.execute(select(Technology).order_by(Technology.code)).scalars())
     markets = list(session.execute(select(Market).order_by(Market.symbol)).scalars())
+    map_places = list(session.execute(
+        select(Place).order_by(Place.key)).scalars())
+    roads = list(session.execute(
+        select(SpatialEdge).order_by(SpatialEdge.id)).scalars())
 
     needs_by_condition: dict[str, list[Need]] = {}
     for need in needs:
@@ -194,6 +200,34 @@ def catalog_state(session: Session) -> dict:
     good_by_symbol = {g.symbol: g for g in goods}
 
     return {
+        "places": [
+            {
+                "key": p.key,
+                "name": p.name or p.key,
+                "kind": p.kind,
+                "region_id": p.region_id,
+                "description": p.description,
+                "pack": p.pack_id,
+            }
+            for p in map_places
+        ],
+        # The roads, read as authored: from -> to, the mode, and the
+        # hours on the road (cost_ticks; distance in this engine is
+        # always ticks-through-topology). Bidirectional roads read both
+        # ways. A world with no roads has no topology; travel is
+        # refused with a readable reason.
+        "roads": [
+            {
+                "from": e.from_place.key,
+                "to": e.to_place.key,
+                "mode": e.mode,
+                "cost_ticks": e.cost_ticks,
+                "bidirectional": e.bidirectional,
+                "region_id": e.region_id,
+                "pack": e.pack_id,
+            }
+            for e in roads
+        ],
         "goods": [
             {
                 "symbol": g.symbol,
@@ -279,6 +313,7 @@ def catalog_state(session: Session) -> dict:
                 "pack": t.pack_id,
                 "condition": t.condition_symbol,
                 "entity_type": t.entity_type.value if t.entity_type else None,
+                "place": t.place.key if t.place is not None else None,
                 "line": threat_line(t),
             }
             for t in threats
@@ -288,8 +323,13 @@ def catalog_state(session: Session) -> dict:
 
 def threat_line(t: Threat) -> str:
     """The derived physics line for a Threat row: when it presses, what
-    it hears, and what keeps it shy."""
-    bits = [f"at night, +{_num(t.ambient_night_per_tick)}/hour"]
+    it hears, what keeps it shy, and — S4 — where it lives."""
+    bits = []
+    if t.place is not None:
+        from . import places as places_mod
+
+        bits.append(f"lives at {places_mod.label(t.place)}")
+    bits.append(f"at night, +{_num(t.ambient_night_per_tick)}/hour")
     if t.per_say_night > 0:
         bits.append(f"+{_num(t.per_say_night)} per say you make (noise "
                     f"carries after dark)")

@@ -48,6 +48,7 @@ def create_threat(
     deterred_by_symbol: str | None = None,
     deterred_by_quantity: Decimal = Decimal("0"),
     deterrence_factor: Decimal = Decimal("1"),
+    place_key: str | None = None,
     name: str = "",
     description: str = "",
 ) -> Threat:
@@ -76,6 +77,22 @@ def create_threat(
             "a deterrent symbol needs a positive quantity and a factor "
             "below 1 to mean anything")
 
+    # docs/spatial.md S4: a home range, resolved at install. Unlike a
+    # recipe's requires_place_key (data kept as a key so catalog rows
+    # stay installable on mapless worlds), a placed threat is BOUND to
+    # its spot at creation -- a threat ranged over a place that is not
+    # installed is a content bug, loud at setup.
+    place = None
+    if place_key is not None:
+        from . import places as places_mod
+
+        place = places_mod.get_place(session, place_key)
+        if place is None:
+            raise ValueError(
+                f"threat {str(code).upper()!r} ranges over unknown place "
+                f"{str(place_key).upper()!r} -- install the map before "
+                "ranging threats")
+
     threat = Threat(
         code=str(code).upper(),
         name=name,
@@ -88,6 +105,7 @@ def create_threat(
                             if deterred_by_symbol else None),
         deterred_by_quantity=deterred_by_quantity,
         deterrence_factor=deterrence_factor,
+        place_id=place.id if place is not None else None,
     )
     session.add(threat)
     session.flush()
@@ -104,7 +122,16 @@ def apply_pressure(session: Session, tick_number: int,
                    events: list[dict]) -> list[dict]:
     """Credit each threat's condition for every matching ACTIVE entity,
     during dark hours only, scaled by this tick's delivered says. One
-    threat_pressure event per (threat, entity) that felt anything."""
+    threat_pressure event per (threat, entity) that felt anything.
+
+    Scoping (docs/spatial.md S4): a threat with no place is the ambient
+    dark -- it finds everyone. A threat with a place finds only the
+    entities whose location says they are there: standing there, or
+    mid-hop on a road that started there (a traveller stands at the
+    hop's origin until arrival moves them -- the road exposes you place
+    by place, which is exactly "the road at night is a risk profile,
+    computed from the same rows"). Unplaced entities are nowhere: a
+    located threat cannot find them."""
     threats = session.execute(
         select(Threat).where(Threat.is_active.is_(True)).order_by(Threat.code)
     ).scalars().all()
@@ -124,6 +151,9 @@ def apply_pressure(session: Session, tick_number: int,
             Entity.status == EntityStatus.ACTIVE).order_by(Entity.id)
         if threat.entity_type is not None:
             query = query.where(Entity.entity_type == threat.entity_type)
+        if threat.place_id is not None:
+            query = query.where(
+                Entity.location_place_id == threat.place_id)
         for entity in session.execute(query).scalars():
             rate = threat.ambient_night_per_tick \
                 + threat.per_say_night * says.get(entity.id, 0)

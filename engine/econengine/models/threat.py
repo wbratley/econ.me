@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, String, Numeric, DateTime, Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, String, Numeric, DateTime, Enum as SAEnum, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 from .entity import EntityType
 
@@ -35,6 +35,15 @@ class Threat(Base):
     entity_type: Mapped[EntityType | None] = mapped_column(
         SAEnum(EntityType), nullable=True
     )  # NULL = every entity
+    # docs/spatial.md S4: where this danger LIVES. NULL = the ambient
+    # everywhere-threat of the pre-spatial worlds (legacy behavior,
+    # pinned by test); set = a located threat that pressures only
+    # entities standing at (or, while travelling, exposed along the
+    # roads through) its place. Home ranges are pack data.
+    place_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("places.id"), nullable=True
+    )
+    place: Mapped["Place | None"] = relationship("Place")
     # The condition credited by pressure (docs/design.md § conditions);
     # decay_per_tick on that good is the pressure's natural fade.
     condition_symbol: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -350,7 +350,7 @@ product, which still ships zero places).
 | **1** | Ownership-gated autonomy path (§6) ✅; join/onboarding flow ✅; confirm spawn grants no privilege ✅; round scheduler ✅; MCP player interface ✅ | **complete** — autonomy + onboarding + spawn check + scheduler + MCP (platform only) |
 | **2** | Epochs + victory observer + elimination records (§14.1–14.3) ✅; governance-window cadence (§14.4) ✅; leaderboard + publish (§14.5) ✅ — **complete** | none — platform (+ one content-pack clerk script); design in §14 |
 | **3** | The readable world — names/descriptions/effect docs for everything, readable text for every action, the per-entity audit trail on the dashboard, and the content-pack standard envelope (§15) | small additive engine surface (`describe` module + columns); rest platform + content |
-| **4** | Logistics (region graph + transport) — earned and specified: `docs/spatial.md` steps S1–S6; S1 ✅ (#149), S2 ✅ (presence gates, #150), S3 ✅ (topology + travel, #151); S4 (located danger + the stone-age map) is the entry point | engine, additive — every step green with zero spatial data |
+| **4** | Logistics (region graph + transport) — earned and specified: `docs/spatial.md` steps S1–S6; S1 ✅ (#149), S2 ✅ (presence gates, #150), S3 ✅ (topology + travel, #151), S4 ✅ (located danger + the stone-age map, #152); S5 (carrying + fulfillment presence) is the entry point | engine, additive — every step green with zero spatial data |
 
 Each phase is independently shippable and testable. Phase 0 is the substrate
 every later phase depends on, so it goes first.

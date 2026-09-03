@@ -212,6 +212,35 @@ def test_hops_are_processes_but_not_production(session):
     assert travel_events  # arrival is the record instead
 
 
+def test_bidirectional_road_walks_both_ways(session):
+    """A road has no inherent direction — the journey's does. Walking a
+    bidirectional edge HOMEWARDS must deliver the traveller home (the
+    S4 starter's commute found the S3 bug: reverse hops used to deliver
+    the traveller back where they started)."""
+    _map(session)
+    _walk_recipe(session)
+    entity = _entity(session)                 # at HEARTH
+
+    assert _travel(session, entity, "THICKET")["status"] == "applied"
+    run_tick(session)                          # hop runs
+    tick = run_tick(session)                   # arrival at THICKET
+    arrived = next(e for e in tick.events if e["type"] == "travel_arrived")
+    assert arrived["place"] == "THICKET"
+    assert entity.place.key == "THICKET"
+
+    out = _travel(session, entity, "HEARTH")   # the walk home, same road
+    assert out["status"] == "applied"
+    assert (out["from"], out["to"]) == ("THICKET", "HEARTH")
+    run_tick(session)
+    tick = run_tick(session)
+    arrived = next(e for e in tick.events if e["type"] == "travel_arrived")
+    assert arrived["place"] == "HEARTH"
+    assert entity.place.key == "HEARTH"        # home, not back to the woods
+    route = session.query(TravelRoute).filter_by(
+        entity_id=entity.id).order_by(TravelRoute.created_at.desc()).first()
+    assert route.status is TravelRouteStatus.ARRIVED
+
+
 def test_travel_recipe_may_yield_carried_goods(session):
     _map(session)
     # trail foraging: the road's template declares outputs like any recipe

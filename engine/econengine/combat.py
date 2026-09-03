@@ -37,6 +37,12 @@ hears it, nobody bleeds — firelight turns the pack at the door. That is
 the whole defense ladder of the stone world: fire and shelter keep
 wolves at bay; otherwise it is weapons.
 
+Fighting is up close on a mapped world (docs/spatial.md S4): when both
+fighters are placed, they must share a spot — and a traveller mid-hop
+stands at the hop's origin until arrival, so roads are fought over
+place by place. Unplaced fighters (and mapless worlds, where everyone
+is unplaced) keep the global night of the pre-spatial engine.
+
 Combat events are loud facts (witness.py): every rival hears who
 hunted whom. An attack with no target (attack(nil) — a desperate
 prowl) picks the noisiest speaker of the night so far, else a random
@@ -131,7 +137,26 @@ def pick_prey(session: Session, tick_number: int,
               exclude_id: str | None = None) -> str | None:
     """A desperate prowl's target: the noisiest speaker of the night so
     far, else a random active individual. Noise is how predators find
-    you; silence makes you hard to find, never safe."""
+    you; silence makes you hard to find, never safe.
+
+    A PLACED predator prowls its own ground only (docs/spatial.md S4):
+    the loudest speaker it can actually reach is the loudest speaker
+    standing where it stands. An unplaced predator hears the whole
+    world -- the legacy prowl."""
+    scope_id = None
+    if exclude_id is not None:
+        hunter = session.get(Entity, exclude_id)
+        if hunter is not None:
+            scope_id = hunter.location_place_id
+    candidates = session.execute(
+        select(Entity.id).where(
+            Entity.status == EntityStatus.ACTIVE,
+            Entity.entity_type == EntityType.INDIVIDUAL,
+            Entity.id != exclude_id,
+            *([] if scope_id is None else
+              [Entity.location_place_id == scope_id]),
+        ).order_by(Entity.id)
+    ).scalars().all()
     rows = session.execute(
         select(Tick).where(Tick.number > max(0, tick_number - 12),
                            Tick.number < tick_number)
@@ -143,17 +168,11 @@ def pick_prey(session: Session, tick_number: int,
             if (event.get("type") == "say"
                     and event.get("status") != "rejected"
                     and event.get("entity_id")
-                    and event["entity_id"] != exclude_id):
+                    and event["entity_id"] != exclude_id
+                    and event["entity_id"] in candidates):
                 says[event["entity_id"]] = says.get(event["entity_id"], 0) + 1
     if says:
         return max(sorted(says), key=lambda k: says[k])
-    candidates = session.execute(
-        select(Entity.id).where(
-            Entity.status == EntityStatus.ACTIVE,
-            Entity.entity_type == EntityType.INDIVIDUAL,
-            Entity.id != exclude_id,
-        )
-    ).scalars().all()
     if not candidates:
         return None
     roll = int(rng.outcome_roll(
@@ -248,6 +267,24 @@ def resolve_attack(session: Session, attacker_id: str,
                 "reason": "target is not a creature (no HITS stat)"}
     if attacker_id == defender_id:
         return {**event, "status": "rejected", "reason": "cannot attack self"}
+    # Co-location (docs/spatial.md S4): hunting is up close. When the
+    # world has a map and BOTH fighters stand on it, they must stand at
+    # the same spot. The gate fires on declared data only -- an
+    # unplaced fighter (or a mapless world, where everyone is unplaced)
+    # fights exactly as before: the night stays global for those who
+    # are nowhere. A traveller mid-hop stands at the hop's origin
+    # until arrival moves them, so the road bites (and is bitten)
+    # place by place.
+    if (attacker.location_place_id is not None
+            and defender.location_place_id is not None
+            and attacker.location_place_id != defender.location_place_id):
+        from . import places as places_mod
+
+        return {**event, "status": "rejected",
+                "reason": (
+                    f"{defender.name} is at "
+                    f"{places_mod.label(defender.place)} -- you are at "
+                    f"{places_mod.label(attacker.place)}; hunting is up close")}
     if rules.get("night_only") and not clock.is_night(tick_number):
         return {**event, "status": "rejected",
                 "reason": f"too bright to hunt (hour {clock.hour_of(tick_number)}, "

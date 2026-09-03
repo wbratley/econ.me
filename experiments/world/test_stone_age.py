@@ -115,6 +115,15 @@ def _camp(session, entity):
     ).scalar_one()
 
 
+def _at(session, entity, key):
+    """Stand somewhere (S4): work is where you are -- the map's gates
+    bind recipes to places, markets to the post, bites to co-location.
+    Genesis places seats at the hearth, wolves at the forest, the post
+    at the post; tests walk their subjects where the subject works."""
+    from econengine import places as places_mod
+    return places_mod.move_entity(session, entity, key)
+
+
 def _facilities(session, entity):
     camp = _camp(session, entity)
     return sorted(f.facility_type for f in
@@ -181,6 +190,7 @@ def test_gather_loot_table(session):
     create_content(session)
     _no_wolves(session)
     w = _biz(session, "Roller")   # no needs: nothing eats mid-test (run 19)
+    _at(session, w, "THICKET")
     for _ in range(24):
         _act_day(session, w, "GATHER")
         run_tick(session); session.commit()
@@ -199,6 +209,8 @@ def test_bag_doubles_the_gather(session):
     create_content(session)
     _no_wolves(session)
     bare, bagged = _biz(session, "Bare"), _biz(session, "Bagged")
+    _at(session, bare, "THICKET")
+    _at(session, bagged, "THICKET")
     # Two BAGs: one stays reserved by the running gather between ticks
     # (scripts act in-tick after completions and need only one; the
     # between-tick harness needs a spare).
@@ -257,6 +269,7 @@ def test_axe_chops_certain_wood_and_fights_at_two(session):
     create_content(session)
     _no_wolves(session)
     w = _biz(session, "Woodcutter")
+    _at(session, w, "THICKET")   # the treeline is where the axe works
     # the gate: no axe, no chop (the world starts at hour 00: wait for
     # dawn first -- the daylight gate raises before the tool gate)
     from econengine import clock
@@ -372,6 +385,8 @@ def test_the_clock_rations_labor_and_gates_the_dark(session):
     with pytest.raises(ValueError, match="too dark for GATHER.*hour 01"):
         production.start_process(session, w, "GATHER")
     # dawn (hour 6, tick 7): the ration flows and the work is legal
+    # (the thicket is where gathering lives -- S4)
+    _at(session, w, "THICKET")
     while production.next_tick_number(session) != 7:
         run_tick(session); session.commit()
     run_tick(session); session.commit()          # tick 7 = hour 6
@@ -438,6 +453,8 @@ def test_spear_hunt_beats_bare_hunt(session):
     more meat than bare hands over the same hunts."""
     create_content(session)
     bare, hunter = _biz(session, "Bare"), _biz(session, "Hunter")
+    _at(session, bare, "FOREST")
+    _at(session, hunter, "FOREST")   # the hunts live in the deep forest (S4)
     markets.adjust_holding(session, hunter, "SPEAR", Decimal("3"))  # see BAG note; duration-2 hunts can hold two
     for _ in range(100):
         run_tick(session); session.commit()
@@ -493,6 +510,7 @@ def test_shelter_alone_is_misery_not_death(session):
     create_content(session)
     _no_wolves(session)
     w = _seat(session, "Sheltered")
+    _at(session, w, "THICKET")   # gathering country (S4)
     parcels.add_facility(session, _camp(session, w), "SHELTER")
     for _ in range(60):
         run_tick(session); session.commit()
@@ -544,6 +562,8 @@ def test_money_comes_from_the_ground(session):
     deterministic)."""
     create_content(session)
     digger, bare = _biz(session, "Digger"), _biz(session, "Bare")
+    _at(session, digger, "THICKET")
+    _at(session, bare, "THICKET")
     # Spares for the between-tick reservation window (see the bag test).
     markets.adjust_holding(session, digger, "BAG", Decimal("3"))
     for _ in range(200):
@@ -677,6 +697,7 @@ def test_post_ask_rises_when_food_sells(session):
     """Demand moves the ask up 5% the tick after a fill."""
     create_content(session)
     post, buyer = _post(session), _biz(session, "Buyer")
+    _at(session, buyer, "POST")   # every market trades AT the post (S4)
     _run(session, 1)
     markets.place_order(session, buyer.id, "BERRIES", "buy",
                         Decimal("2"), Decimal("2.00"),
@@ -694,6 +715,7 @@ def test_post_bid_falls_when_supply_arrives(session):
     """Sellers filling the bid is supply: the bid eases 5% next tick."""
     create_content(session)
     post, seller = _post(session), _biz(session, "Seller")
+    _at(session, seller, "POST")  # orders fill only where the book lives
     markets.adjust_holding(session, seller, "WOOD", Decimal("10"))
     _run(session, 1)
     markets.place_order(session, seller.id, "WOOD", "sell",
@@ -802,6 +824,143 @@ def test_post_jerky_never_rots_and_feeds(session):
     assert _hold(session, seat.id, "SATIETY") == Decimal("3.6")
 
 
+# ===========================================================================
+# THE MAP (S4): places, roads, gates, and the post's seat
+# ===========================================================================
+
+def test_the_map_six_places_seven_roads(session):
+    """docs/spatial.md S4's stone-age map, as content rows: the hearth
+    (start), thicket 1h, river and flint scrape 2h, deep forest 3h,
+    post 4h -- by the forest road or the quiet river one."""
+    from econengine import edges, places as places_mod
+    create_content(session)
+    keys = {p.key: p for p in places_mod.list_places(session)}
+    assert set(keys) == {"HEARTH", "THICKET", "RIVER", "FLINT",
+                         "FOREST", "POST"}
+    assert all(p.kind == p.key for p in keys.values())
+    roads = {(e.from_place.key, e.to_place.key): e.cost_ticks
+             for e in edges.list_edges(session)}
+    assert roads == {
+        ("HEARTH", "THICKET"): 1,
+        ("HEARTH", "RIVER"): 2,
+        ("HEARTH", "FLINT"): 2,
+        ("HEARTH", "FOREST"): 3,
+        ("THICKET", "FOREST"): 2,
+        ("FOREST", "POST"): 1,
+        ("RIVER", "POST"): 2,
+    }
+    hearth, post = keys["HEARTH"], keys["POST"]
+    assert edges.distance_ticks(session, hearth, post) == 4
+    assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 3
+    # the walk itself is a recipe, priced by the road not the template
+    walk = production.get_recipe(session, "TRAVEL_WALK")
+    assert walk is not None and walk.duration_ticks == 1
+    assert not walk.branches          # no outputs: arrival is the product
+
+
+def test_work_is_where_you_are(session):
+    """Presence gates bind the work to the map: the refusal names where
+    you stand and what the work wants -- and the right ground opens the
+    gate."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Walker")          # wakes at the hearth
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    # the thicket's work, tried from the hearth:
+    with pytest.raises(ValueError, match="must be at a THICKET"):
+        production.start_process(session, w, "GATHER")
+    # the forest's work, tried from the hearth:
+    with pytest.raises(ValueError, match="must be at a FOREST"):
+        production.start_process(session, w, "HUNT")
+    # the hearth's own work: presence passes at the hearth, and the
+    # FACILITY refuses (no fire yet) -- the place gate is behind us
+    _at(session, w, "HEARTH")
+    with pytest.raises(ValueError, match="FIRE"):
+        production.start_process(session, w, "TEND_FIRE", _camp(session, w).id)
+    # the right grounds open the gates (daylight waits for dawn):
+    _at(session, w, "THICKET")
+    assert _act_day(session, w, "GATHER")
+    _at(session, w, "FLINT")
+    assert _act_day(session, w, "DIG_FLINT")
+    _at(session, w, "RIVER")
+    assert _act_day(session, w, "FISH")
+    _at(session, w, "FOREST")
+    assert _act_day(session, w, "HUNT")
+    # the work landed where it should: certain flint from the scrape
+    # (DIG_FLINT has no branch table), and the river/forest recipes
+    # completed (their yields are rolls — the gates are the subject)
+    _run(session, 4)
+    assert _hold(session, w.id, "FLINT") >= Decimal("2")
+    done = {e["recipe"] for e in _events(session, "process_completed")
+            if e["entity_id"] == w.id}
+    assert {"GATHER", "DIG_FLINT", "FISH", "HUNT"} <= done
+
+
+def test_markets_live_at_the_post(session):
+    """Every book trades AT the post: a seat at the hearth is refused
+    with the road named; standing there, the order rests."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Trader")
+    acc = next(a.id for a in w.accounts if a.currency == COIN)
+    with pytest.raises(ValueError, match="trades at Trading post"):
+        markets.place_order(session, w.id, "BERRIES", "buy",
+                            Decimal("1"), Decimal("2.00"), acc)
+    _at(session, w, "POST")
+    order = markets.place_order(session, w.id, "BERRIES", "buy",
+                                 Decimal("1"), Decimal("2.00"), acc)
+    assert order.status.value == "open"
+
+
+def test_everyone_wakes_on_their_ground(session):
+    """Genesis placement: seats at the hearth clearing (the fire-ground
+    start), wolves denned in the deep forest (their range), the post at
+    the post-place where every market trades."""
+    create_content(session)
+    seats = [e for e in session.execute(select(Entity)).scalars()
+             if e.entity_type == EntityType.INDIVIDUAL and not
+             e.name.startswith("Wolf Pack")]
+    assert seats == []          # genesis installs no seats; the post and
+    #                         wolves below ARE the placed population
+    post = [e for e in session.execute(select(Entity)).scalars()
+            if e.name == "Trading Post"][0]
+    assert post.place.key == "POST"
+    wolves = [e for e in session.execute(select(Entity)).scalars()
+              if e.name.startswith("Wolf Pack")]
+    assert len(wolves) == 2
+    assert {w.place.key for w in wolves} == {"FOREST"}
+    # and a born seat wakes at the hearth:
+    seat = _seat(session, "Seat")
+    assert seat.place.key == "HEARTH"
+    assert _camp(session, seat).place.key == "HEARTH"   # the camp too
+
+
+def test_the_starter_walks_to_eat(session):
+    """The floor inherits a commute: the starter script walks to the
+    thicket for food and home for the fire -- travel events on the
+    record, the thicket reached, and arrival at home by the end."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Starter")
+    session.add(Script(
+        name=f"walker-behaviour-{seat.id}",
+        script_type=ScriptType.BEHAVIOUR,
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        entity_id=seat.id,
+        timeout_ms=200,
+        state={},
+    ))
+    session.commit()
+    _run(session, 40)
+    arrived = _events(session, "travel_arrived")
+    assert any(e["place"] == "THICKET" for e in arrived)
+    assert any(e["place"] == "HEARTH" for e in arrived)
+    assert _events(session, "script_error") == []
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+
+
 def test_wolves_are_creatures_with_stats_and_health(session):
     """Run 20's variable: a wolf is an ENTITY -- same physics as a house
     (needs, hunger), stats it was born with, health it can lose, and a
@@ -831,6 +990,7 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     assert combat.is_creature(session, post.id) is True
     assert combat.get_stats(session, post.id)["DEFENSE"] == Decimal("4")
     markets.adjust_holding(session, post, "WARMTH", Decimal("1"))
+    _at(session, w, "POST")   # a wolf at the door bites (S4: up close)
     ev = combat.resolve_attack(session, w.id, post.id, 21)
     assert ev.get("deterred") is True and not ev.get("hit")
     # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 3;
@@ -852,6 +1012,8 @@ def test_combat_between_entities(session):
     house = _seat(session, "Doomed")
     wolf = next(e for e in session.execute(select(Entity)).scalars()
                 if e.name.startswith("Wolf Pack"))
+    _at(session, wolf, "HEARTH")   # S4: hunting is up close -- the wolf
+    #                             comes to the house's door for this test
     # firelight: a warm house cannot be bitten (the miss is loud)
     markets.adjust_holding(session, house, "WARMTH", Decimal("5"))
     ev = combat.resolve_attack(session, wolf.id, house.id, 1)
@@ -882,6 +1044,7 @@ def test_combat_between_entities(session):
     # born, weapons are carried)
     hunter = _seat(session, "Hunter")
     wolf2 = spawns_spawn(session, "Wolf Pack X")
+    _at(session, hunter, "FOREST")   # the duel is in the wolf's range
     markets.adjust_holding(session, hunter, "SPEAR", Decimal("1"))
     assert combat.effective_attack(session, hunter.id) == Decimal("4")
     ev = combat.resolve_attack(session, hunter.id, wolf2.id, 1)
