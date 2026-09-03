@@ -197,6 +197,8 @@ def synthetic_queries() -> dict:
         "population": lambda: [],
         "parents": lambda entity_id: [],
         "children": lambda entity_id: [],
+        "route": lambda from_key, to_key, modes=None: None,
+        "distance_ticks": lambda from_key, to_key, modes=None: None,
     }
 
 
@@ -617,7 +619,7 @@ def build_queries(session: Session, tick_number: int | None = None,
     unset -- the op-context form validators use -- reads stay global, the
     monetary authority's view of the world it guards.
     """
-    from . import markets, tech  # deferred: markets imports this module
+    from . import edges as edges_mod, places, markets, tech  # deferred: markets imports this module
     _tick = tick_number if tick_number is not None else _latest_tick_number(session)
     _private = False
     if owner_id is not None:
@@ -986,6 +988,39 @@ def build_queries(session: Session, tick_number: int | None = None,
         rows = session.execute(select(Entity.id, Entity.parents)).all()
         return [eid for (eid, plist) in rows if plist and pid in plist]
 
+    def route(from_key, to_key, modes=None):
+        """The published itinerary (docs/spatial.md S3): cheapest road
+        from_key → to_key as
+        ``{hops: [{from, to, mode, cost_ticks}...], total_ticks}``, or
+        None when no road exists under the mode allow-list (a
+        comma-string, "WALK,RAFT"; nil = every mode). Read-only --
+        world.route() is the readable front. The engine routes; scripts
+        pick destinations (per-entity pathfinding policy is unbuilt)."""
+        origin = places.get_place(session, str(from_key))
+        dest = places.get_place(session, str(to_key))
+        if origin is None or dest is None:
+            return None
+        hops = edges_mod.route(session, origin, dest, modes)
+        if hops is None:
+            return None
+        return {
+            "hops": [
+                {k: h[k] for k in ("from", "to", "mode", "cost_ticks")}
+                for h in hops
+            ],
+            "total_ticks": sum(h["cost_ticks"] for h in hops),
+        }
+
+    def distance_ticks(from_key, to_key, modes=None):
+        """How far, in ticks: the cheapest road's total cost, or None when
+        there is none. Distance is always ticks-through-topology here,
+        never meters."""
+        origin = places.get_place(session, str(from_key))
+        dest = places.get_place(session, str(to_key))
+        if origin is None or dest is None:
+            return None
+        return edges_mod.distance_ticks(session, origin, dest, modes)
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -1001,6 +1036,8 @@ def build_queries(session: Session, tick_number: int | None = None,
         "population": population,
         "parents": parents,
         "children": children,
+        "route": route,
+        "distance_ticks": distance_ticks,
         "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,
@@ -1463,6 +1500,29 @@ def resolve_intent(session: Session, intent: Intent,
                 production.cancel_process(
                     session, intent.params.get("process_id", ""), intent.entity_id
                 )
+
+        elif intent.intent_type == "travel":
+            # The road (docs/spatial.md S3): plan the cheapest itinerary over
+            # mode-allowed edges and start the first hop -- an ordinary
+            # Process against the pack's TRAVEL_{mode} recipe, so every
+            # input, requirement, and gate applies to a hop exactly as to
+            # any work. Refusals (no road, no template, short inputs) are
+            # the ordinary rejected results, readable end to end.
+            from . import travel as travel_mod
+            entity = session.get(Entity, intent.entity_id)
+            if entity is None:
+                return rejected("unknown entity")
+            with session.begin_nested():
+                _, _, facts = travel_mod.start_route(
+                    session, entity, intent.params.get("to", ""),
+                    modes=intent.params.get("modes"),
+                )
+            # the itinerary rides the params (the say-branch precedent):
+            # a watcher reads the whole journey from the applied line
+            event["params"] = {**intent.params,
+                                "hops": facts["hops"],
+                                "total_ticks": facts["total_ticks"]}
+            extra.update(facts)
 
         elif intent.intent_type == "transfer_parcel":
             from . import parcels

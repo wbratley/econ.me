@@ -112,7 +112,13 @@ def create_recipe(
         raise ValueError("duration_ticks must be >= 0")
     if branches and outputs:
         raise ValueError("recipe declares either outputs or branches, not both")
-    if not outputs and not branches and not unlocks and not builds_facility:
+    # The reserved TRAVEL_ namespace (docs/spatial.md S3): a travel
+    # template's product is arrival, not goods -- the road moves you, and
+    # travel.complete_travel records the outcome. Any other recipe still
+    # has to declare what it yields.
+    is_travel_template = str(code).upper().startswith("TRAVEL_")
+    if (not outputs and not branches and not unlocks and not builds_facility
+            and not is_travel_template):
         raise ValueError(
             "recipe must declare at least one output, branch, unlock, or built facility"
         )
@@ -439,7 +445,12 @@ def complete_processes(session: Session, tick_number: int) -> list[dict]:
     events = []
     for process in due:
         granted = _complete(session, process, seed)
-        events.append(_completed_event(process, granted))
+        if not process.is_travel:
+            # a travel hop's record is travel_arrived (travel.py's arrival
+            # pass), not process_completed: production statistics skip the
+            # road entirely. Unlocks still announce -- arriving somewhere
+            # can teach you something.
+            events.append(_completed_event(process, granted))
         for unlock in granted:
             events.append({
                 "type": "unlocked",
@@ -509,19 +520,30 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
     return events
 
 
+def credited_outputs(process: Process) -> dict:
+    """The outputs a completion actually credited, symbol → str(quantity)
+    — the branch's when stochastic, else the plain set. The shared read
+    for process_completed events and travel arrivals (``carried``)."""
+    recipe = process.recipe
+    if recipe.branches:
+        outputs = recipe.branches[process.outcome_branch].outputs
+    else:
+        outputs = recipe.outputs
+    return {o.symbol: str(o.quantity) for o in outputs}
+
+
 def _completed_event(process: Process, granted: list) -> dict:
     recipe = process.recipe
     if recipe.branches:
         branch = recipe.branches[process.outcome_branch]
-        outputs = branch.outputs
     else:
-        branch, outputs = None, recipe.outputs
+        branch = None
     event = {
         "type": "process_completed",
         "entity_id": process.entity_id,
         "process_id": process.id,
         "recipe": recipe.code,
-        "outputs": {o.symbol: str(o.quantity) for o in outputs},
+        "outputs": credited_outputs(process),
     }
     if process.parcel_id is not None:
         event["parcel_id"] = process.parcel_id

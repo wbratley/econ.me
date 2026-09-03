@@ -69,7 +69,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import clock, conditions, goods, markets, needs, parcels, places, production, rng, tech
-from . import threats, witness
+from . import threats, travel, witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
     Entity, EntityStatus, Holding, Need, NeedState, Parcel, Place, Process,
@@ -119,6 +119,10 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     prev_events = list(prev.events or []) if prev else []
 
     events: list[dict] = list(production.complete_processes(session, tick_number=number))
+    # arrivals first-class: travellers move to their hops' far ends (and
+    # chain on) BEFORE scripts run, so a script waking this tick already
+    # stands at its new place (docs/spatial.md S3)
+    events.extend(travel.complete_travel(session, tick_number=number))
     events.extend(goods.auto_issue(session, tick_number=number))
     events.extend(parcels.regen_deposits(session, tick_number=number))
     intents: list[Intent] = []
@@ -318,6 +322,9 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             "age": (tick_number - entity.birth_tick) if entity.birth_tick is not None else None,
             "is_monetary_authority": entity.is_monetary_authority,
             "capabilities": list(entity.capabilities or []),
+            # where I stand, by key (S3): nil = unplaced. ctx.place carries
+            # the full facts; this is the short read.
+            "place": entity.place.key if entity.place is not None else None,
         },
         "accounts": [
             {"id": a.id, "currency": a.currency, "balance": str(a.balance)}
@@ -336,6 +343,7 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
                 "parcel_id": p.parcel_id,
                 "started_tick": p.started_tick,
                 "completes_tick": p.completes_tick,
+                "is_travel": bool(p.is_travel),
             }
             for p in session.execute(
                 select(Process)

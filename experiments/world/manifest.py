@@ -114,7 +114,8 @@ def _content_counts() -> dict[str, dict[str, int]]:
     from sqlalchemy.pool import StaticPool
 
     from econengine.models import (
-        Base, Good, Market, Need, Place, Recipe, Technology, Threat,
+        Base, Good, Market, Need, Place, Recipe, SpatialEdge, Technology,
+        Threat,
     )
 
     from . import scenario as frontier
@@ -131,7 +132,7 @@ def _content_counts() -> dict[str, dict[str, int]]:
                 tables = {"goods": Good, "recipes": Recipe,
                           "technologies": Technology, "needs": Need,
                           "markets": Market, "threats": Threat,
-                          "places": Place}
+                          "places": Place, "edges": SpatialEdge}
                 counts[name] = {
                     label: session.scalar(
                         select(func.count()).select_from(m))
@@ -150,10 +151,12 @@ def stamp_pack(session, owner: str | None = None) -> None:
     """
     from sqlalchemy import update
 
-    from econengine.models import Good, Market, Need, Place, Recipe, Technology
+    from econengine.models import (
+        Good, Market, Need, Place, Recipe, SpatialEdge, Technology,
+    )
 
     owner = owner or pack_id()
-    for model in (Good, Recipe, Technology, Need, Market, Place):
+    for model in (Good, Recipe, Technology, Need, Market, Place, SpatialEdge):
         session.execute(
             update(model).where(model.pack_id.is_(None))
             .values(pack_id=owner))

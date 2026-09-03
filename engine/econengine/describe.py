@@ -31,7 +31,7 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
     "deposit_regen", "entity_incapacitated", "need_satisfied",
     "need_unmet", "order_cancelled", "process_completed",
     "process_failed", "script_error", "script_reverted", "trade",
-    "unlocked",
+    "travel_arrived", "travel_departed", "travel_stranded", "unlocked",
 )
 
 #: Intent types resolved by ``scripting.resolve_intent`` that no
@@ -39,7 +39,8 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
 #: vocabulary is ``INTENT_CAPABILITIES``; templates must cover both.
 FREE_INTENT_TYPES: tuple[str, ...] = (
     "transfer", "place_order", "cancel_order", "start_process",
-    "cancel_process", "transfer_parcel", "set_behaviour", "say",
+    "cancel_process", "travel", "transfer_parcel", "set_behaviour",
+    "say",
 )
 
 
@@ -66,6 +67,10 @@ def _intent_text(intent_type: str, params: dict, names=None) -> str:
         return f"started {p.get('recipe', '?')}"
     if intent_type == "cancel_process":
         return f"cancelled process {p.get('process_id', '?')}"
+    if intent_type == "travel":
+        hops = p.get("hops") or "?"
+        return (f"set out for {p.get('to', '?')} "
+                f"({hops} hop(s), {p.get('total_ticks', '?')} ticks)")
     if intent_type == "issue_money":
         return (f"issued {_num(p.get('amount', 0))} "
                 f"{str(p.get('currency', ''))}")
@@ -226,6 +231,33 @@ def _script_reverted(e, names):
 @_renders("compute_budget_exceeded")
 def _budget(e, names):
     return "compute budget exceeded — script skipped this tick"
+
+
+@_renders("travel_departed")
+def _travel_departed(e, names):
+    return (f"set out from {e.get('from', '?')} for {e.get('to', '?')} "
+            f"by {str(e.get('mode', '?')).lower()} — "
+            f"{e.get('cost_ticks', '?')} ticks on the road")
+
+
+@_renders("travel_arrived")
+def _travel_arrived(e, names):
+    line = f"arrived at {e.get('place', '?')}"
+    remaining = e.get("remaining_hops", 0) or 0
+    if remaining:
+        line += f" — {remaining} hop(s) to go"
+    carried = e.get("carried") or {}
+    if carried:
+        what = ", ".join(f"+{_num(q)} {_g({'symbol': s}, 'symbol', names)}"
+                          for s, q in carried.items())
+        line += f" (carried {what})"
+    return line
+
+
+@_renders("travel_stranded")
+def _travel_stranded(e, names):
+    where = e.get("place") or "an unplaced spot"
+    return f"stranded at {where} — {e.get('reason', '?')}"
 
 
 def render_event(event: dict, names: dict[str, str] | None = None) -> str:
