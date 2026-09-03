@@ -689,6 +689,13 @@ is a custom server with a Godot client. Decide by prototyping the farming
 loop on Luanti against the engine's API first — it's the cheapest possible
 test of the whole boundary design.
 
+The engine-side half of this boundary — places, topology,
+travel-as-process, presence gates, located markets and danger, up to the
+node↔voxel mapping plan — is now specified in `docs/spatial.md` (the
+spatial layer roadmap). Its doctrine is this section made mechanical: the
+engine's spatial vocabulary grows by exactly two opaque words (place,
+edge) and never a coordinate.
+
 ### 4.4 Identity and the meta-layer
 
 - Identity, name, and reputation are **platform-scoped** and persist across

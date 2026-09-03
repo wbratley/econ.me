@@ -1,0 +1,23 @@
+notes -> roadmap pipeline. entries are retired here once they graduate
+into a docs/ roadmap with milestones.
+
+retired: the spatial layer (entity world-locations, proximity-gated
+actions, interchangeable coordinate systems, graph/grid navigation with
+terrain passability and speed, transport modes incl. vehicles/mounts/
+air/sea/road) now lives in docs/spatial.md (steps S1-S6).
+
+open: knowledge & research (not yet roadmapmed):
+
+tech trees,
+
+research should be undertaken to unlock new tech options. research
+costs a lot of labor, requires conditions and previous tech to unlock.
+once unlocked tech can be shared or traded, but due to it being
+information it is not lost when traded, but duplicated. some holdings
+in the world should follow this pattern, viruses are another example.
+information/skills should be not part of the estate passed on at death
+as they cannot be transferred in the same way
+
+research can unlock other recipies as well as the technology itself
+(e.g. electronics) which would from the basis for further
+research/technology unlocks
