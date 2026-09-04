@@ -44,7 +44,8 @@ import time
 from pathlib import Path
 
 from .dashboard import build_dashboard
-from .llm import Model, NimModel, ScriptedModel, nim_key
+from .llm import (Model, DeepSeekModel, NimModel, ScriptedModel,
+                  deepseek_key, nim_key)
 from .loop import AgentLoop, McpClient
 from .multi import (Dynasty, build_agent_world, read_world_meta,
                     run_rounds)
@@ -264,8 +265,21 @@ def main(argv=None) -> int:
                                         timeout_s=args.live_timeout_s))
                 model_names.append(f"live:{n}")
             else:
-                models.append(NimModel(key, pairs[n]))
-                model_names.append(pairs[n])
+                seat_model = pairs[n]
+                if seat_model.startswith("deepseek:"):
+                    # a DeepSeek seat: same streamed OpenAI-compatible
+                    # call, prepaid credit, off-peak billing gate —
+                    # see DeepSeekModel for the window rules
+                    dk = deepseek_key()
+                    if not dk:
+                        raise SystemExit(
+                            "no DeepSeek key: set DEEPSEEK_API_KEY, or put "
+                            "it in ~/.deepseek_api_key")
+                    models.append(DeepSeekModel(
+                        dk, seat_model[len("deepseek:"):]))
+                else:
+                    models.append(NimModel(key, seat_model))
+                model_names.append(seat_model)
 
     names = args.names or [f"House {i + 1}" for i in range(len(model_names))]
     seed_source = (Path(args.seed_script).read_text()
