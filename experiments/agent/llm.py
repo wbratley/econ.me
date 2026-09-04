@@ -473,7 +473,11 @@ NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com"
 # completion budget before the answer starts (observed: GPT-OSS,
 # finish_reason=length with empty content, 7 stone-run3 rounds).
 _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
-    "gpt-oss": 32768,
+    # run 27 lost 5 rounds and run 28 lost Ivar's whole round 1 (all 3
+    # attempts) to length-capped thinking at 32768 -- empty content, the
+    # reasoning channel alone past the cap. 65536: verified accepted by
+    # NIM for gpt-oss; a cap, not a target, so unspent headroom is free.
+    "gpt-oss": 65536,
     # nemotron-3 reasons before content (observed ~110 thinking tokens
     # for a trivial ask; a full script rewrite thinks more). max_tokens
     # is a cap, not a target -- the headroom costs nothing unspent.

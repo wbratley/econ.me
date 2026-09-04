@@ -116,7 +116,7 @@ def test_nim_reasoning_models_get_a_bigger_default():
     # in — thinking ate the whole 8192 before the answer started. The
     # per-family default budgets reasoning models generously; plain
     # instruct models keep the 8192 that has always sufficed.
-    assert NimModel("k", "openai/gpt-oss-20b")._max_tokens == 32768
+    assert NimModel("k", "openai/gpt-oss-20b")._max_tokens == 65536
     assert NimModel("k", "meta/llama-3.3-70b-instruct")._max_tokens == 8192
     # explicit argument still wins over any family default
     assert NimModel("k", "openai/gpt-oss-20b",
