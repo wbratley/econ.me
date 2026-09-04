@@ -828,10 +828,12 @@ def test_post_jerky_never_rots_and_feeds(session):
 # THE MAP (S4): places, roads, gates, and the post's seat
 # ===========================================================================
 
-def test_the_map_six_places_seven_roads(session):
+def test_the_map_six_places_eight_roads(session):
     """docs/spatial.md S4's stone-age map, as content rows: the hearth
     (start), thicket 1h, river and flint scrape 2h, deep forest 3h,
-    post 4h -- by the forest road or the quiet river one."""
+    post 1h down the valley (run 26's census: at four hours the post
+    was a trip houses died taking -- two starved at its counter) --
+    the forest and river roads stay the long ways round."""
     from econengine import edges, places as places_mod
     create_content(session)
     keys = {p.key: p for p in places_mod.list_places(session)}
@@ -848,10 +850,12 @@ def test_the_map_six_places_seven_roads(session):
         ("THICKET", "FOREST"): 2,
         ("FOREST", "POST"): 1,
         ("RIVER", "POST"): 2,
+        ("HEARTH", "POST"): 1,
     }
     hearth, post = keys["HEARTH"], keys["POST"]
-    assert edges.distance_ticks(session, hearth, post) == 4
-    assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 3
+    assert edges.distance_ticks(session, hearth, post) == 1
+    # the valley road shortens the forest to 2h through the post
+    assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 2
     # the walk itself is a recipe, priced by the road not the template
     walk = production.get_recipe(session, "TRAVEL_WALK")
     assert walk is not None and walk.duration_ticks == 1
@@ -1069,6 +1073,55 @@ def test_combat_between_entities(session):
 
 def spawns_spawn(session, name):
     return stone_age.make_wolf(session, name)
+
+
+def test_wolves_live_off_the_land(session):
+    """Run 26's census: denned packs starved once the houses slept out
+    of reach -- the human table (EAT_RAW at 0.6 satiety a strip) cannot
+    cover a 0.5/hour draw. The born CARNIVORE stomach fixes the
+    conversion (carrion eats like jerky: 3.6 a strip, no disease) and
+    is the wolf's alone: a house reading the catalog cannot farm it."""
+    from econengine import tech
+    create_content(session)
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    assert tech.entity_unlocks(session, wolf.id) == ["CARNIVORE"]
+    # the meal: 1 MEAT -> 3.6 SATIETY, instant, and no disease roll at all
+    assert _hold(session, wolf.id, "MEAT") == Decimal("1")
+    production.start_process(session, wolf, "EAT_CARRION")
+    assert _hold(session, wolf.id, "SATIETY") == Decimal("3.6")
+    assert _hold(session, wolf.id, "MEAT") == Decimal("0")
+    assert _hold(session, wolf.id, "DISEASE") == Decimal("0")
+    # and it is not the houses' to copy: the refusal names the trait
+    house = _seat(session, "Copycat")
+    markets.adjust_holding(session, house, "MEAT", Decimal("1"))
+    with pytest.raises(ValueError, match="requires CARNIVORE"):
+        production.start_process(session, house, "EAT_CARRION")
+
+
+def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
+    """The range (run 26's census): a denned wolf that cannot reach prey
+    no longer waits to starve -- by night a hungry pack travels toward
+    the hearth (the raid walk), and by day it works its way home to the
+    forest (the game). The applied travel intents carry the itinerary."""
+    from econengine import clock
+    create_content(session)
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    assert wolf.place.key == "FOREST"
+    # hungry and dark: the raid walk begins (no prey named, no bite yet)
+    markets.adjust_holding(session, wolf, "HUNGER", Decimal("4"))
+    markets.adjust_holding(session, wolf, "SATIETY", Decimal("0"))
+    while not clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    run_tick(session); session.commit()
+    # through the night and past dawn: home again by day
+    for _ in range(14):
+        run_tick(session); session.commit()
+    walks = [e["to"] for e in _events(session, "travel")
+             if e["entity_id"] == wolf.id and e["status"] == "applied"]
+    assert "HEARTH" in walks               # the night raid walk
+    assert "FOREST" in walks                # and home again by day
 
 
 def test_starter_floor_survives_the_wolves(session):

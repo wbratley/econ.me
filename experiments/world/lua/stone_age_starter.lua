@@ -88,13 +88,13 @@ elseif warmth < (std.hour() and std.hour() >= 15 and 12 or 4)
   end
 end
 
--- 1b. Wolves are creatures, and S4 gave them a range: the deep forest.
---     The hearth fire-ground is safe to sleep by (wolves are three
---     hours away and hunting is up close), so the floor's one law of
---     the dark is simpler than it was: be home. What bit you gets
---     answered -- unarmed if it must (fists are one hit in two; a
---     spear in the rack is worth three). The floor never says at
---     night: speech carries to things that listen.
+-- 1b. Wolves are creatures that RANGE: by day the packs work the
+--     forest game, by night a hungry one walks -- the fire-ground is
+--     where the people sleep, so the dark's one law is simple: be
+--     home, firelit. A lit hearth turns a pack at the door. What bit
+--     you gets answered -- unarmed if it must (fists are one hit in
+--     two; a spear in the rack is worth three). The floor never says
+--     at night: speech carries to things that listen.
 local hits = std.holding_qty("HITS")
 if hits < 20 and std.is_night() then
   for _, e in ipairs(ctx.events or {}) do

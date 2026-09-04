@@ -47,8 +47,15 @@ spawned ENTITIES -- stats rows (ATTACK 4 / DEFENSE 1), health as a
 HITS holding (12), the same FOOD/WARMTH needs as a house, and a
 hunting program (wolf_pack.lua): they hunt at night because they are
 hungry, target the loudest speaker they heard (the witness feed is
-their ears), eat raw meat (their constitution, same 25% disease), and
-keep warm by PACE. Combat (combat.py) is entity-vs-entity under the
+their ears), eat raw meat -- their iron stomach makes a proper meal of
+carrion (EAT_CARRION: the born CARNIVORE trait -- a kill wrung dry,
+jerky-dense, never sickening), and keep warm by PACE. The packs RANGE (run
+26's census: denned wolves whose houses slept out of reach starved
+in two days -- the map made sit-and-wait a death sentence): by day
+they run the same game the houses hunt, by night a hungry pack walks
+-- three hours of road to the fire-ground where the people sleep,
+home again by dawn. Players are not their only food; they are the
+rich exception. Combat (combat.py) is entity-vs-entity under the
 pack's COMBAT_RULES: daylight refuses, a lit hearth DETERS (a loud
 miss), hit% = clamp(50 + 5*(ATK-DEF), 5, 95) on the commit-reveal RNG,
 damage = max(1, ATK-DEF) (+1 crit), HITS drain, zero = the ordinary
@@ -67,8 +74,8 @@ hours apart. Seats wake at the Hearth clearing (fires are made and
 tended there); the berry thicket is 1h (gather/chop), the river 2h
 (FISH: certain-ish meat, no wolves), the flint scrape 2h (certain
 flint), the deep forest 3h (the hunts, and the wolves' dens), the
-trading post 4h -- by the forest road (through the range) or the
-river road (quieter, same length). Presence gates bind work to
+trading post 1h, down the valley -- an easy walk (the forest and
+river roads still run there, the long ways round). Presence gates bind work to
 places; EVERY market trades at the post and only there; travel is
 the TRAVEL_WALK recipe, one Process per hop (an hour a hop, priced
 by the road, night-legal, labor-free), and a traveller stands at a
@@ -105,7 +112,7 @@ from sqlalchemy.orm import Session
 
 from econengine import (
     combat, edges, goods, markets, needs, parcels, places, production,
-    scripting, services, spawns,
+    scripting, services, spawns, tech,
 )
 from experiments.world import manifest
 from econengine.models import (
@@ -216,9 +223,11 @@ you are. A lit hearth (WARMTH >= 1) turns a wolf at the door; a spear
 bite feeds the wolf (it tears flesh); a kill is a carcass: MEAT is
 torn from it by any victor, while everything the dead CARRIED moves
 only to victors with hands -- wolves cannot loot, what a beast kills
-rots where it fell; by day wolves hunt the same game you do (HUNT) --
-starve them
-out and they die like anything else. A house has 20 HITS and never
+rots where it fell. And the packs are not beggars at your door: they
+LIVE off the forest (the CARNIVORE gut makes carrion a proper meal,
+as dense as your jerky), ranging for game by day and walking to the
+fire-ground only when hunger moves them. Starving them out is not a
+strategy here -- meeting one is. A house has 20 HITS and never
 regrows them; a wolf has 12, and it WEARS its pelt: kill one and the
 pelt and the meat it carried are yours. Combat is an action anyone may take: attack(<entity id>) --
 you learn a wolf's id by hearing it hunt (combat is loud: every house
@@ -236,10 +245,11 @@ THE WORLD HAS PLACES, AND THEY ARE HOURS APART. You wake at the
 Hearth clearing (the fire-ground: safe nights, fires made and tended
 there). The Berry thicket is one hour's walk (berries, wood, yarn);
 the river two (FISH: meat without wolves); the Flint scrape two
-(certain flint); the Deep forest three (the hunts -- and the wolves'
-range); the Trading post FOUR (every market trades there, and only
-there). Roads run both ways; the post is four hours by the forest road
-(through the wolves) or by the river road (quieter, same length).
+(certain flint); the Deep forest two by the valley road, three by
+the deep wood (the hunts -- and the wolves' range); the Trading post
+ONE, down the valley (every market trades there, and only there).
+Roads run both ways; the deep wood and the river road are the long
+ways.
 WALKING is the TRAVEL_WALK recipe: an hour per hop, labor-free,
 night-legal -- and you stand where a hop started until it ends, so a
 road exposes you place by place. ctx.entity.place says where you
@@ -250,9 +260,10 @@ hunting wants the forest, fire-making and tending want the hearth,
 flint-digging wants the scrape, fishing wants the river. The refusal
 names where you stand and what the work wants.
 THE MARKETS LIVE AT THE POST: every order -- buying and selling both --
-requires standing there. Four hours out, four back: plan the trip
-(bank food and warmth first, mind the dark, mind the forest road) or
-stay home and stay poor. That is the whole question of this world.
+requires standing there. An hour out, an hour back: the walk is
+cheap, so the question is what you carry and what you quote -- not
+whether the trip survives the day. Mind the dark on the way all the
+same.
 
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. FIRE first (2 WOOD + an hour): cooking + warmth. Do not sleep fireless.
@@ -400,7 +411,7 @@ def create_content(session: Session, verify: bool = True) -> None:
 
 
 def _create_map(session: Session) -> None:
-    """The stone-age map (docs/spatial.md S4): six places, seven roads,
+    """The stone-age map (docs/spatial.md S4): six places, eight roads,
     and the walk that binds them. Places first (everything sited below
     resolves against them), then the roads, then the TRAVEL_WALK
     template every hop runs against -- inputs-free, night-legal, and
@@ -409,10 +420,13 @@ def _create_map(session: Session) -> None:
     Topology, hours from the hearth: thicket 1 (the commute for food
     and wood), river 2 (fish: meat without wolves), flint scrape 2
     (certain flint), deep forest 3 (the hunts and the wolves' range),
-    trading post 4 -- via the forest (the wolfy road) or by the river
-    (the quiet one, same length; two equal roads, a real choice). The
-    thicket-forest cut (2h) makes the hunting circuit thicket ->
-    forest -> hearth a day's honest walk."""
+    trading post 1, down the valley (run 26's census: four hours made
+    the coin cost the day -- the post was a trip houses died taking;
+    now it is a neighbor, and the market question is what you carry,
+    not whether you survive the walk). The valley road also shortens
+    the forest to 2h through the post; the deep wood stays the long
+    way in. The thicket-forest cut (2h) makes the hunting circuit
+    thicket -> forest -> hearth a day's honest walk."""
     for key, kind, name, description in (
         ("HEARTH", "HEARTH", "Hearth clearing",
          "The fire-ground where every seat wakes: sheltered, warm-stoned, "
@@ -425,11 +439,12 @@ def _create_map(session: Session) -> None:
          "Two hours out: the ground gives certain flint to anyone who "
          "digs."),
         ("FOREST", "FOREST", "Deep forest",
-         "Three hours out: the spear game and the wolves' range. Be "
-         "firelit by dark, or be meat."),
+         "The spear game and the wolves' range: two hours by the valley "
+         "road (through the post), three by the deep wood. Be firelit "
+         "by dark, or be meat."),
         ("POST", "POST", "Trading post",
-         "Four hours out by the forest road (or the river road, quieter "
-         "and no longer): every market trades here, and only here."),
+         "An hour down the valley: every market trades here, and only "
+         "here -- the man keeps a good shelf and a short walk for it."),
     ):
         places.create_place(session, key, kind=kind, name=name,
                             region_id="home-valley", description=description)
@@ -441,6 +456,7 @@ def _create_map(session: Session) -> None:
         ("THICKET", "FOREST", 2),
         ("FOREST", "POST", 1),
         ("RIVER", "POST", 2),
+        ("HEARTH", "POST", 1),
     ):
         edges.create_edge(session, a, b, "walk", cost)
     # The walk itself: an hour a hop against the road's true length.
@@ -631,16 +647,33 @@ def _create_combat(session: Session) -> None:
             "holdings": {"MEAT": 1, "PELT": 1},
             "script_setting": "wolf",
             "account": {"COIN": 0},
-            # The den (S4): wolves wake, hunt, and range in the deep
-            # forest. Home range as spawn data -- a roaming wolf would
-            # be the same template with a travelling script.
+            # The den (S4): wolves wake in the deep forest, and the
+            # program ranges -- by day the forest's game, by night the
+            # raid walk to the fire-ground (run 26's census: denned
+            # wolves whose houses slept out of reach starved).
             "place": "FOREST",
+            # Born traits: the CARNIVORE stomach (EAT_CARRION) -- game
+            # meat feeds a pack without a house in reach.
+            "technologies": ["CARNIVORE"],
         },
     })
 
 
 def _create_recipes(session: Session) -> None:
     D = Decimal
+
+    # Born traits (run 26's census): CARNIVORE is a wolf's stomach -- an
+    # ENTITY-scoped technology no recipe grants, so it is exactly the
+    # spawn template's to give (spawns.spawn_one reads
+    # template["technologies"]). It gates EAT_CARRION: the forest's game
+    # feeds the packs without a house in reach, and the houses' raw-meat
+    # economics (the disease lottery) are nobody else's to farm.
+    tech.create_technology(
+        session, "CARNIVORE", name="Carnivore",
+        description="A predator's constitution, born not learned: raw "
+                    "flesh is proper food (EAT_CARRION -- wrung dry, "
+                    "jerky-dense, never sickening). Wolves hold it; "
+                    "nothing grants it to anyone else.")
 
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
@@ -853,6 +886,27 @@ def _create_recipes(session: Session) -> None:
              "outputs": {"SATIETY": D("0.6"), "DISEASE": D("1")}, "label": "sick"},
         ],
     )
+    # The wolf's table (run 26's census: every pack starved at its den).
+    # The human one starves a wolf -- raw-at-0.6-satiety cannot cover a
+    # 0.5/hour draw (a day of hunts' expected 7.7 MEAT x 0.6 = 4.6
+    # satiety against ~14 needed), so denned packs died in two days
+    # once the houses slept out of reach. A predator's gut wrings a
+    # kill dry: carrion at 3.6 a strip (jerky-dense; nothing is
+    # wasted) clears the bar with margin -- ~5.5 MEAT a hunting day
+    # x 3.6 = ~20 against ~14, enough to bank against raid nights
+    # (hours on the road, unfed). CARNIVORE-gated so it is the wolf's
+    # alone: with it the packs live off the land, and houses are the
+    # rich exception, not the only meal.
+    production.create_recipe(
+        session, "EAT_CARRION", name="Eat Carrion",
+        description="A predator's gut: raw flesh is a wolf's proper diet "
+                    "-- wrung dry, denser than any human meal keeps, and "
+                    "never sickening. Born, not learned (the CARNIVORE "
+                    "stomach only).",
+        inputs={"MEAT": D("1")}, outputs={"SATIETY": D("3.6")},
+        duration_ticks=0,
+        requires=["CARNIVORE"],
+    )
 
     # --- The night has teeth: fighting, between creatures (run 20) ----
     # Combat is not a recipe: it is the attack intent resolved by
@@ -987,9 +1041,9 @@ def _create_needs(session: Session) -> None:
 
 def _create_markets(session: Session) -> None:
     """Every market trades AT the post (docs/spatial.md S4): a placed
-    market fills only orders from entities standing there -- four "
-    "hours' walk is the price of coin, and the whole question of the
-    "proving run."""
+    market fills only orders from entities standing there -- an
+    hour's walk is the price of coin, cheap enough to pay often and
+    steep enough to plan around."""
     _NAMES = {
         "LABOR": "Labor", "BERRIES": "Berries", "MEAT": "Raw Meat",
         "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
@@ -1040,7 +1094,9 @@ def make_wolf(session: Session, name: str) -> Entity:
     a starting strip of meat, and the pelt it wears -- killing one
     pays whoever can carry it. No CARRY: what a wolf kills rots where
     it fell; it eats the bite and the carcass, never the estate.
-    Dens in the deep forest (S4): the range is home."""
+    Dens in the deep forest (S4) and RANGES: the CARNIVORE stomach
+    (carrion is proper food) means the packs live off the forest's
+    game -- houses are the rich exception, not the only meal."""
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
@@ -1048,4 +1104,5 @@ def make_wolf(session: Session, name: str) -> Entity:
         "script_setting": "wolf",
         "account": {"COIN": 0},
         "place": "FOREST",
+        "technologies": ["CARNIVORE"],
     })
