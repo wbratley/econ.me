@@ -569,12 +569,17 @@ class NimModel(OpenAIModel):
                  timeout: float = 120.0,
                  base_url: str = NIM_DEFAULT_BASE,
                  temperature: float = 0.3, max_tokens: int | None = None,
-                 limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter):
+                 limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter,
+                 extra_body: dict | None = None):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
         self._temperature = temperature
         self._limiter_factory = limiter_factory
+        # Extra request fields a subclass needs merged into the chat
+        # payload (e.g. DeepSeek's reasoning_effort) — harmless empty
+        # for plain NIM calls.
+        self._extra_body = dict(extra_body or {})
         # Per-model defaults, overridable by argument: reasoning models
         # (the stone-run3 GPT-OSS evidence) spend the completion budget
         # thinking and finish_reason=length with an empty final channel --
@@ -620,6 +625,7 @@ class NimModel(OpenAIModel):
                         "max_tokens": self._max_tokens,
                         "top_p": 0.95,
                         "stream": True,
+                        **self._extra_body,
                     },
                 ) as r:
                     if r.status_code == 429 or r.status_code >= 500:
@@ -733,17 +739,33 @@ class DeepSeekModel(NimModel):
     not a dead round: the house keeps its previous behaviour and the
     journal says exactly why. ECON_DEEPSEEK_WINDOW=any spends at any
     hour; ECON_DEEPSEEK_WAIT_MINUTES (default 15) lets a call sit out
-    the tail of peak instead of missing the window by minutes."""
+    the tail of peak instead of missing the window by minutes.
+
+    Reasoning level: v4 models think by default ("medium" — 22.9k
+    reasoning tokens on a scripting ask, and past the whole 32k cap
+    on real round prompts: every audition attempt died at length
+    with empty content). The API takes reasoning_effort
+    none|minimal|low|medium|high|xhigh|max; this seat defaults to
+    LOW — ~9× cheaper, ~9× faster, finishes far inside the budget —
+    and lint retries catch the occasional name hallucination low
+    effort invites. ECON_DEEPSEEK_REASONING overrides (medium/high/
+    …); set it empty to omit the field and take the API default.
+    """
 
     def __init__(self, api_key: str, model: str,
                  timeout: float = 120.0,
                  base_url: str = DEEPSEEK_DEFAULT_BASE,
                  temperature: float = 0.3, max_tokens: int | None = None,
                  window: str | None = None,
-                 wait_minutes: float | None = None):
+                 wait_minutes: float | None = None,
+                 reasoning_effort: str | None = None):
+        eff = (reasoning_effort
+               if reasoning_effort is not None
+               else os.environ.get("ECON_DEEPSEEK_REASONING", "low"))
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url, temperature=temperature,
-                         max_tokens=max_tokens, limiter_factory=None)
+                         max_tokens=max_tokens, limiter_factory=None,
+                         extra_body={"reasoning_effort": eff} if eff else {})
         self.name = f"deepseek:{model}"
         self._window = window
         self._wait_minutes = wait_minutes
