@@ -498,7 +498,7 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "BERRIES", name="Berries",
                       description="Foraged food; the staple of the early game "
                                   "and the market's most-traded good.",
-                      decay_per_tick=Decimal("0.25"))
+                      decay_per_tick=Decimal("0.15"))
     goods.create_good(session, "COOKED_MEAT", name="Cooked Meat",
                       description="Fire-cooked meat: keeps a little better than "
                                   "raw and feeds you without disease risk.",
