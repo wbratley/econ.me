@@ -324,8 +324,9 @@ def test_deepseek_model_gates_peak_and_skips_the_nim_budget(monkeypatch):
     # peak hours: a readable refusal, and not one byte leaves the box
     with pytest.raises(RuntimeError, match="peak hours.*4.0h"):
         m.complete("s", "u")
-    # the bypass is explicit, and the thinking slug gets the big budget
+    # the bypass is explicit, and the thinking slugs get the big budget
     assert llm.DeepSeekModel("k", "deepseek-reasoner")._max_tokens == 32768
+    assert llm.DeepSeekModel("k", "deepseek-v4-flash")._max_tokens == 32768
     assert llm.DeepSeekModel("k", "deepseek-chat")._max_tokens == 8192
 
     def fake_stream(*a, **k):
