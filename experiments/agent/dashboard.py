@@ -6,8 +6,9 @@ whole story is there. Data view doctrine follows the platform's: every
 number is what the dynasties themselves could see on their own MCP
 surface (§13 parity), which is exactly what `multi.run_rounds` snapshots.
 
-Sections: final standings; per-house holdings &amp; conditions by
-round; wealth / money / prices / needs charts over
+Sections: final standings; the map — places, roads, and who stands
+where, round by round; per-house holdings &amp; conditions by round;
+wealth / money / prices / needs charts over
 rounds; a round-by-round activity table (attempts, refusals, the round's
 event mix); and per-dynasty strategy panels — the latest behaviour
 source with the sha trail of every rewrite, so "what is House Llama
@@ -123,6 +124,142 @@ def line_chart(title: str, labels: list[str],
         parts.append(f'<span><i style="background:{color}"></i>{_esc(name)}</span>')
     parts.append("</div></div>")
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# The map (docs/spatial.md): places and roads drawn from the snapshot's
+# world_map — public facts, laid out by the road graph itself (the
+# engine has no coordinates, and neither does this drawing).
+# ---------------------------------------------------------------------------
+
+def _layout(nodes: list[str], roads: list[tuple[str, str]],
+            width: float, height: float) -> dict[str, tuple[float, float]]:
+    """A tiny deterministic spring embedding (Fruchterman-Reingold):
+    nodes repel, roads attract, init on a circle in sorted-key order,
+    fixed iteration count — the same map always draws the same way, so
+    round N and round N+1 differ only in who stands where, never in
+    where the places are."""
+    import math
+    n = len(nodes)
+    if n <= 1:
+        return {v: (width / 2, height / 2) for v in nodes}
+    k = 0.55 / math.sqrt(n)              # ideal edge length, scaled to frame
+    pos = {v: (math.cos(2 * math.pi * i / n), math.sin(2 * math.pi * i / n))
+           for i, v in enumerate(nodes)}
+    t = 0.15                             # annealing temperature, cools off
+    for _ in range(500):
+        disp = {v: [0.0, 0.0] for v in nodes}
+        for i, u in enumerate(nodes):
+            for v in nodes[i + 1:]:
+                dx, dy = pos[u][0] - pos[v][0], pos[u][1] - pos[v][1]
+                d = math.sqrt(dx * dx + dy * dy) or 1e-9
+                f = k * k / d
+                disp[u][0] += dx / d * f; disp[u][1] += dy / d * f
+                disp[v][0] -= dx / d * f; disp[v][1] -= dy / d * f
+        for a, b in roads:
+            dx, dy = pos[a][0] - pos[b][0], pos[a][1] - pos[b][1]
+            d = math.sqrt(dx * dx + dy * dy) or 1e-9
+            f = d / k
+            disp[a][0] -= dx / d * f; disp[a][1] -= dy / d * f
+            disp[b][0] += dx / d * f; disp[b][1] += dy / d * f
+        for v in nodes:
+            dx, dy = disp[v]
+            d = math.sqrt(dx * dx + dy * dy) or 1e-9
+            step = min(d, t)
+            pos[v] = (pos[v][0] + dx / d * step, pos[v][1] + dy / d * step)
+        t *= 0.997
+    xs = [p[0] for p in pos.values()]; ys = [p[1] for p in pos.values()]
+    sx = (width - 130) / max(1e-9, max(xs) - min(xs))
+    sy = (height - 110) / max(1e-9, max(ys) - min(ys))
+    s = min(sx, sy)
+    cx, cy = sum(xs) / n, sum(ys) / n
+    return {v: (width / 2 + (p[0] - cx) * s, height / 2 - (p[1] - cy) * s)
+            for v, p in pos.items()}
+
+
+def _map(snapshots: list[dict]) -> str:
+    """The map section: the latest round's world as an inline SVG —
+    places as nodes, roads as edges with their hour costs, every
+    entity as a colored marker where it stood at the round's end
+    (dynasties in their chart colors, everyone else neutral, the dead
+    faded) — then a per-round location strip, the census histogram in
+    dashboard form. A run whose world ships no map (or pre-map
+    snapshots resumed) renders nothing here."""
+    mapped = [s for s in snapshots if s.get("world_map", {}).get("places")]
+    if not mapped:
+        return ""
+    last = mapped[-1]
+    wmap = last["world_map"]
+    places = {p["key"]: p for p in wmap["places"]}
+    roads = [(r["from"], r["to"]) for r in wmap["roads"]]
+    width, height = 860, 500
+    pos = _layout(sorted(places), roads, width, height)
+
+    # who's who: dynasties wear their chart colors (matched by entity
+    # id through the journal entries); everything else is neutral.
+    names = list(snapshots[0]["dynasties"].keys())
+    ent_color: dict[str, str] = {}
+    for i, name in enumerate(names):
+        entry = (last["dynasties"].get(name) or {}).get("entry") or {}
+        if entry.get("entity"):
+            ent_color[entry["entity"]] = PALETTE[i % len(PALETTE)]
+
+    svg = [f'<svg viewBox="0 0 {width} {height}" class="map-svg" role="img">']
+    for r in wmap["roads"]:                     # roads first, under nodes
+        a, b = r["from"], r["to"]
+        if a not in pos or b not in pos:
+            continue
+        x1, y1 = pos[a]; x2, y2 = pos[b]
+        svg.append(f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" '
+                   f'y2="{y2:.0f}" class="map-road"/>'
+                   f'<text x="{(x1+x2)/2:.0f}" y="{(y1+y2)/2-5:.0f}" '
+                   f'class="map-cost" text-anchor="middle">{r["cost_ticks"]}h</text>')
+    for key, (x, y) in pos.items():
+        name = places[key].get("name") or key
+        svg.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="11" class="map-node"/>'
+                   f'<text x="{x:.0f}" y="{y+27:.0f}" class="map-place" '
+                   f'text-anchor="middle">{_esc(name)}</text>')
+        here = [e for e in wmap["entities"] if e["place"] == key]
+        for j, e in enumerate(here):            # fan of markers by the node
+            mx, my = x + 22 + (j % 2) * 92, y - 14 + (j // 2) * 15
+            color = ent_color.get(e["id"], "#9ca3af")
+            dead = "" if e["status"] == "active" else " map-dead"
+            svg.append(f'<circle cx="{mx:.0f}" cy="{my:.0f}" r="4" '
+                       f'fill="{color}" class="{dead.strip()}"/>'
+                       f'<text x="{mx+8:.0f}" y="{my+4:.0f}" '
+                       f'class="map-ent{dead}">{_esc(e["name"])}</text>')
+    svg.append("</svg>")
+
+    # the location strip: every entity ever placed, one row, a column
+    # per round — the run-26 census histograms, but live.
+    order = []
+    for s in mapped:
+        for e in s["world_map"].get("entities", []):
+            if e["id"] not in [o["id"] for o in order]:
+                order.append(e)
+    strip = ['<table class="grid map-strip"><tr><th>Who</th>'
+             + "".join(f'<th>R{s["round"]}</th>' for s in mapped) + "</tr>"]
+    for e in order:
+        cells = []
+        for s in mapped:
+            spot = next((x["place"] for x in s["world_map"]["entities"]
+                         if x["id"] == e["id"]), None)
+            cells.append(f'<td class="loc">{_esc(spot or "·")}</td>')
+        color = ent_color.get(e["id"])
+        dot = (f'<i class="lg" style="background:{color}"></i>'
+               if color else '<i class="lg"></i>')
+        strip.append(f'<tr><td class="name">{dot}{_esc(e["name"])}</td>'
+                     + "".join(cells) + "</tr>")
+    strip.append("</table>")
+
+    return ('<h2>The map — round ' + str(last["round"]) + '</h2>'
+            '<p class="quiet">Places and roads as the world knows them '
+            '(laid out by the road graph — no coordinates exist); road '
+            'labels are hours. Markers stand where each entity ended '
+            'the round; faded markers are the dead.</p>'
+            + "".join(svg)
+            + '<p class="meta">Location by round — the census strip:</p>'
+            + "".join(strip))
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +594,17 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       td.cond{color:#fbbf24;font-variant-numeric:tabular-nums}
       th.cond-h{color:#fbbf24}
       td.quiet{color:#4b5563}
+      .map-svg{max-width:920px}
+      .map-road{stroke:#3b4354;stroke-width:2}
+      .map-cost{fill:#8b93a3;font-size:11px}
+      .map-node{fill:#1d2330;stroke:#5b6478;stroke-width:2}
+      .map-place{fill:#c7cdd9;font-size:12.5px;font-weight:600}
+      .map-ent{fill:#aab2c2;font-size:11px}
+      .map-dead{opacity:.45}
+      .map-strip td.loc{font-size:12px;font-variant-numeric:tabular-nums;
+           text-align:center;color:#c7cdd9}
+      i.lg{display:inline-block;width:9px;height:9px;border-radius:2px;
+           margin:0 7px 0 1px;background:#4b5563}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
 {refresh}<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
@@ -469,6 +617,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
 {_esc(snapshots[-1]["ticks"][-1] if snapshots else "")} ·
 generated {_esc(meta.get("generated", ""))}</p>
 {_standings(snapshots)}
+{_map(snapshots)}
 {_house_summaries(snapshots)}
 {line_chart("Wealth over rounds (money + holdings at last prices)", labels, wealth)}
 {line_chart("Money over rounds", labels, money)}

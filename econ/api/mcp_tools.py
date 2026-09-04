@@ -33,7 +33,7 @@ from typing import Any, Callable
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from econengine import clock, places as places_mod, scripting, services, tech
+from econengine import clock, edges, places as places_mod, scripting, services, tech
 from econengine.catalog import catalog_state
 from econengine.describe import render_event, symbol_names
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
@@ -284,6 +284,36 @@ def tool_world_catalog(session: Session, user: User, args: dict[str, Any]) -> di
     market. The §13 parity doctrine extended from script vocabulary to
     world vocabulary: the prompt and the script read the same catalog."""
     return catalog_state(session)
+
+
+def tool_world_map(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """The world's map as one public view (docs/spatial.md): every
+    installed place (the same facts ctx.places and entity_state's place
+    carry), every road with its cost and mode (the topology the MANUAL
+    describes and travel routes over), and every entity's current
+    location — public facts, the same cut as the world log's public
+    arrivals and departures. No private affair rides along. A world
+    without a map ships empty lists."""
+    return {
+        "places": [
+            {"key": p.key, "name": p.name, "kind": p.kind,
+             "region_id": p.region_id, "description": p.description}
+            for p in places_mod.list_places(session)
+        ],
+        "roads": [
+            {"from": e.from_place.key, "to": e.to_place.key,
+             "mode": e.mode, "cost_ticks": e.cost_ticks,
+             "bidirectional": bool(e.bidirectional)}
+            for e in edges.list_edges(session)
+        ],
+        "entities": [
+            {"id": ent.id, "name": ent.name,
+             "entity_type": ent.entity_type.value, "status": ent.status.value,
+             "place": (ent.place.key if ent.location_place_id else None)}
+            for ent in session.execute(
+                select(Entity).order_by(Entity.name)).scalars()
+        ],
+    }
 
 
 def tool_entity_activity(session: Session, user: User, args: dict[str, Any]) -> dict:
@@ -613,6 +643,16 @@ TOOLS: list[Tool] = [
             "required": ["entity_id"],
         },
         "handler": tool_entity_activity,
+    },
+    {
+        "name": "world_map",
+        "description": "The world's map as one public view: every place, "
+                       "every road (mode and cost in ticks), and every "
+                       "entity's current location — the same public facts "
+                       "as ctx.places and the world log's arrivals. A world "
+                       "without a map ships empty lists.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "handler": tool_world_map,
     },
     {
         "name": "world_activity",
