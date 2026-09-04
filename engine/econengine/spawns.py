@@ -108,6 +108,17 @@ def spawn_one(session: Session, name: str, template: dict) -> Entity:
         holdings["HITS"] = stats["HITS"]
     for symbol, qty in sorted(holdings.items()):
         markets.adjust_holding(session, entity, symbol, Decimal(str(qty)))
+    # Born traits (run 26's census): template["technologies"] grants
+    # spawn-born unlocks -- the wolf's CARNIVORE stomach. Data all the
+    # way down: the platform calls grant_unlock, the pack declares the
+    # trait; nothing here decides what a creature is for.
+    from . import tech as tech_mod  # deferred
+    for code in sorted(template.get("technologies") or []):
+        technology = tech_mod.get_technology(session, str(code))
+        if technology is None:
+            raise ValueError(
+                f"spawn template references unknown technology {code!r}")
+        tech_mod.grant_unlock(session, entity, technology, 0)
     source = get_script_source(session, template.get("script_setting", ""))
     if source:
         session.add(Script(
