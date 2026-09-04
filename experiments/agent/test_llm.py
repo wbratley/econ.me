@@ -340,3 +340,38 @@ def test_deepseek_model_gates_peak_and_skips_the_nim_budget(monkeypatch):
     m3 = llm.DeepSeekModel("k", "deepseek-chat")
     monkeypatch.setattr(llm, "deepseek_offpeak", lambda now=None: True)
     assert m3.complete("s", "u") == "ok"     # window open: gate passes
+
+
+def test_deepseek_reasoning_effort_default_low_env_overridable(monkeypatch):
+    import httpx
+    import experiments.agent.llm as llm
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return _Stream(200, [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: [DONE]',
+        ])
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    # window=any so the billing gate doesn't refuse off-schedule runs
+    m = llm.DeepSeekModel("k", "deepseek-v4-flash", window="any")
+    m.complete("s", "u")
+    assert posts[-1]["json"]["reasoning_effort"] == "low"
+    # plain NIM never sends the field
+    n = llm.NimModel("k", "x")
+    monkeypatch.setattr(llm, "nim_limiter", lambda: None)
+    n.complete("s", "u")
+    assert "reasoning_effort" not in posts[-1]["json"]
+    # env override: medium; empty string omits the field entirely
+    monkeypatch.setenv("ECON_DEEPSEEK_REASONING", "medium")
+    llm.DeepSeekModel("k", "deepseek-v4-flash", window="any").complete("s", "u")
+    assert posts[-1]["json"]["reasoning_effort"] == "medium"
+    monkeypatch.setenv("ECON_DEEPSEEK_REASONING", "")
+    llm.DeepSeekModel("k", "deepseek-v4-flash", window="any").complete("s", "u")
+    assert "reasoning_effort" not in posts[-1]["json"]
+    # explicit ctor arg beats env
+    llm.DeepSeekModel("k", "deepseek-v4-flash", window="any",
+                      reasoning_effort="high").complete("s", "u")
+    assert posts[-1]["json"]["reasoning_effort"] == "high"

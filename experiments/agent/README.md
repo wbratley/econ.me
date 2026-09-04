@@ -187,4 +187,9 @@ rates (weekdays 00:30–08:30 Beijing; weekends all day since
 spend with a readable error and the house keeps its previous
 behaviour (an attempt, not a dead round). `ECON_DEEPSEEK_WINDOW=any`
 spends at any hour; `ECON_DEEPSEEK_WAIT_MINUTES` (default 15) lets a
-call sit out the tail of peak instead of missing the window.
+call sit out the tail of peak instead of missing the window. v4
+models reason by default hard enough to starve a 32k cap (every
+audition attempt died at `length` with empty content), so the seat
+sends `reasoning_effort: low` — ~9× cheaper and faster, well inside
+the budget; `ECON_DEEPSEEK_REASONING` overrides (medium/high/…, or
+empty to take the API default).
