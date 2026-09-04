@@ -478,9 +478,11 @@ _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     # for a trivial ask; a full script rewrite thinks more). max_tokens
     # is a cap, not a target -- the headroom costs nothing unspent.
     "nemotron-3": 16384,
-    # DeepSeek's thinking model burns its budget before the answer
-    # channel too; same cure as GPT-OSS.
+    # DeepSeek's thinking models burn their budget before the answer
+    # channel too; same cure as GPT-OSS (v4-flash reasons even on a
+    # trivial ask — observed 11 reasoning tokens for "say ok").
     "deepseek-reasoner": 32768,
+    "deepseek-v4": 32768,
 }
 
 
