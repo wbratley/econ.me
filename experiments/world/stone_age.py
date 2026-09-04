@@ -208,7 +208,7 @@ MEALS ARE DECISIONS: nothing is eaten for you. Meals are labor-free,
 instant and night-legal -- but they do not happen by themselves.
 The FOOD need drinks SATIETY at 0.5/hour plus a tenth of the stomach
 each hour (a day costs ~14), and only EAT recipes fill the stomach:
-EAT_BERRIES (2 berries, ~3h), EAT_COOKED (~4h), EAT_JERKY (~5½h),
+EAT_BERRIES (1½ berries, ~3h), EAT_COOKED (~4h), EAT_JERKY (~5½h),
 EAT_RAW (~1h, one-in-four disease). A full larder feeds nobody until
 someone runs the recipe: starving beside one is a choice, and the
 clock will make it for you if you let it -- two meals a day is the
@@ -677,13 +677,16 @@ def _create_recipes(session: Session) -> None:
 
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
-    # find): 45% 3 BERRIES, 25% 2 WOOD, 15% 1 YARN, 15% 1 FLINT... and on
+    # find): 45% 4 BERRIES, 25% 2 WOOD, 15% 1 YARN, 15% 1 FLINT... and on
     # the doubled BAG table a ~5% branch of 1 COIN -- shiny stones, minted
     # by the ground itself (production credits a banked symbol to the
     # account, production._credit_output). The bare table finds none:
     # scarcity first, then the supply grows with better tools.
-    # Expected food value 1.35/hour against a need of 0.5/hour -- bare
-    # subsistence spends ~1/3 of the 14 daylight hours on food.
+    # Expected food value 1.8 berries/hour (2.4 satiety at the
+    # 1½-berry meal) against a need of 0.5/hour -- bare subsistence
+    # spends ~1/5 of the 14 daylight hours on food. (Runs 26-28: the
+    # famine was an income wall, not a storage wall -- the hand that
+    # finds four keeps the ~2 meals/day a body needs.)
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
@@ -692,7 +695,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("45"), "outputs": {"BERRIES": D("3")}, "label": "berries"},
+            {"weight": D("45"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"WOOD": D("2")}, "label": "wood"},
             {"weight": D("15"), "outputs": {"YARN": D("1")}, "label": "yarn"},
             {"weight": D("15"), "outputs": {"FLINT": D("1")}, "label": "flint"},
@@ -706,7 +709,7 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
+            {"weight": D("40"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
             {"weight": D("22"), "outputs": {"WOOD": D("4")}, "label": "wood"},
             {"weight": D("13"), "outputs": {"YARN": D("2")}, "label": "yarn"},
             {"weight": D("13"), "outputs": {"FLINT": D("2")}, "label": "flint"},
@@ -844,17 +847,17 @@ def _create_recipes(session: Session) -> None:
     # recipes fill the stomach. All meals are labor-free, instant
     # (duration 0: satiety lands before this tick's draw) and
     # night-legal -- hunger does not keep daylight hours. The density
-    # ladder is the point: berries are thin (2 berries ~ 3 hours),
+    # ladder is the point: berries are thin (1½ berries ~ 3 hours),
     # jerky dense (one strip ~ 5½ hours, and it never rots) -- the trade
     # a trader should arbitrage, the craft a hunter should practice.
     # A fed body burns 0.5/hour plus a tenth of the stomach each hour
     # (compound spill), so a day costs ~14: two jerky meals and change,
-    # or a dozen-and-a-half berries eaten as you gather them.
+    # or ten-and-a-half berries eaten as you gather them.
     production.create_recipe(
         session, "EAT_BERRIES", name="Eat Berries",
         description="A belly of berries: thin food, eaten as gathered -- "
                     "they spoil within hours anyway. ~3 hours fed.",
-        inputs={"BERRIES": D("2")}, outputs={"SATIETY": D("2")},
+        inputs={"BERRIES": D("1.5")}, outputs={"SATIETY": D("2")},
         duration_ticks=0,
     )
     production.create_recipe(

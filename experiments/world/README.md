@@ -141,7 +141,7 @@ only then, and GATHER/HUNT are refused in the dark (a clear error that
 names the window). `std.hour()` / `std.is_night()` / `std.day()` are
 pure-info queries over `ctx.clock`. **Conscious eating (run 19)**:
 nothing is eaten for you — the FOOD need drinks only SATIETY, and only
-EAT recipes fill the stomach: EAT_BERRIES (2 berries, ~3h),
+EAT recipes fill the stomach: EAT_BERRIES (1½ berries, ~3h),
 EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
 25%-per-meal DISEASE lottery). Meals are labor-free, instant and
 night-legal; the stomach spills a tenth an hour, so a day costs ~14 —

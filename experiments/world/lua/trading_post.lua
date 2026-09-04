@@ -45,7 +45,12 @@ for _, e in ipairs(ctx.events or {}) do
 end
 
 if not S.ask then
-  S.ask = { BERRIES = 2.00, COOKED_MEAT = 3.00, JERKY = 3.00 }
+  -- Opening asks price a FULL DAY of food under the seat purse (10
+  -- COIN, ~14 satiety/day): berries 7 meals × 1.25 = 8.75, cooked
+  -- 6 × 1.50 = 9.00, jerky 4 × 2.00 = 8.00. Runs 26-28 died with the
+  -- whole purse unspent -- coin nobody could eat. BERRIES stays above
+  -- its 1.00 bid so the post never crosses itself.
+  S.ask = { BERRIES = 1.25, COOKED_MEAT = 1.50, JERKY = 2.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
             YARN = 2.00, FLINT = 2.00, PELT = 3.00 }
   S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
