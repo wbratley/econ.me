@@ -263,3 +263,79 @@ def test_file_model_drops_stale_response(tmp_path):
     t.start()
     assert m.complete("s", "u") == "FRESH ANSWER"
     t.join()
+
+
+# --- DeepSeek: the prepaid seat and its billing gate -------------------------
+
+def test_deepseek_key_env_first_then_home_file(monkeypatch, tmp_path):
+    import experiments.agent.llm as llm
+    assert llm.deepseek_key({}) is None                 # hermetic: nothing
+    assert llm.deepseek_key({"DEEPSEEK_API_KEY": " k \n"}) == "k"
+    monkeypatch.setattr(llm.Path, "home", lambda: tmp_path)
+    (tmp_path / ".deepseek_api_key").write_text("sk-file\nmore\n")
+    assert llm.deepseek_key() == "sk-file"              # first line only
+
+
+def test_deepseek_offpeak_is_the_beijing_billing_clock():
+    """Weekdays 00:30–08:30 Beijing inclusive; weekends all day (the
+    2026-08-23 rule change). Beijing is UTC+8, so the tests pin UTC
+    instants on the boundary and let the conversion do the talking."""
+    from datetime import datetime, timezone
+    from experiments.agent.llm import deepseek_offpeak
+    utc = timezone.utc
+    # Sat + Sun 2026-09-05/06: off-peak around the clock (Sunday
+    # midnight Beijing = Saturday 16:00 UTC)
+    assert deepseek_offpeak(datetime(2026, 9, 5, 4, 0, tzinfo=utc))   # Sat noon
+    assert deepseek_offpeak(datetime(2026, 9, 5, 16, 0, tzinfo=utc))  # Sun 00:00
+    # Monday 2026-09-07: 00:29 shut, 00:30 open, 08:29 open, 08:30 shut
+    assert not deepseek_offpeak(datetime(2026, 9, 6, 16, 29, tzinfo=utc))
+    assert deepseek_offpeak(datetime(2026, 9, 6, 16, 30, tzinfo=utc))
+    assert deepseek_offpeak(datetime(2026, 9, 7, 0, 29, tzinfo=utc))
+    assert not deepseek_offpeak(datetime(2026, 9, 7, 0, 30, tzinfo=utc))
+
+
+def test_deepseek_minutes_to_window_finds_the_next_open():
+    from datetime import datetime, timezone
+    from experiments.agent.llm import _deepseek_minutes_to_window
+    utc = timezone.utc
+    # Friday 19:00 Beijing (peak): tomorrow is Saturday, so the window
+    # opens at MIDNIGHT, not 00:30 — 5h exactly
+    assert _deepseek_minutes_to_window(
+        datetime(2026, 9, 4, 11, 0, tzinfo=utc)) == 300.0
+    # Monday 09:00 Beijing: a plain weekday, so 00:30 tomorrow — 15.5h
+    assert _deepseek_minutes_to_window(
+        datetime(2026, 9, 7, 1, 0, tzinfo=utc)) == 930.0
+    # Monday 00:10 Beijing: today's 00:30, 20 minutes out
+    assert _deepseek_minutes_to_window(
+        datetime(2026, 9, 6, 16, 10, tzinfo=utc)) == 20.0
+
+
+def test_deepseek_model_gates_peak_and_skips_the_nim_budget(monkeypatch):
+    import httpx
+    import experiments.agent.llm as llm
+    monkeypatch.setattr(llm, "deepseek_offpeak", lambda now=None: False)
+    monkeypatch.setattr(llm, "_deepseek_minutes_to_window",
+                        lambda now=None: 240.0)
+    m = llm.DeepSeekModel("k", "deepseek-chat")
+    assert m.name == "deepseek:deepseek-chat"
+    assert m._base_url == "https://api.deepseek.com"
+    assert m._limiter_factory is None        # prepaid credit: no RPM budget
+    assert llm.NimModel("k", "x")._limiter_factory is llm.nim_limiter
+    # peak hours: a readable refusal, and not one byte leaves the box
+    with pytest.raises(RuntimeError, match="peak hours.*4.0h"):
+        m.complete("s", "u")
+    # the bypass is explicit, and the thinking slug gets the big budget
+    assert llm.DeepSeekModel("k", "deepseek-reasoner")._max_tokens == 32768
+    assert llm.DeepSeekModel("k", "deepseek-chat")._max_tokens == 8192
+
+    def fake_stream(*a, **k):
+        return _Stream(200, [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: [DONE]',
+        ])
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    m2 = llm.DeepSeekModel("k", "deepseek-chat", window="any")
+    assert m2.complete("s", "u") == "ok"     # any-hour override spends
+    m3 = llm.DeepSeekModel("k", "deepseek-chat")
+    monkeypatch.setattr(llm, "deepseek_offpeak", lambda now=None: True)
+    assert m3.complete("s", "u") == "ok"     # window open: gate passes

@@ -176,3 +176,15 @@ Rate shape: every NIM client in the process shares one sliding-window
 budget — `ECON_AGENT_NIM_RPM` calls/minute, default 36, deliberately
 under the hosted tier's 40 — so three dynasties bursting lint retries
 still can't trip the meter (the 429 backoff stays as suspenders).
+
+DeepSeek seats: a `deepseek:` prefix in `--models` (e.g.
+`--models deepseek:deepseek-v4-flash openai/gpt-oss-20b`) seats
+DeepSeek — base URL `https://api.deepseek.com`, key from
+`DEEPSEEK_API_KEY` or `~/.deepseek_api_key`. Prepaid credit, so no
+shared rate budget — but a **billing gate**: DeepSeek's off-peak
+rates (weekdays 00:30–08:30 Beijing; weekends all day since
+2026-08-23) cost roughly half, so during peak the seat refuses to
+spend with a readable error and the house keeps its previous
+behaviour (an attempt, not a dead round). `ECON_DEEPSEEK_WINDOW=any`
+spends at any hour; `ECON_DEEPSEEK_WAIT_MINUTES` (default 15) lets a
+call sit out the tail of peak instead of missing the window.

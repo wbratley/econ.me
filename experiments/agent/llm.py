@@ -27,8 +27,9 @@ import re
 import threading
 import time
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class ScriptedModelEmpty(RuntimeError):
@@ -477,6 +478,9 @@ _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     # for a trivial ask; a full script rewrite thinks more). max_tokens
     # is a cap, not a target -- the headroom costs nothing unspent.
     "nemotron-3": 16384,
+    # DeepSeek's thinking model burns its budget before the answer
+    # channel too; same cure as GPT-OSS.
+    "deepseek-reasoner": 32768,
 }
 
 
@@ -562,11 +566,13 @@ class NimModel(OpenAIModel):
     def __init__(self, api_key: str, model: str,
                  timeout: float = 120.0,
                  base_url: str = NIM_DEFAULT_BASE,
-                 temperature: float = 0.3, max_tokens: int | None = None):
+                 temperature: float = 0.3, max_tokens: int | None = None,
+                 limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
         self._temperature = temperature
+        self._limiter_factory = limiter_factory
         # Per-model defaults, overridable by argument: reasoning models
         # (the stone-run3 GPT-OSS evidence) spend the completion budget
         # thinking and finish_reason=length with an empty final channel --
@@ -579,7 +585,8 @@ class NimModel(OpenAIModel):
 
         last_error = None
         for attempt in range(3):
-            nim_limiter().wait()                  # shared per-minute budget
+            if self._limiter_factory is not None:
+                self._limiter_factory().wait()   # shared per-minute budget
             if attempt:
                 time.sleep(2.0 * attempt)          # 2s, 4s — polite, bounded
             try:
@@ -631,7 +638,7 @@ class NimModel(OpenAIModel):
                             continue   # keep-alive comments, blanks
                         if isinstance(obj.get("error"), dict):
                             raise RuntimeError(
-                                "NIM stream error: "
+                                f"{self.name} stream error: "
                                 + str(obj["error"].get("message"))[:200])
                         for choice in obj.get("choices") or []:
                             finish = choice.get("finish_reason") or finish
@@ -655,12 +662,118 @@ class NimModel(OpenAIModel):
                            f"{last_error}")
 
 
+DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
+
+
+def deepseek_key(env: dict[str, str] | None = None) -> str | None:
+    """The DeepSeek key, NIM-style: DEEPSEEK_API_KEY from the env, or
+    (only when reading the real process env) the first line of
+    ~/.deepseek_api_key — kept out of the repo and shells. An explicit
+    env dict is hermetic: tests pass {} and mean nothing is
+    configured, even on a machine that happens to hold a key file."""
+    file_fallback = env is None
+    env = dict(env if env is not None else os.environ)
+    if key := env.get("DEEPSEEK_API_KEY"):
+        return key.strip()
+    if file_fallback:
+        path = Path.home() / ".deepseek_api_key"
+        if path.exists():
+            first = path.read_text().splitlines()
+            if first and first[0].strip():
+                return first[0].strip()
+    return None
+
+
+# DeepSeek bills in Beijing time (UTC+8): off-peak is 00:30–08:30 on
+# weekdays, and — per the 2026-08-23 rule change — all day Saturday and
+# Sunday. A prepaid credit goes roughly twice as far inside the window.
+_BJ = timezone(timedelta(hours=8))
+
+
+def deepseek_offpeak(now: datetime | None = None) -> bool:
+    """True inside DeepSeek's discount window, Beijing clock: weekdays
+    00:30–08:30 inclusive, weekends around the clock."""
+    now = now or datetime.now(timezone.utc)
+    bj = now.astimezone(_BJ)
+    if bj.weekday() >= 5:                     # Sat, Sun
+        return True
+    minutes = bj.hour * 60 + bj.minute
+    return 30 <= minutes < 8 * 60 + 30
+
+
+def _deepseek_minutes_to_window(now: datetime | None = None) -> float:
+    """Minutes until the next off-peak instant — the gate's countdown.
+    Before a weekday's 00:30 that's today; after 08:30 it's tomorrow's
+    00:30 — unless tomorrow is a weekend, when the all-day rate opens
+    at midnight instead."""
+    now = now or datetime.now(timezone.utc)
+    bj = now.astimezone(_BJ)
+    today_open = bj.replace(hour=0, minute=30, second=0, microsecond=0)
+    if bj < today_open:                       # the 00:30 gate is still shut
+        return (today_open - bj).total_seconds() / 60
+    midnight = bj.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = midnight + timedelta(days=1)
+    opener = (tomorrow if tomorrow.weekday() >= 5
+              else tomorrow.replace(hour=0, minute=30))
+    return (opener - bj).total_seconds() / 60
+
+
+class DeepSeekModel(NimModel):
+    """DeepSeek (OpenAI-compatible, prepaid credit): the same streamed
+    call as NIM at a different base URL, with two differences the
+    account shape forces. (1) No shared rate budget — the credit is
+    metered per token, not per minute, so the NIM limiter is off.
+    (2) A billing gate: off-peak tokens cost roughly half, so by
+    default the model refuses to spend during peak hours (weekdays
+    08:30–00:30 Beijing; weekends are off-peak all day since the
+    2026-08-23 rule change). The refusal is a plain readable error,
+    and the loop treats it like any provider failure — an attempt,
+    not a dead round: the house keeps its previous behaviour and the
+    journal says exactly why. ECON_DEEPSEEK_WINDOW=any spends at any
+    hour; ECON_DEEPSEEK_WAIT_MINUTES (default 15) lets a call sit out
+    the tail of peak instead of missing the window by minutes."""
+
+    def __init__(self, api_key: str, model: str,
+                 timeout: float = 120.0,
+                 base_url: str = DEEPSEEK_DEFAULT_BASE,
+                 temperature: float = 0.3, max_tokens: int | None = None,
+                 window: str | None = None,
+                 wait_minutes: float | None = None):
+        super().__init__(api_key, model=model, timeout=timeout,
+                         base_url=base_url, temperature=temperature,
+                         max_tokens=max_tokens, limiter_factory=None)
+        self.name = f"deepseek:{model}"
+        self._window = window
+        self._wait_minutes = wait_minutes
+
+    def complete(self, system: str, user: str) -> str:
+        mode = (self._window if self._window is not None
+                else os.environ.get("ECON_DEEPSEEK_WINDOW", "offpeak"))
+        if mode != "any" and not deepseek_offpeak():
+            minutes = _deepseek_minutes_to_window()
+            wait = (self._wait_minutes if self._wait_minutes is not None
+                    else float(os.environ.get("ECON_DEEPSEEK_WAIT_MINUTES")
+                               or 15))
+            if minutes <= wait:
+                time.sleep(max(minutes, 0) * 60 + 1)  # land just inside
+            else:
+                raise RuntimeError(
+                    f"deepseek peak hours: the discount window opens in "
+                    f"{minutes / 60:.1f}h — no credit spent; the house "
+                    f"keeps its behaviour (ECON_DEEPSEEK_WINDOW=any "
+                    f"ignores billing windows)")
+        return super().complete(system, user)
+
+
 def model_from_env(env: dict[str, str] | None = None) -> Model:
     """Pick the model from the environment (see README):
 
       ECON_AGENT_SCRIPTED_FILE  offline scripted run (checked first)
       ANTHROPIC_API_KEY         Anthropic (ECON_AGENT_MODEL overrides slug)
       OPENAI_API_KEY            OpenAI (ECON_AGENT_MODEL overrides slug)
+      DEEPSEEK_API_KEY          DeepSeek (slug via ECON_AGENT_MODEL; seats
+                                 name their slug, e.g. deepseek-v4-flash;
+                                 off-peak billing gate, see DeepSeekModel)
       NVIDIA_API_KEY/NIM_API_KEY  NVIDIA NIM, ECON_AGENT_MODEL = the slug
                                  (or ~/.nim_api_key; ECON_AGENT_NIM_BASE
                                  overrides the hosted endpoint — self-hosted
@@ -674,6 +787,8 @@ def model_from_env(env: dict[str, str] | None = None) -> Model:
         return AnthropicModel(key, model=slug or "claude-sonnet-4-5")
     if key := env.get("OPENAI_API_KEY"):
         return OpenAIModel(key, model=slug or "gpt-4o")
+    if key := deepseek_key(env):
+        return DeepSeekModel(key, model=slug or "deepseek-chat")
     if key := nim_key(env):
         if not slug:
             raise RuntimeError(
