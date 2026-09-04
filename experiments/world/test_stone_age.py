@@ -359,7 +359,7 @@ def test_conscious_eating_makes_meals_decisions(session):
     assert _hold(session, w.id, "SATIETY") == Decimal("0")
     assert _hold(session, w.id, "HUNGER") > hunger0        # nothing was auto-eaten
     # EAT_BERRIES: instant, labor-free, night-legal (hours 0-4 are dark)
-    markets.adjust_holding(session, w, "BERRIES", Decimal("2"))
+    markets.adjust_holding(session, w, "BERRIES", Decimal("1.5"))
     assert _act(session, w, "EAT_BERRIES")
     assert _hold(session, w.id, "SATIETY") == Decimal("2")
     assert _hold(session, w.id, "BERRIES") == Decimal("0")
@@ -659,9 +659,9 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
         by_sym[("sell", mid[o.market_id])] = o
     for o in buys:
         by_sym[("buy", mid[o.market_id])] = o
-    assert by_sym[("sell", "BERRIES")].limit_price == Decimal("2.00")
+    assert by_sym[("sell", "BERRIES")].limit_price == Decimal("1.25")
     assert by_sym[("sell", "BERRIES")].quantity == Decimal("60")
-    assert by_sym[("sell", "COOKED_MEAT")].limit_price == Decimal("3.00")
+    assert by_sym[("sell", "COOKED_MEAT")].limit_price == Decimal("1.50")
     # bids on every raw good, sized to the purse (4 each: 24 of 30 coin);
     # BERRIES itself is skipped -- the ladder is already stuffed (60 >= 20)
     for sym in ("MEAT", "WOOD", "YARN", "FLINT"):
@@ -699,7 +699,7 @@ def test_post_ask_rises_when_food_sells(session):
     post, buyer = _post(session), _biz(session, "Buyer")
     _at(session, buyer, "POST")   # every market trades AT the post (S4)
     _run(session, 1)
-    markets.place_order(session, buyer.id, "BERRIES", "buy",
+    markets.place_order(session, buyer.id, "JERKY", "buy",
                         Decimal("2"), Decimal("2.00"),
                         next(a.id for a in buyer.accounts if a.currency == COIN))
     _run(session, 1)                    # the fill
@@ -707,7 +707,7 @@ def test_post_ask_rises_when_food_sells(session):
     assert trades and Decimal(trades[-1]["quantity"]) == Decimal("2")
     assert buyer.accounts[0].balance == SEAT_COIN - Decimal("4")
     _run(session, 1)                    # the post reads its fill
-    ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
+    ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
     assert [o.limit_price for o in ask] == [Decimal("2.10")]
 
 
@@ -739,10 +739,10 @@ def test_post_prices_drift_toward_trade_when_quiet(session):
     _run(session, 3)
     # three ticks of resting, only two aged: prices hold
     ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("2.00")]
+    assert [o.limit_price for o in ask] == [Decimal("1.25")]
     _run(session, 1)
     ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("1.90")]   # 2.00*0.95
+    assert [o.limit_price for o in ask] == [Decimal("1.19")]   # 1.25*0.95
     bid = _open_orders(session, post.id, "MEAT", OrderSide.BUY)
     assert [o.limit_price for o in bid] == [Decimal("1.03")]   # 1.00*1.03
 
