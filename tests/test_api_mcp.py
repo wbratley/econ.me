@@ -27,7 +27,7 @@ from decimal import Decimal
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
 from econengine import services
-from econengine.models import Base, EntityType, Market, User
+from econengine.models import Base, Entity, EntityType, Market, User
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ def test_tools_list_exposes_the_player_surface(client):
         "get_behaviour", "get_script_libraries", "set_behaviour",
         "round_state", "set_ready", "epoch_state", "governance_current",
         "market_prices", "leaderboard", "world_catalog", "entity_activity",
-        "world_activity",
+        "world_activity", "world_map",
     }
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object"
@@ -183,6 +183,36 @@ def test_mcp_requires_auth(client):
 # ===========================================================================
 # Tools: joining and the dynasty view
 # ===========================================================================
+
+def test_world_map_lists_places_roads_and_locations(client):
+    """The public map view (docs/spatial.md): places, roads, and every
+    entity's current location — the same facts as ctx.places and the
+    world log's arrivals, in one shape. A bare world ships empty lists;
+    an installed map lists through sorted by key."""
+    from econengine import edges as edges_mod, places as places_mod
+    assert call_json(client, "world_map") == {
+        "places": [], "roads": [], "entities": []}
+
+    joined = call_json(client, "join")
+    with Session(client.app.state._test_engine) as s:
+        hearth = places_mod.create_place(s, "HEARTH", "HEARTH", "Hearth")
+        forest = places_mod.create_place(s, "FOREST", "FOREST", "Deep forest")
+        edges_mod.create_edge(s, hearth, forest, "WALK", 2)
+        ent = s.get(Entity, joined["entity"]["id"])
+        places_mod.move_entity(s, ent, hearth)
+        s.commit()
+
+    wmap = call_json(client, "world_map")
+    assert [p["key"] for p in wmap["places"]] == ["FOREST", "HEARTH"]
+    assert wmap["places"][0]["name"] == "Deep forest"
+    assert wmap["roads"] == [{"from": "HEARTH", "to": "FOREST",
+                               "mode": "WALK", "cost_ticks": 2,
+                               "bidirectional": True}]
+    me = next(e for e in wmap["entities"]
+              if e["id"] == joined["entity"]["id"])
+    assert me["place"] == "HEARTH"
+    assert me["status"] == "active"
+
 
 def test_join_creates_founder(client):
     joined = call_json(client, "join")

@@ -167,6 +167,11 @@ class RoundSnapshot:
     # it with a per-dynasty filter, so the artifact carries the round's
     # whole story offline.
     activity: dict = field(default_factory=dict)
+    # The map (docs/spatial.md): places, roads, and every entity's
+    # location at the round's end — public facts off the world_map tool.
+    # The dashboard draws the map and a per-round location strip from
+    # it; a resumed pre-map run's old snapshots simply lack the key.
+    world_map: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {
@@ -177,6 +182,7 @@ class RoundSnapshot:
             "dynasties": self.dynasties,
             "activity": self.activity,
             "conditions": self.conditions,
+            "world_map": self.world_map,
         }
 
 
@@ -231,6 +237,13 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
     except McpError:
         world = []
     dyn_activity: dict[str, list] = {}
+    # The map (docs/spatial.md): public facts — places, roads, every
+    # entity's place at the round's end. Same try/McpError tolerance as
+    # the other optional sections: an older world keeps rendering.
+    try:
+        world_map = mcps[0][1].call("world_map")
+    except McpError:
+        world_map = {}
     for d, mcp in mcps:
         try:
             # witnessed=True (game.md 15.6): each house's log also carries
@@ -253,6 +266,7 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
         dynasties={d.name: _dynasty_view(mcp, d, entries.get(d.name))
                    for d, mcp in mcps},
         activity={"world": world, "dynasties": dyn_activity},
+        world_map=world_map,
     )
     return snap
 

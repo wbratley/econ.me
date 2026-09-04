@@ -457,6 +457,83 @@ def test_snapshot_carries_the_audit_trail_tail(client, monkeypatch, tmp_path):
         assert all(r["text"] for r in rows)
 
 
+def test_snapshot_carries_the_public_map(client, monkeypatch, tmp_path):
+    """The map rides the snapshot (docs/spatial.md): places, roads,
+    and every entity's location — public facts off the world_map tool,
+    so the dashboard's map is a pure render of the artifact. The
+    frontier agent world ships no map: empty lists, key present."""
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
+    snapshots = run_rounds(loops, 1, tmp_path)
+    snap = snapshots[0]["world_map"]
+    assert snap["places"] == [] and snap["roads"] == []
+    # no map installed: the dynasties list through, unplaced (None —
+    # the legacy-citizen convention, not an error)
+    assert {e["name"] for e in snap["entities"]} == set(NAMES)
+    assert all(e["place"] is None for e in snap["entities"])
+
+
+def test_dashboard_renders_the_map(client, monkeypatch, tmp_path):
+    """The map section: places drawn as nodes (layout by the road graph,
+    deterministic), roads with hour labels, dynasty markers in their
+    chart colors, the dead faded — and the per-round location strip
+    (the census histogram, live)."""
+    from experiments.agent.dashboard import PALETTE as _PAL
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
+    snapshots = run_rounds(loops, 2, tmp_path)
+
+    def place(key, name):
+        return {"key": key, "name": name, "kind": key, "region_id": "",
+                "description": ""}
+
+    def wmap(house_at, wolf_status):
+        house_id = snapshots[0]["dynasties"][NAMES[0]]["entry"]["entity"]
+        return {
+            "places": [place("HEARTH", "Hearth clearing"),
+                       place("FOREST", "Deep forest"),
+                       place("POST", "Trading post")],
+            "roads": [
+                {"from": "HEARTH", "to": "FOREST", "mode": "WALK",
+                 "cost_ticks": 3, "bidirectional": True},
+                {"from": "HEARTH", "to": "POST", "mode": "WALK",
+                 "cost_ticks": 1, "bidirectional": True},
+            ],
+            "entities": [
+                {"id": house_id, "name": NAMES[0],
+                 "entity_type": "individual", "status": "active",
+                 "place": house_at},
+                {"id": "wolf-1", "name": "Wolf Pack I",
+                 "entity_type": "individual", "status": wolf_status,
+                 "place": "FOREST"},
+            ],
+        }
+
+    snapshots[0]["world_map"] = wmap("HEARTH", "active")
+    snapshots[1]["world_map"] = wmap("POST", "incapacitated")
+    page = build_dashboard(snapshots, {
+        "title": "map test", "ticks_per_round": 2, "generated": "now"})
+
+    assert "The map — round 2" in page
+    for name in ("Hearth clearing", "Deep forest", "Trading post"):
+        assert name in page
+    assert ">3h</text>" in page and ">1h</text>" in page   # road costs
+    assert "Wolf Pack I" in page
+    assert "map-dead" in page                            # the dead fade
+    assert f'fill="{_PAL[0]}"' in page                   # dynasty color
+    # the location strip: house walked HEARTH -> POST, wolf stayed put
+    strip = page.split("census strip")[1]
+    assert "<td class=\"loc\">HEARTH</td>" in strip
+    assert "<td class=\"loc\">POST</td>" in strip
+
+    # determinism: the same graph draws the same coordinates, always
+    from experiments.agent.dashboard import _layout
+    a = _layout(["FOREST", "HEARTH", "POST"],
+                [("HEARTH", "FOREST"), ("HEARTH", "POST")], 860, 500)
+    b = _layout(["FOREST", "HEARTH", "POST"],
+                [("HEARTH", "FOREST"), ("HEARTH", "POST")], 860, 500)
+    assert a == b
+    assert a["HEARTH"] != a["FOREST"] != a["POST"]       # spread out
+
+
 def test_dashboard_world_log_renders_with_filter(client, monkeypatch, tmp_path):
     loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch)
     snapshots = run_rounds(loops, 2, tmp_path)
