@@ -108,35 +108,63 @@ holdings every tick), then wealth.
 
 Your script runs in a sandbox with exactly this vocabulary injected:
 
-- ctx.tick, ctx.clock (day/night facts: hour, is_night, daylight window),
-  ctx.entity, ctx.accounts, ctx.holdings, ctx.processes,
-  ctx.parcels, ctx.needs, ctx.unlocks, ctx.events (your own events, last
-  few ticks), ctx.state (a dict that PERSISTS across your script's runs —
-  keep counters/marks there, in `local` variables they reset)
-- ctx.action.* — the intent surface: transfer(from,to,amount,ref),
+- ctx.tick, ctx.clock (day/night facts: hour, is_night, daylight window;
+  nil in worlds without a clock — std.hour()/std.is_night() return nil,
+  never error), ctx.entity, ctx.accounts, ctx.holdings, ctx.processes,
+  ctx.parcels, ctx.needs, ctx.place, ctx.places, ctx.unlocks,
+  ctx.events (your own events from the last tick — outcomes of your
+  intents, needs, combat), ctx.state (a dict that PERSISTS across your
+  script's runs — keep counters/marks there, in `local` variables they
+  reset)
+- ctx.action.* — the intent surface: start_process(recipe,parcel_id),
+  cancel_process(process_id), travel(to_place_key) — the engine routes
+  the walk; each hop takes ticks and is the tick's act,
   place_order(symbol,side,quantity,limit_price,account_id),
-  cancel_order(order_id), start_process(recipe,parcel_id),
-  cancel_process(process_id), transfer_parcel(parcel_id,to_entity_id),
+  cancel_order(order_id), transfer(from,to,amount,ref),
+  transfer_parcel(parcel_id,to_entity_id), attack(target_id_or_nil),
   say(text) — SPEECH: one utterance per entity per tick, text up to
   256 characters; it is delivered to every entity (their scripts hear
   it in ctx.events next tick; it rides their logs as WHAT THEY HEARD).
   Identity is structural — the utterance carries YOUR entity's name.
   Say what you will: offers, threats, prices, truths or lies.
   Intents are validated and applied by the engine after your script
-  returns; you can only spend YOUR entity's money and stock.
+  returns; you can only spend YOUR entity's money and stock. Extra
+  arguments are refused at the call site with the expected arity.
 - ctx.query.* — read-only: balance(account_id), total_supply(currency),
-  market_price(symbol), holding(entity_id,symbol), has_unlock(entity_id,code),
-  holders(symbol). Results are strings (exact decimals).
+  market_price(symbol), best_bid(symbol), best_ask(symbol),
+  holding(entity_id,symbol), unreserved(entity_id,symbol),
+  has_unlock(entity_id,code), holders(symbol), age(entity_id),
+  lifespan(entity_id), population(), parents(entity_id),
+  children(entity_id), route(from,to,modes), distance_ticks(from,to,
+  modes), world_setting(key), fiscal_policy(), constitution(),
+  active_script(lineage_id), script_history(lineage_id),
+  proposal(proposal_id), proposals(status), tally(proposal_id).
+  Results are strings (exact decimals) or nil.
 - std.* — the engine stdlib (source below): pure helpers over ctx.
 - world.* — this world's library (source below).
 - pack.* — the content pack's play opinions (source below).
+
+Shape laws — getting these wrong fails SILENTLY, every tick:
+- ctx.entity.place is the place KEY STRING ("HEARTH") or nil: compare
+  with == only — it has NO .key field. Full place facts are ctx.place
+  (a table with .key/.name/.kind, nil when unplaced) and ctx.places
+  (the whole map, an array of those tables).
+- Every quantity, balance, price and need satisfaction is an exact
+  DECIMAL STRING ("1.5000"): tonumber() before arithmetic, strings
+  back into intents (std.holding_qty and std.amount_str do both).
+- Books can be bare: best_ask/best_bid/market_price return nil when
+  there is nothing to read — std.best_ask(symbol, fallback) never
+  returns nil.
+- Your rejected intents appear in ctx.events with status "rejected"
+  and a REASON. Reading those reasons is your debugging loop: a wall
+  of "already at X" travel rejections means your script believes you
+  stand somewhere you do not — check how it reads your place.
 
 There is NO require, no io/os/debug, and NO other global vocabulary: a
 call to an undefined global is a script error every tick (your entity
 stops acting — the worst outcome). Strict rules enforced at submit:
 undeclared globals (read OR write) are refused; `local` is always the
-fix. Money quantities are exact decimal strings — convert with tonumber
-for arithmetic, pass strings to intents.
+fix.
 
 {reply_rules}
 
