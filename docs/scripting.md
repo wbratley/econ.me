@@ -150,9 +150,14 @@ does not have, whatever it calls.
   that is not injected is refused with the finding in hand and the
   entity keeps its current behaviour; synthetic-ctx errors a healthy,
   state-dependent script can still produce come back as warnings, not
-  refusals. One vocabulary source throughout (`get_world_libraries`):
-  the install gate, the dry-run, and the player lint cannot drift from
-  what the tick actually runs.
+  refusals (the gate ctx tells the truth about *vocabulary* — clock,
+  place, age, capabilities exist as they do in production — but state
+  stays empty, so a nil-arithmetic on live state can only warn). The
+  agent harness holds a higher bar where it can: a warning with a
+  working behaviour in place is rolled back and retried (run 29's
+  smoke-crash paralysis). One vocabulary source throughout
+  (`get_world_libraries`): the install gate, the dry-run, and the
+  player lint cannot drift from what the tick actually runs.
 
 ## 5. Settled decisions
 

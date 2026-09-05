@@ -53,7 +53,12 @@ It is also the payoff of the scripting arc (docs/scripting.md):
    compiles → the raw text submits unchanged and lint judges.
 3. **submit** — `set_behaviour`; `isError` (lint refusal) appends the
    finding to the feedback and re-thinks (≤ `max_attempts`, default 3);
-   exhaustion keeps the old behaviour — never destructive
+   exhaustion keeps the old behaviour — never destructive. A smoke-run
+   *warning* with a working behaviour in place is treated the same way
+   (run 29: accepted crashers paralysed Lagertha to death) — the running
+   behaviour is resubmitted as a rollback and the fault fed back; only a
+   first-round submission (nothing to fall back on) accepts with the
+   warning riding forward
 4. **journal** — one JSONL line per cycle (attempts, accepted,
    warnings, source sha, model, and — on a refused round — the head of
    the last raw reply: failed attempts stopped evaporating; on an

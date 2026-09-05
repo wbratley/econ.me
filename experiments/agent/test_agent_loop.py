@@ -45,7 +45,11 @@ STATEDEP = "ctx.state.hunger = ctx.state.hunger + 1"  # warns on synthetic ctx
 CRASHER = ("local account_id = ctx.accounts[0].id\n"
            "ctx.action.place_order('JERKY', 'buy', std.amount_str(2), "
            "std.amount_str(2.21), account_id, 30)\n")
-FIXED_IDX = CRASHER.replace("accounts[0]", "accounts[1]")
+# the fix repairs BOTH faults: the 0-index (Lua is 1-indexed) and the
+# stale extra priority arg (arity is 5 in production -- the old fixture
+# kept the ", 30" and so warned at smoke forever; the crash-retry bar
+# of run 30+ would never accept it)
+FIXED_IDX = CRASHER.replace("accounts[0]", "accounts[1]").replace(", 30)", ")")
 
 
 def _quote(src: str, indent: str = " ") -> str:
@@ -398,6 +402,41 @@ def test_lint_warnings_ride_into_the_next_prompt(client):
     assert first["accepted"] and len(first["warnings"]) == 1
     lp.cycle()
     assert "lint warning: smoke-run:" in model.calls[1]["user"]
+
+
+def test_smoke_crash_rolls_back_and_retries(client):
+    """Run 29 (Lagertha, d3h09): a rewrite that crashed the smoke run
+    was accepted-with-warning and paralysed the house for its last
+    rounds. With a working behaviour in place, a smoke crash is now a
+    soft refusal: the running behaviour is restored, the fault fed
+    back, and the model fixes it within the same round."""
+    lp, model = loop(client, [STATEDEP, CLEAN])
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "smoke-run crash:" in entry["refusal"] or entry["refusal"] is None
+    # the crash reached the model as feedback, with the rollback named
+    assert "crashed the smoke run" in model.calls[1]["user"]
+    assert "running behaviour was kept" in model.calls[1]["user"]
+    # and the fix is live: the entity now runs the clean source
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+def test_smoke_crash_exhaustion_keeps_the_working_behaviour(client):
+    """Every attempt crashes the smoke run: the harness keeps restoring
+    the working behaviour between attempts, and the journal records a
+    kept-old round -- the crasher never runs."""
+    lp, _ = loop(client, [STATEDEP, STATEDEP, STATEDEP], max_attempts=3)
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert not entry["accepted"] and entry["kept_old"]
+    assert "smoke-run crash:" in entry["refusal"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == "-- healthy"   # restored as a new lineage
+    # version, same source: the crasher never ran
 
 
 def test_observation_is_the_parity_set(client):
