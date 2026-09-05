@@ -10,8 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from econengine import combat, goods, markets, spawns
-from econengine.models import Base, Entity, EntityStatus, EntityType
+from econengine.models import Base, Entity, EntityStatus, EntityType, Script, ScriptType
 from econengine.services import create_entity
+from econengine.tick import run_tick
 
 
 @pytest.fixture
@@ -106,13 +107,22 @@ def test_hits_math_damage_and_the_kill_with_loot(session):
     assert ev["hit"] is True \
         and Decimal(ev["damage"]) in (Decimal("1"), Decimal("2"))
     # the house dies over repeated certain hits; loot lands on the wolf
+    kill_ev = None
     for t in range(40, 90):
         if session.get(Entity, house.id).status != EntityStatus.ACTIVE:
             break
-        combat.resolve_attack(session, wolf.id, house.id, t)
+        ev = combat.resolve_attack(session, wolf.id, house.id, t)
+        if ev.get("killed"):
+            kill_ev = ev
     assert session.get(Entity, house.id).status != EntityStatus.ACTIVE
     assert markets.get_holding(session, wolf.id, "PELT").quantity \
         == Decimal("1")
+    # the killing blow carries the estate record for tick.py to lift
+    # (runs 28/29: HITS deaths left no entity_incapacitated event --
+    # wolf-killed houses vanished from the log)
+    death = kill_ev["death"]
+    assert death["type"] == "entity_incapacitated"
+    assert death["condition"] == "HITS" and death["entity_id"] == house.id
 
 
 def test_creature_hood_is_a_stat_not_a_holding(session):
@@ -251,3 +261,36 @@ def test_a_batch_of_spawns_numbers_consecutively(session):
     session.commit()
     born = spawns.apply_on_round(session, 1)
     assert [b["name"] for b in born] == ["Beast I", "Beast II", "Beast III"]
+
+
+def test_a_kill_in_a_tick_emits_the_death_event(session):
+    """Runs 28/29 regression: a combat kill incapacitated the victim but
+    the entity_incapacitated event never reached the tick's log -- hunger
+    deaths emitted one, HITS deaths did not, so wolf-killed houses
+    vanished from census, dashboard and witness feeds alike. The tick
+    now lifts combat's nested estate record into the stream."""
+    goods.create_good(session, "HITS")
+    wolf = create_entity(session, "Wolf", EntityType.INDIVIDUAL)
+    house = create_entity(session, "House", EntityType.INDIVIDUAL)
+    markets.adjust_holding(session, wolf, "HITS", Decimal("12"))
+    markets.adjust_holding(session, house, "HITS", Decimal("1"))
+    combat.create_stat(session, wolf.id, "HITS", Decimal("12"))
+    combat.create_stat(session, house.id, "HITS", Decimal("1"))
+    combat.create_stat(session, wolf.id, "ATTACK", Decimal("4"))
+    combat.create_stat(session, wolf.id, "DEFENSE", Decimal("1"))
+    combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
+    combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
+    combat.set_rules(session, {"night_only": False, "base_hit": 100,
+                               "per_point": 5, "loot": {}, "bite_loot": {}})
+    session.add(Script(name="bite", source="ctx.action.attack(ctx.state.target)",
+                       script_type=ScriptType.BEHAVIOUR, entity_id=wolf.id,
+                       state={"target": house.id}))
+    session.commit()
+
+    tick = run_tick(session)   # certain hit, damage 3 vs 1 HITS: dead
+
+    swing = next(e for e in tick.events if e["type"] == "combat")
+    assert swing["killed"] is True and "death" not in swing  # lifted, not nested
+    death = next(e for e in tick.events if e["type"] == "entity_incapacitated")
+    assert death["entity_id"] == house.id and death["condition"] == "HITS"
+    assert house.status == EntityStatus.INCAPACITATED

@@ -337,6 +337,12 @@ def resolve_attack(session: Session, attacker_id: str,
         )
         event["condition"] = death.get("condition")
         event["quantity"] = death.get("quantity")
+        # Runs 28/29: a wolf-killed house vanished from the event log --
+        # hunger deaths emitted entity_incapacitated, HITS deaths did
+        # not. resolve_intent returns one event per intent, so the full
+        # estate record (the census and witness contract) rides nested
+        # here, and tick.py lifts it into the stream.
+        event["death"] = death
         for symbol, qty in sorted(loot_rules.items()):
             if symbol == "*":
                 continue
