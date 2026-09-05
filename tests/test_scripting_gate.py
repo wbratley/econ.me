@@ -491,3 +491,108 @@ class TestMemberVocabulary:
                 "facility_parcel", "deposit_parcel", "amount_str", "hour",
                 "day", "is_night"}
         assert sugar | core <= set(scripting.STDLIB_MEMBERS)
+
+
+class TestSmokeMatrix:
+    """Run 30 postmortem, part two: the gate ctx tells the full truth
+    (placed entity, stocked pantry, live need, feed with a rejection)
+    and the smoke-run becomes a matrix over day/night x hearth/thicket
+    x stocked/empty -- so place-gated and pantry-gated code runs, not
+    just its nil path. State-dependent findings stay warnings, now
+    labeled with their state; self-bouncing travel intents -- run 30's
+    silent killer (16 rejections unread) -- are warned, not refused."""
+
+    _LIBS = {"world": "local w = {} function w.settle_last_orders() return {} end return w"}
+
+    def test_smoke_states_cover_the_stone_age_grid(self):
+        states = scripting.smoke_states()
+        labels = [label for label, _ in states]
+        assert len(states) == 8
+        assert "day@hearth,stocked" in labels and "night@thicket,empty" in labels
+        for label, overrides in states:
+            light, at, pantry = label.split("@")[0], *label.split("@")[1].split(",")
+            clock = overrides["clock"]
+            assert clock["is_day"] == (light == "day")
+            assert overrides["entity"]["place"] == at.upper()
+            assert overrides["place"]["key"] == at.upper()
+            assert (pantry == "stocked") == bool(overrides["holdings"])
+            assert overrides["tick"] == clock["tick"]
+
+    def test_synthetic_ctx_tells_the_truth_about_shapes(self):
+        ctx = scripting.synthetic_ctx()
+        assert ctx["entity"]["place"] == "HEARTH"          # key STRING
+        assert ctx["place"]["key"] == "HEARTH"             # facts table
+        assert ctx["places"][0]["key"] == "HEARTH"
+        assert ctx["holdings"][0]["quantity"] == "3.0000"  # string decimals
+        need = ctx["needs"][0]
+        assert need["code"] == "WARMTH" and need["satisfaction"] == "0.5000"
+        assert need["satisfiers"] == ["WARMTH"] and need["condition"] == "EXPOSURE"
+        assert ctx["events"][-1]["status"] == "rejected"   # reason in hand
+        assert "already at" in ctx["events"][-1]["reason"]
+
+    def test_the_real_starter_passes_clean(self):
+        from pathlib import Path
+        starter = (Path(__file__).parents[1]
+                   / "experiments" / "world" / "lua" / "stone_age_starter.lua")
+        problems, warnings = scripting.check_player_script(starter.read_text())
+        assert (problems, warnings) == ([], [])
+
+    def test_reading_truthful_rows_runs_clean(self):
+        src = (
+            'local h = 0\n'
+            'if #ctx.holdings > 0 then\n'
+            '  h = tonumber(ctx.holdings[1].quantity) or 0\n'
+            'end\n'
+            'local n = ctx.needs[1]\n'
+            'local s = tonumber(n.satisfaction) or 0\n'
+            'if ctx.entity.place == "HEARTH" and s < 1 and h > 0 then\n'
+            '  ctx.action.travel("THICKET")\n'
+            'end\n'
+        )
+        problems, warnings = scripting.check_player_script(
+            src, libraries=self._LIBS)
+        assert (problems, warnings) == ([], [])
+
+    def test_travel_to_wherever_i_stand_warns_per_target(self):
+        # The unconditional-travel specimen: `travel(ctx.entity.place)`
+        # is a bounce wherever the entity stands -- the run-30 killer
+        # in its purest form. One warning per distinct target, each
+        # with its state count.
+        problems, warnings = scripting.check_player_script(
+            "ctx.action.travel(ctx.entity.place)", libraries=self._LIBS)
+        assert problems == []
+        assert len(warnings) == 2
+        assert all("bounces" in w and "4/8 gate states" in w for w in warnings)
+        assert any("already at HEARTH" in w for w in warnings)
+        assert any("already at THICKET" in w for w in warnings)
+
+    def test_unconditional_home_travel_warns_in_hearth_states(self):
+        # The fixed-Ivar shape: place read correctly, but the branch
+        # still fires travel("HEARTH") while standing at the hearth.
+        src = (
+            'local place = ctx.entity.place\n'
+            'if std.is_night() or place ~= "THICKET" then\n'
+            '  ctx.action.travel("HEARTH")\n'
+            'end\n'
+        )
+        problems, warnings = scripting.check_player_script(
+            src, libraries=self._LIBS)
+        assert problems == []
+        bounce = [w for w in warnings if "bounces" in w]
+        assert len(bounce) == 1 and "4/8 gate states" in bounce[0]
+
+    def test_state_labeled_warning_for_partial_errors(self):
+        # Errors in SOME states stay warnings, labeled per state -- a
+        # script that only misbehaves on an empty pantry is healthy
+        # half the time; the label says exactly which half.
+        src = (
+            'if #ctx.holdings == 0 then\n'
+            '  ctx.state.q = ctx.holdings[1].quantity .. "!"\n'
+            'end\n'
+        )
+        problems, warnings = scripting.check_player_script(
+            src, libraries=self._LIBS)
+        assert problems == []
+        assert len(warnings) == 1
+        assert warnings[0].startswith("smoke-run[")
+        assert "empty" in warnings[0]
