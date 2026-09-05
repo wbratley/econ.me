@@ -592,6 +592,11 @@ class NimModel(OpenAIModel):
         # usage when the provider sends it, and the full reasoning
         # text when an attempt ends length-exhausted. Hook failures
         # are swallowed: instrumentation must never kill a call.
+        # Exposed as a property so BOTH wirings work: constructor
+        # (test_llm) and late attribute assignment (AgentLoop does
+        # `model.on_trace = cb` after construction — run 32's first
+        # launch traced nothing because a plain attribute was set and
+        # never read).
         self._on_trace = on_trace
         # Per-model defaults, overridable by argument: reasoning models
         # (the stone-run3 GPT-OSS evidence) spend the completion budget
@@ -599,6 +604,14 @@ class NimModel(OpenAIModel):
         # `raise max_tokens` -- so they get a bigger default than the
         # 8192 a plain instruct model is fine with.
         self._max_tokens = max_tokens or _default_max_tokens(model)
+
+    @property
+    def on_trace(self) -> Callable[[dict], None] | None:
+        return self._on_trace
+
+    @on_trace.setter
+    def on_trace(self, cb: Callable[[dict], None] | None) -> None:
+        self._on_trace = cb
 
     def _emit_trace(self, **fields) -> None:
         if self._on_trace is None:
