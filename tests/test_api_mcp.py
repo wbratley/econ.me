@@ -122,6 +122,7 @@ def test_tools_list_exposes_the_player_surface(client):
     assert set(tools) == {
         "join", "my_entities", "entity_state", "entity_events",
         "get_behaviour", "get_script_libraries", "set_behaviour",
+        "dry_run_behaviour",
         "round_state", "set_ready", "epoch_state", "governance_current",
         "market_prices", "leaderboard", "world_catalog", "entity_activity",
         "world_activity", "world_map",
@@ -441,3 +442,129 @@ def test_set_behaviour_lint_refuses_and_warns(client):
                       {"entity_id": eid, "source": "ctx.state.set = std.amount_str(1)"},
                       user="u-alice")
     assert clean["lint_warnings"] == []
+
+
+# ===========================================================================
+# dry_run_behaviour (M1): the submit gate, read-only, per-state
+# ===========================================================================
+
+def test_dry_run_refuses_like_the_gate_and_installs_nothing(client):
+    """Parity with set_behaviour on the nil-call trap: same finding,
+    verdict 'refuse' -- and the active behaviour survives the dry-run
+    unchanged (read-only: no Script row, no lineage mutation)."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+    call_json(client, "set_behaviour",
+              {"entity_id": eid, "source": "ctx.state.set = std.amount_str(1)"},
+              user="u-alice")
+    before = call_json(client, "get_behaviour", {"entity_id": eid},
+                       user="u-alice")
+
+    dry = call_json(client, "dry_run_behaviour",
+                    {"entity_id": eid,
+                     "source": "local fills = settle_last_orders()"},
+                    user="u-alice")
+    assert dry["verdict"] == "refuse"
+    assert any("settle_last_orders" in p for p in dry["problems"])
+    # the submit gate says the same thing
+    submit = call_tool(client, "set_behaviour",
+                       {"entity_id": eid,
+                        "source": "local fills = settle_last_orders()"},
+                       user="u-alice")
+    assert submit["isError"] is True
+    assert "settle_last_orders" in submit["content"][0]["text"]
+    # nothing was installed
+    after = call_json(client, "get_behaviour", {"entity_id": eid},
+                      user="u-alice")
+    assert after["source"] == before["source"]
+
+def test_dry_run_state_dependent_warns_with_per_state_rows(client):
+    """The state-dependent specimen: verdict accept-with-warnings (same
+    single collapsed warning set_behaviour would return), and the
+    per-state rows showing WHICH states error -- the diagnostic detail
+    the submit gate folds away."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+    call_json(client, "set_behaviour",
+              {"entity_id": eid, "source": "ctx.state.set = std.amount_str(1)"},
+              user="u-alice")
+
+    dry = call_json(client, "dry_run_behaviour",
+                    {"entity_id": eid,
+                     "source": "ctx.state.hunger = ctx.state.hunger + 1"},
+                    user="u-alice")
+    assert dry["verdict"] == "accept-with-warnings"
+    assert dry["problems"] == []
+    assert dry["warnings"][0].startswith("smoke-run:")
+    states = dry["states"]
+    assert len(states) == 8
+    assert all(not s["ok"] and s["error"] for s in states)
+    labels = {s["label"] for s in states}
+    assert "night@thicket,empty" in labels and "day@hearth,stocked" in labels
+    # still installed nothing: the marker behaviour is what runs
+    cur = call_json(client, "get_behaviour", {"entity_id": eid}, user="u-alice")
+    assert "hunger" not in cur["source"]
+    assert "amount_str" in cur["source"]
+
+
+def test_dry_run_reports_would_do_intents_per_state(client):
+    """A clean script: verdict accept, no warnings, and each state row
+    carries the intents the script WOULD submit there -- 'what would my
+    script do' is the debugging gold for a blind agent."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+
+    dry = call_json(client, "dry_run_behaviour",
+                    {"entity_id": eid,
+                     "source": 'ctx.action.transfer("a", "b", "1", "ref")'},
+                    user="u-alice")
+    assert dry["verdict"] == "accept"
+    assert dry["warnings"] == []
+    assert len(dry["states"]) == 8
+    for s in dry["states"]:
+        assert s["ok"] is True and s["error"] is None
+        assert [i["type"] for i in s["intents"]] == ["transfer"]
+        assert s["intents"][0]["params"]["reference"] == "ref"
+
+
+def test_dry_run_travel_bounce_flagged_per_state(client):
+    """The run-30 killer in its purest form -- travel to wherever I
+    stand -- surfaces per state: the row names the target it would
+    bounce off in THAT state, complementing the two collapsed warnings."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+
+    dry = call_json(client, "dry_run_behaviour",
+                    {"entity_id": eid,
+                     "source": "ctx.action.travel(ctx.entity.place)"},
+                    user="u-alice")
+    assert dry["verdict"] == "accept-with-warnings"
+    assert sum("bounces" in w for w in dry["warnings"]) == 2
+    by_label = {s["label"]: s for s in dry["states"]}
+    assert by_label["day@hearth,stocked"]["bounce"] == "HEARTH"
+    assert by_label["night@thicket,empty"]["bounce"] == "THICKET"
+    assert by_label["night@thicket,stocked"]["bounce"] == "THICKET"
+
+
+def test_dry_run_input_errors(client):
+    """Caller errors are tool errors (not verdicts): missing source,
+    someone else's entity, fixed entities -- matching set_behaviour's
+    refusals, so a dry-run cannot bless what submit would refuse."""
+    joined = call_json(client, "join", user="u-alice")
+    eid = joined["entity"]["id"]
+
+    result = call_tool(client, "dry_run_behaviour", {"entity_id": eid},
+                       user="u-alice")
+    assert result["isError"] and "source is required" in result["content"][0]["text"]
+
+    result = call_tool(client, "dry_run_behaviour",
+                       {"entity_id": eid, "source": "-- x"}, user="u-bob")
+    assert result["isError"] and "not yours" in result["content"][0]["text"]
+
+    with Session(app.state._test_engine) as session:
+        entity = session.get(Entity, eid)
+        entity.is_fixed = True
+        session.commit()
+    result = call_tool(client, "dry_run_behaviour",
+                       {"entity_id": eid, "source": "-- x"}, user="u-alice")
+    assert result["isError"] and "fixed" in result["content"][0]["text"]

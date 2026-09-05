@@ -438,6 +438,36 @@ def tool_set_behaviour(session: Session, user: User, args: dict[str, Any]) -> di
     }
 
 
+def tool_dry_run_behaviour(session: Session, user: User,
+                           args: dict[str, Any]) -> dict:
+    """Test a candidate behaviour against the EXACT submit gate, without
+    installing it: syntax + static lint + the 8-state smoke matrix
+    (day/night x hearth/thicket x stocked/empty), reported per state --
+    the error, or the intents the script would submit there. The verdict
+    is bit-identical to what set_behaviour would say for the same
+    source; `states` is the diagnostic detail the submit gate folds
+    away. Read-only: the entity's active behaviour is unchanged."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    source = args.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise ToolError("source is required (the Lua behaviour script)")
+    if entity.is_fixed:
+        raise ToolError("Entity behaviour is fixed (immutable tier; not player-editable)")
+    libraries = scripting.get_world_libraries(session)
+    problems, warnings = scripting.check_player_script(source, libraries)
+    verdict = ("refuse" if problems
+               else "accept-with-warnings" if warnings else "accept")
+    return {
+        "entity_id": entity.id,
+        "verdict": verdict,
+        "problems": problems,
+        "warnings": warnings,
+        "states": scripting.smoke_matrix_detail(source, libraries),
+        "note": ("Nothing was installed: the entity's active behaviour "
+                 "is unchanged"),
+    }
+
+
 def tool_join(session: Session, user: User, args: dict[str, Any]) -> dict:
     """Join the game: found a new INDIVIDUAL entity, endowed per the world's
     join config (account + optional starter behaviour)."""
@@ -563,6 +593,24 @@ TOOLS: list[Tool] = [
             "required": ["entity_id", "source"],
         },
         "handler": tool_set_behaviour,
+    },
+    {
+        "name": "dry_run_behaviour",
+        "description": "Test a candidate behaviour against the exact submit gate "
+                       "WITHOUT installing it: per smoke-state results (day/night "
+                       "x hearth/thicket x stocked/empty) -- the error, or the "
+                       "intents the script would submit there. The verdict is "
+                       "identical to what set_behaviour would say. Iterate here, "
+                       "submit when the verdict is accept.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "source": {"type": "string", "description": "Lua behaviour script"},
+            },
+            "required": ["entity_id", "source"],
+        },
+        "handler": tool_dry_run_behaviour,
     },
     {
         "name": "round_state",
