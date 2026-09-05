@@ -505,6 +505,21 @@ def test_no_catalog_no_section(client):
     assert "THE WORLD CATALOG" not in model.calls[0]["system"]
 
 
+def test_system_prompt_states_the_shape_laws(client):
+    """The two-places trap and the string-decimal law, stated in the
+    prompt (run 30: House Ivar froze to death on ctx.entity.place.key,
+    a wrong-shape guess the observation's own place table taught it)."""
+    prompt = system_prompt({"std": {"source": "-- std"}}, "e1")
+    assert "KEY STRING" in prompt
+    assert "it has NO .key field" in prompt
+    assert "DECIMAL STRING" in prompt
+    # the intent list is complete: travel and attack are load-bearing
+    assert "travel(to_place_key)" in prompt
+    assert "attack(target_id_or_nil)" in prompt
+    # the debugging loop the houses never had: rejection reasons
+    assert '"already at X"' in prompt
+
+
 def test_system_prompt_carries_the_tier_vocabulary(client):
     lp, model = loop(client, [CLEAN])
     lp.cycle()
