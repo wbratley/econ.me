@@ -540,7 +540,36 @@ class AgentLoop:
                     "set_behaviour",
                     {"entity_id": eid, "source": source,
                      "description": f"agent cycle ({self.model.name})"})
-                accepted, warnings = True, result.get("lint_warnings", [])
+                warnings = result.get("lint_warnings", [])
+                if warnings and has_current:
+                    # Run 29 (Lagertha, d3h09): rewrites that crashed the
+                    # smoke run were accepted-with-warning, and she spent
+                    # her last rounds paralysed by her own broken code.
+                    # The platform accepts state-dependent smoke errors
+                    # (the synthetic ctx has no world state); the harness
+                    # holds a higher bar while a working behaviour exists:
+                    # roll back to it and make the model fix the crash
+                    # THIS round. First-round submissions (nothing to fall
+                    # back on) still accept-with-warning.
+                    try:
+                        self.mcp.call("set_behaviour",
+                                      {"entity_id": eid,
+                                       "source": current["source"],
+                                       "description": "agent cycle "
+                                                      "(smoke-crash rollback)"})
+                    except McpError:   # best effort: the crashy script runs
+                        pass           # either way, and the round continues
+                    last_error = f"smoke-run crash: {warnings[0]}"
+                    feedback.append(
+                        f"submission crashed the smoke run: {warnings[0]} "
+                        "-- the running behaviour was kept; fix the fault "
+                        "and send the complete script again")
+                    transcript.append(
+                        {"platform": f"submission crashed the smoke run: "
+                                     f"{warnings[0]} -- rolled back, "
+                                     "fix and resubmit"})
+                    continue
+                accepted = True
                 transcript.append({"platform": "submission accepted"
                                    + (f" (warnings: {warnings})" if warnings
                                       else "")})

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from .lua_engine import Intent, LuaEngine, stdlib_fingerprint
 from . import capabilities as _capabilities
+from . import clock as _clock
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
 from .models.entity import EntityType
 
@@ -208,13 +209,20 @@ def synthetic_queries() -> dict:
 #: class at install time instead of at a player's tick.
 SYNTHETIC_CTX = {
     "entity": {"id": "gate-entity", "name": "Gate", "entity_type": "individual",
-               "is_monetary_authority": False},
+               "is_monetary_authority": False, "place": None,
+               "age": 0, "capabilities": []},
     "accounts": [{"id": "gate-account", "currency": "USD", "balance": "1000.0000"}],
     "holdings": [], "processes": [], "parcels": [], "needs": [],
     # The map (docs/spatial.md S1): an empty map is a real world-shape
     # (abstract economies), so the gate ctx carries the keys -- a nil
     # here would be a vocabulary lie, not a clean smoke run.
     "places": [], "place": None,
+    # The clock (clock.clock_facts): behaviours schedule off it, so the
+    # gate ctx carries the same shape production does (run 29: scripts
+    # reading ctx.clock crashed ONLY at smoke time -- accepted with a
+    # warning, and the harness's crash-retry held them hostage to a
+    # vocabulary lie). Tick 1 matches ctx.tick below.
+    "clock": _clock.clock_facts(1),
     "unlocks": [], "events": [], "state": {},
     # _build_ctx exposes the executing tick as ctx.tick (scripting.py
     # "tick"); behaviours schedule off it (the post peddles every 10th

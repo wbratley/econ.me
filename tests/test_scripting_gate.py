@@ -170,3 +170,20 @@ class TestCheckPlayerScript:
             "local f = world.settle_last_orders() ctx.state.f = std.amount_str(1)",
             libraries=self._LIBS)
         assert (problems, warnings) == ([], [])
+
+    def test_production_ctx_vocabulary_smoke_runs_clean(self):
+        # Run 29 (Lagertha, d3h09): scripts reading ctx.clock crashed
+        # ONLY at smoke time -- the synthetic ctx did not carry the key,
+        # so healthy submissions landed as accept-with-warning (and the
+        # agent harness's crash-retry held them hostage). The gate ctx
+        # must tell the truth about vocabulary: clock, entity.place,
+        # entity.age, entity.capabilities exist in production, so they
+        # exist here. State-dependent crashes stay warnings; vocabulary
+        # must never be.
+        src = ("ctx.state.h = ctx.clock.hour "
+               "ctx.state.p = ctx.entity.place "
+               "ctx.state.a = ctx.entity.age "
+               "ctx.state.c = ctx.entity.capabilities")
+        problems, warnings = scripting.check_player_script(
+            src, libraries=self._LIBS)
+        assert (problems, warnings) == ([], [])
