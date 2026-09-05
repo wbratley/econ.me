@@ -1054,3 +1054,35 @@ def test_model_trace_writes_calls_log_and_burn_dump(tmp_path):
     recs = [json.loads(l) for l in
             (tmp_path / "calls.log").read_text().splitlines()]
     assert recs[-1]["ok"] is False and recs[-1]["seat"] == "House Harald"
+
+
+def test_agent_loop_wires_nimmodel_on_trace(tmp_path):
+    """Regression (run 32's first launch): AgentLoop wires the trace
+    hook by LATE ATTRIBUTE ASSIGNMENT (`model.on_trace = cb`), while
+    NimModel kept the callback in `_on_trace` and never read the
+    attribute — so a real NimModel seat traced nothing. The loop test
+    above calls `_on_model_trace` directly and cannot catch this;
+    this one exercises the junction with a real NimModel (no HTTP
+    happens — construction and wiring only)."""
+    from experiments.agent.loop import AgentLoop, McpClient
+    from experiments.agent.llm import NimModel
+
+    def transport(method, params):
+        raise AssertionError("no MCP call happens in this test")
+
+    model = NimModel("k", "openai/gpt-oss-20b")
+    lp = AgentLoop(McpClient(transport), model,
+                   trace_dir=str(tmp_path), seat="House Harald")
+    assert model.on_trace == lp._on_model_trace
+    assert model._on_trace == lp._on_model_trace
+
+    # and the wired hook round-trips through the property: emitting a
+    # trace on the model lands in the loop's calls.log
+    lp._trace_ctx = {"round": 1, "kind": "author"}
+    model._emit_trace(model="nim:openai/gpt-oss-20b", attempt=1,
+                      ok=True, elapsed_s=1.0, finish_reason="stop",
+                      content_chars=10, reasoning_chars=0,
+                      content_deltas=1, reasoning_deltas=0,
+                      max_tokens=65536, usage=None)
+    rec = json.loads((tmp_path / "calls.log").read_text().splitlines()[0])
+    assert rec["seat"] == "House Harald" and rec["round"] == 1
