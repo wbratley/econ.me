@@ -229,10 +229,29 @@ def test_entity_state_snapshot(client):
     assert state["entity"]["is_fixed"] is False
     assert set(state) == {
         "clock", "entity", "accounts", "holdings", "needs", "processes",
-        "parcels", "place", "unlocks", "behaviour",
+        "parcels", "place", "place_key", "unlocks", "behaviour",
     }
     assert len(state["accounts"]) == 1
     assert state["behaviour"] is None  # no starter configured
+    assert state["place"] is None and state["place_key"] is None  # unplaced
+
+
+def test_entity_state_place_key_matches_script_shape(client):
+    """Observation parity (run 30 postmortem): the script surface reads
+    ctx.entity.place as the KEY STRING -- the observation must expose the
+    same scalar alongside the facts table, or scripts guess `place.key`
+    from the observation's table shape and read a silent nil."""
+    from econengine import places as places_mod
+    joined = call_json(client, "join")
+    with Session(client.app.state._test_engine) as s:
+        hearth = places_mod.create_place(s, "HEARTH", "HEARTH", "Hearth")
+        ent = s.get(Entity, joined["entity"]["id"])
+        places_mod.move_entity(s, ent, hearth)
+        s.commit()
+
+    state = call_json(client, "entity_state", {"entity_id": joined["entity"]["id"]})
+    assert state["place"]["key"] == "HEARTH"
+    assert state["place_key"] == "HEARTH"  # the scalar scripts compare with ==
 
 
 def test_entity_state_is_ownership_gated(client):

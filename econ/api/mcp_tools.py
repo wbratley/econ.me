@@ -170,6 +170,12 @@ def tool_entity_state(session: Session, user: User, args: dict[str, Any]) -> dic
         # where this entity stands, or null when unplaced/no map.
         "place": (places_mod.place_facts(entity.place)
                   if entity.location_place_id else None),
+        # The scalar twin of `place` -- the KEY the script surface reads
+        # (ctx.entity.place is this string, not a table). Observation and
+        # script now agree on a shape for "where am I" (run 30 postmortem:
+        # a script guessing `ctx.entity.place.key` from this observation's
+        # table shape froze the house).
+        "place_key": entity.place.key if entity.location_place_id else None,
         "unlocks": tech.entity_unlocks(session, entity.id),
         "behaviour": (
             {"id": behaviour.id, "description": behaviour.description,

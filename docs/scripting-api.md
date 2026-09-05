@@ -242,6 +242,9 @@ injected source is the normative doc; summary:
 | Member | Returns |
 |---|---|
 | `std.holding_qty(symbol)` | number (0 when absent) |
+| `std.at(key)` | boolean — true iff you stand on that place key (nil-safe; §1's trap, guarded for you) |
+| `std.need_level(code)` | the need's satisfaction as a NUMBER, or nil when no such need |
+| `std.balance(currency?)` | first account balance in that currency as a number (0 when none) |
 | `std.unreserved(symbol)` | number or nil (spendable side of a holding) |
 | `std.market_price(symbol, fallback?)` | number or fallback |
 | `std.best_bid(symbol, fallback?)` / `std.best_ask(symbol, fallback?)` | number or fallback (never nil with a fallback) |
@@ -251,7 +254,7 @@ injected source is the normative doc; summary:
 | `std.facility_parcel(facility_type)` | parcel id or nil |
 | `std.deposit_parcel(symbol)` | parcel id or nil |
 | `std.amount_str(x)` | exact-decimal string |
-| `std.hour()` / `std.day()` / `std.is_night()` | number/number/boolean, or nil without a clock — never errors |
+| `std.hour()` / `std.day()` / `std.is_day()` / `std.is_night()` | number/number/boolean/boolean, or nil without a clock — never errors |
 
 `world` is per-world (`world_lib.lua` in the world's source; stone_age
 ships): `world.settle_last_orders()` (cancel-and-report order fills),
