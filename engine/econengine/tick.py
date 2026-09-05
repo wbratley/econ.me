@@ -219,7 +219,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     # A first attempt leaves nothing behind when it fails: resolve_intent runs
     # each one in a savepoint, so a rejection is fully rolled back and the
     # retry starts clean. The held-back rejection is not recorded, so each
-    # intent still produces exactly one event -- the outcome that stood.
+    # intent still produces exactly one event -- the outcome that stood
+    # (a killing attack is the one exception: its companion death event
+    # is lifted into the stream below, two events for one intent).
     # Mark the tick in progress so a mid-tick spawn_entity stamps the
     # executing tick (the one the spawner saw as ctx.tick), not the latest
     # committed one (the current Tick row is only written at the end of
@@ -234,7 +236,15 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
             if intent.intent_type == "start_process" and outcome.get("short_of_holdings"):
                 retry.append(intent)
                 continue
+            # A killing attack carries its estate record nested (combat
+            # builds it; resolve_intent hands back one event). Lift the
+            # companion entity_incapacitated into the stream so a death
+            # by HITS is as visible as a death by hunger (runs 28/29:
+            # wolf-killed houses left no death event at all).
+            death = outcome.pop("death", None)
             events.append(outcome)
+            if isinstance(death, dict) and death.get("type") == "entity_incapacitated":
+                events.append(death)
 
         events.extend(markets.run_auctions(session, tick_number=number))
         for intent in retry:
