@@ -54,6 +54,7 @@ RunResult.return_value. VALIDATOR scripts use it for their verdict:
 """
 
 import hashlib
+import re
 import threading
 import time
 import uuid
@@ -156,6 +157,7 @@ def stdlib_source() -> str:
     it so scripts can be authored from scratch against documented
     vocabulary, not by guessing)."""
     return _STDLIB_LUA
+
 
 _STDLIB_LUA = """
 local std = {}
@@ -316,6 +318,25 @@ end
 
 return std
 """
+
+# The member vocabulary of each injected namespace -- single sources of
+# truth for the static shape lint (scripting.check_player_script) and the
+# docs. STDLIB_MEMBERS derives from the Lua source itself, so it cannot
+# drift; ACTION_MEMBERS is pinned to the live injection by a test that
+# enumerates ctx.action at runtime (test_scripting_gate).
+STDLIB_MEMBERS = frozenset(
+    m.group(1) for m in re.finditer(r"^function std\.(\w+)", _STDLIB_LUA,
+                                     re.MULTILINE)
+)
+
+ACTION_MEMBERS = (
+    "transfer", "issue_money", "retire_money", "levy", "seize",
+    "set_fiscal_policy", "set_script", "set_validator", "set_constitution",
+    "grant_capability", "revoke_capability", "create_proposal", "vote",
+    "enact", "spawn_entity",
+    "place_order", "cancel_order", "start_process", "cancel_process",
+    "travel", "transfer_parcel", "attack", "say",
+)
 
 # Strict-globals installer (docs/scripting.md section 4, the lint half of
 # the install-time gate). Evaluated PRE-sandbox like _NAMESPACE_FREEZE (it

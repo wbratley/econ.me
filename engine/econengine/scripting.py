@@ -27,6 +27,7 @@ entity_id set it only fires for operations acted by that entity.
 
 import hashlib
 import json
+import re
 import threading
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
@@ -34,7 +35,9 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .lua_engine import Intent, LuaEngine, stdlib_fingerprint
+from .lua_engine import (
+    ACTION_MEMBERS, Intent, LuaEngine, STDLIB_MEMBERS, stdlib_fingerprint,
+)
 from . import capabilities as _capabilities
 from . import clock as _clock
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
@@ -340,6 +343,104 @@ _FATAL_MARKERS = (
 )
 
 
+# --- Static shape lint (run 30 postmortem) ------------------------------
+#
+# The smoke-run catches nil-CALLS (reads of helpers never injected) but
+# not silent nil-READS: `ctx.entity.place` is the place KEY STRING, and
+# Lua happily reads `.key` off a string -- a silent nil that behaved like
+# "nowhere" for a day and froze House Ivar in the cold (16 travel
+# intents rejected unread, run 30 d3h13). A type-table static pass
+# refuses the shape violations whose truth the engine knows statically,
+# with the fix in hand. Precision over recall: only the two classes the
+# engine can prove -- member access on a known string path, and reads of
+# members the injected namespaces do not carry. No grammar, no guessing.
+
+# The ctx.query vocabulary, in one place: build_queries (below) returns
+# exactly these members, the static shape lint quotes them, and a test
+# pins the tuple to the live dict (test_scripting_gate).
+QUERY_MEMBERS = (
+    "balance", "total_supply", "market_price", "best_bid", "best_ask",
+    "holding", "unreserved", "has_unlock", "holders", "age", "lifespan",
+    "population", "parents", "children", "route", "distance_ticks",
+    "world_setting", "fiscal_policy", "constitution", "active_script",
+    "script_history", "proposal", "proposals", "tally",
+)
+
+# ctx paths that hold a STRING (or nil), keyed for the message wording.
+_STRING_PATHS = {
+    "ctx.entity.place": (
+        "the place KEY STRING (or nil when unplaced)",
+        'compare with == (ctx.entity.place == "HEARTH"), guard with '
+        'std.at("HEARTH"), or read full place facts from ctx.place.key',
+    ),
+}
+
+_STRING_PATH_PATTERNS = tuple(
+    (re.compile(r"(?<![\w.])" + re.escape(path) + r"\s*\.\s*([A-Za-z_]\w*)"),
+     path)
+    for path in _STRING_PATHS
+)
+
+_KNOWN_MEMBERS = {
+    "std": frozenset(STDLIB_MEMBERS),
+    "ctx.action": frozenset(ACTION_MEMBERS),
+    "ctx.query": frozenset(QUERY_MEMBERS),
+}
+_UNKNOWN_MEMBER_PATTERNS = tuple(
+    (ns, re.compile(r"(?<![\w.])" + re.escape(ns) + r"\.([A-Za-z_]\w*)"))
+    for ns in _KNOWN_MEMBERS
+)
+
+
+def _strip_lua_comments(source: str) -> str:
+    """Comment text out of a Lua chunk (lint input only). Quotes are
+    tracked so a `--` inside a string literal survives; stripping can
+    only remove candidate matches, never add one."""
+    out = []
+    i, n = 0, len(source)
+    while i < n:
+        c = source[i]
+        if c in "\"'":
+            quote = c
+            i += 1
+            while i < n and source[i] != quote:
+                i += 2 if source[i] == "\\" else 1
+            i += 1
+        elif source.startswith("--", i):
+            if source.startswith("--[[", i):
+                end = source.find("]]", i + 4)
+                i = n if end < 0 else end + 2
+            else:
+                end = source.find("\n", i)
+                i = n if end < 0 else end
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _static_shape_findings(source: str) -> list[str]:
+    """The two provable shape violations, as fix-in-hand findings."""
+    code = _strip_lua_comments(source)
+    findings = []
+    for pattern, path in _STRING_PATH_PATTERNS:
+        for m in pattern.finditer(code):
+            holds, fix = _STRING_PATHS[path]
+            findings.append(
+                f"lint: {path}.{m.group(1)} -- {path} is {holds}; a "
+                f"string has no fields, the read is a SILENT nil. {fix}."
+            )
+    for ns, pattern in _UNKNOWN_MEMBER_PATTERNS:
+        for m in pattern.finditer(code):
+            member = m.group(1)
+            if member not in _KNOWN_MEMBERS[ns]:
+                findings.append(
+                    f"lint: {ns}.{member} does not exist -- {ns} members "
+                    "are: " + ", ".join(sorted(_KNOWN_MEMBERS[ns]))
+                )
+    return findings
+
+
 def check_player_script(source: str,
                         libraries: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """Lint a player-authored behaviour at submit time. Returns
@@ -361,12 +462,20 @@ def check_player_script(source: str,
     standard for operator content and player content alike: a global write
     is at best a scratch variable that dies with the per-run runtime --
     `local` is the fix, always trivial, strictly safer.
+
+    Static shape findings (run 30 postmortem) come before the smoke-run:
+    their truth does not depend on ctx state, and their messages carry
+    the fix -- the smoke-run stays for everything state-dependent.
     """
     try:
         from lupa import LuaRuntime
         LuaRuntime().compile(source)
     except Exception as exc:
         return ([f"syntax: {exc}"], [])
+
+    findings = _static_shape_findings(source)
+    if findings:
+        return (findings, [])
 
     result = _engine.run(source, synthetic_ctx(), timeout_ms=_GATE_TIMEOUT_MS,
                          libraries=libraries, strict_globals=True)
@@ -610,6 +719,7 @@ def set_executing_tick(number: int | None) -> None:
 # ---------------------------------------------------------------------------
 # Shared with the tick engine
 # ---------------------------------------------------------------------------
+
 
 def build_queries(session: Session, tick_number: int | None = None,
                   owner_id: str | None = None) -> dict:
