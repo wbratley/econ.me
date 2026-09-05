@@ -57,6 +57,10 @@ forms and they are NOT the same shape:
 
 `ctx.entity.place.key` is **always nil** — that is a string, and Lua
 strings have no `.key`. This exact line killed House Ivar (run 30; §7).
+The submit gate refuses it statically now — member access on a known
+string path, and reads of members `std`/`ctx.action`/`ctx.query` do not
+carry, are REFUSED with the fix in the message. The gate catches what
+it can prove; §7 still documents the whole class.
 
 **Nil-ability is documented per field.** The rule of the engine: a
 world that does not carry a feature ships its absence as the real
@@ -304,7 +308,8 @@ Kept verbatim so postmortems can cite this section.
    **Fix:** `local place = ctx.entity.place` and compare `==`. The
    facts table is `ctx.place` (§1). Read `travel`-rejection reasons in
    `ctx.events` — "already at X" while your script thinks otherwise is
-   exactly this bug.
+   exactly this bug. The submit gate now refuses this class verbatim
+   (static shape lint, §1) — a fix-in-hand finding, not a silent nil.
 
 2. **String arithmetic** (runs 26–27, multiple): `if h.quantity > 1`
    where `h.quantity` is `"2.0000"` — comparison/arithmetic on strings

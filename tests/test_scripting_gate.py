@@ -187,3 +187,307 @@ class TestCheckPlayerScript:
         problems, warnings = scripting.check_player_script(
             src, libraries=self._LIBS)
         assert (problems, warnings) == ([], [])
+
+
+# --- Static shape lint (run 30 postmortem) --------------------------------
+#
+# House Ivar's fatal scripts, VERBATIM from the run-30 archive
+# (~/econ-runs/stone-run30/world.db, entity 5b33e684). v3 is the round-2
+# rewrite; v4 is the final active behaviour -- both read `.key` off the
+# place string, a silent nil that behaved like "nowhere" until the house
+# froze in the cold (d3h13, EXPOSURE). The lint must refuse these exact
+# sources: regression value lives in the verbatim.
+
+_IVAR_V3_SOURCE = """
+local function holding(sym)
+  for _, h in ipairs(ctx.holdings) do
+    if h.symbol == sym then return tonumber(h.quantity) or 0 end
+  end
+  return 0
+end
+
+local function here_key()
+  if ctx.entity.place then return ctx.entity.place.key end
+  return nil
+end
+
+-- Always eat when the stomach is running low
+if holding("SATIETY") < 2 then
+  if holding("BERRIES") >= 1.5 then
+    ctx.action.start_process("EAT_BERRIES")
+  elseif holding("COOKED_MEAT") >= 1 then
+    ctx.action.start_process("EAT_COOKED")
+  elseif holding("JERKY") >= 1 then
+    ctx.action.start_process("EAT_JERKY")
+  elseif holding("MEAT") >= 1 then
+    ctx.action.start_process("EAT_RAW")
+  end
+end
+
+local here = here_key()
+local home = "HEARTH"
+local thicket = "THICKET"
+
+if std.is_night() then
+  -- Get to safety, then keep warm with PACE (free, labor-free)
+  if here ~= home then
+    ctx.action.travel(home)
+  else
+    if not std.running_recipe("PACE") then
+      ctx.action.start_process("PACE")
+    end
+  end
+else
+  local hour = std.hour()
+  -- Head home before dark
+  if hour and hour >= 17 and here ~= home then
+    ctx.action.travel(home)
+  else
+    local bag = holding("BAG")
+    if bag < 1 then
+      -- Try to make a bag once we have the wood; otherwise gather for it
+      if holding("WOOD") >= 1 and holding("YARN") >= 2 then
+        if not std.running_recipe("MAKE_BAG") then
+          ctx.action.start_process("MAKE_BAG")
+        end
+      else
+        if here == thicket then
+          if not std.running_recipe("GATHER") then
+            ctx.action.start_process("GATHER")
+          end
+        else
+          ctx.action.travel(thicket)
+        end
+      end
+    else
+      -- Bag owned: gather with the better table
+      if here == thicket then
+        if not std.running_recipe("GATHER_BAG") then
+          ctx.action.start_process("GATHER_BAG")
+        end
+      else
+        ctx.action.travel(thicket)
+      end
+    end
+  end
+end
+"""
+
+_IVAR_V4_SOURCE = """
+local function holding(sym)
+  for _, h in ipairs(ctx.holdings) do
+    if h.symbol == sym then return tonumber(h.quantity) or 0 end
+  end
+  return 0
+end
+
+local function balance()
+  for _, a in ipairs(ctx.accounts) do
+    if a.currency == "COIN" then return tonumber(a.balance) or 0 end
+  end
+  return 0
+end
+
+local function account_id()
+  for _, a in ipairs(ctx.accounts) do
+    if a.currency == "COIN" then return a.id end
+  end
+  return nil
+end
+
+local function running_rcp(recipe)
+  for _, p in ipairs(ctx.processes) do
+    if p.recipe == recipe then return true end
+  end
+  return false
+end
+
+-- Cancel any order we placed last tick (will be replaced if we still want it)
+for _, e in ipairs(ctx.events) do
+  if e.type == "place_order" and e.status == "applied" and e.order_id then
+    ctx.action.cancel_order(e.order_id)
+  end
+end
+
+local place = ctx.entity.place and ctx.entity.place.key or nil
+local hour = std.hour() or 0
+local night = std.is_night() or false
+local acc = account_id()
+local bal = balance()
+
+-- Always eat if we have food and are hungry
+if holding("SATIETY") < 3 then
+  if holding("BERRIES") >= 1.5 then
+    ctx.action.start_process("EAT_BERRIES")
+  elseif holding("COOKED_MEAT") >= 1 then
+    ctx.action.start_process("EAT_COOKED")
+  elseif holding("JERKY") >= 1 then
+    ctx.action.start_process("EAT_JERKY")
+  elseif holding("MEAT") >= 1 then
+    ctx.action.start_process("EAT_RAW")
+  end
+end
+
+local safe_food = holding("BERRIES") + holding("COOKED_MEAT") + holding("JERKY")
+local no_food_emergency = safe_food < 1.0 and holding("SATIETY") < 2
+
+if night then
+  if place == "HEARTH" then
+    -- Only risk the walk after we have some warmth banked
+    if no_food_emergency and holding("WARMTH") >= 3 then
+      ctx.action.travel("POST")
+    elseif not running_rcp("PACE") then
+      ctx.action.start_process("PACE")
+    end
+  elseif place == "POST" then
+    -- Buy a couple of jerky to survive until morning, but only once
+    if not ctx.state.food_secured and acc and bal > 1.5 and holding("JERKY") < 1 then
+      local ask = std.best_ask("JERKY") or 1.0
+      local qty = 2
+      if bal >= qty * ask then
+        ctx.action.place_order("JERKY", "buy", std.amount_str(qty), std.amount_str(ask), acc)
+      end
+    end
+    if holding("JERKY") >= 1 then
+      ctx.state.food_secured = true
+    end
+    -- Always keep warm even at the trading post
+    if not running_rcp("PACE") then
+      ctx.action.start_process("PACE")
+    end
+  else
+    -- Somewhere unexpected at night: head home immediately
+    ctx.action.travel("HEARTH")
+  end
+else
+  -- Day hours
+  if hour and hour >= 17 and place ~= "HEARTH" then
+    ctx.action.travel("HEARTH")
+  else
+    -- Build a bag once we have the mats
+    if holding("BAG") < 1 and holding("WOOD") >= 1 and holding("YARN") >= 2 then
+      if not running_rcp("MAKE_BAG") then
+        ctx.action.start_process("MAKE_BAG")
+      end
+    else
+      local gather_rcp = (holding("BAG") >= 1) and "GATHER_BAG" or "GATHER"
+      if place == "THICKET" then
+        if not running_rcp(gather_rcp) then
+          ctx.action.start_process(gather_rcp)
+        end
+      else
+        ctx.action.travel("THICKET")
+      end
+    end
+  end
+end
+"""
+
+
+class TestStaticShapeLint:
+    """The two provable classes: member access on a known string path,
+    and reads of members the injected namespaces do not carry."""
+
+    _LIBS = {"world": "local w = {} function w.settle_last_orders() return {} end return w"}
+
+    def test_ivar_v3_refused_verbatim(self):
+        # The round-2 here_key() helper: `return ctx.entity.place.key`
+        problems, _ = scripting.check_player_script(
+            _IVAR_V3_SOURCE, libraries=self._LIBS)
+        assert len(problems) == 1, problems  # precision: exactly the trap
+        assert "ctx.entity.place.key" in problems[0]
+        assert "KEY STRING" in problems[0]
+        assert 'std.at("HEARTH")' in problems[0]
+
+    def test_ivar_v4_refused_verbatim(self):
+        # The final active behaviour: `ctx.entity.place and
+        # ctx.entity.place.key or nil`. Everything else in the script is
+        # sound -- one finding, the fix in hand.
+        problems, _ = scripting.check_player_script(
+            _IVAR_V4_SOURCE, libraries=self._LIBS)
+        assert len(problems) == 1, problems
+        assert "ctx.entity.place.key" in problems[0]
+        assert "ctx.place.key" in problems[0]  # the facts-table alternative
+
+    def test_correct_place_idioms_pass(self):
+        src = (
+            'local place = ctx.entity.place\n'
+            'if place ~= "THICKET" and not std.at("HEARTH") then\n'
+            '  local p = ctx.place\n'
+            '  ctx.state.k = p and p.key or "?"\n'
+            '  ctx.action.travel("THICKET")\n'
+            'end\n'
+        )
+        problems, warnings = scripting.check_player_script(
+            src, libraries=self._LIBS)
+        assert (problems, warnings) == ([], [])
+
+    def test_std_typo_refused_with_member_list(self):
+        problems, _ = scripting.check_player_script(
+            'return std.holding_qyt("GRAIN")', libraries=self._LIBS)
+        assert any("std.holding_qyt does not exist" in p for p in problems)
+        assert any("holding_qty" in p for p in problems)  # the real one listed
+
+    def test_action_typo_refused_with_member_list(self):
+        problems, _ = scripting.check_player_script(
+            'ctx.action.travl("THICKET")', libraries=self._LIBS)
+        assert any("ctx.action.travl does not exist" in p for p in problems)
+        assert any("travel" in p for p in problems)
+
+    def test_query_typo_refused(self):
+        problems, _ = scripting.check_player_script(
+            'return ctx.query.best_price("GRAIN")', libraries=self._LIBS)
+        assert any("ctx.query.best_price does not exist" in p for p in problems)
+
+    def test_commented_trap_is_not_a_finding(self):
+        src = ('-- ctx.entity.place.key would be a trap, commented out\n'
+               'return 1')
+        problems, _ = scripting.check_player_script(src, libraries=self._LIBS)
+        assert problems == []
+
+    def test_trap_inside_string_literal_is_not_a_finding(self):
+        src = 'ctx.state.note = "avoid ctx.entity.place.key" return 1'
+        problems, _ = scripting.check_player_script(src, libraries=self._LIBS)
+        assert problems == []
+
+    def test_concat_after_place_is_not_a_finding(self):
+        # `place .. "!"` is string concat, not member access
+        src = 'ctx.state.s = ctx.entity.place .. "!" return 1'
+        problems, _ = scripting.check_player_script(src, libraries=self._LIBS)
+        assert problems == []
+
+
+class TestMemberVocabulary:
+    """The lint's member tables are pinned to the live truth: a drift
+    here would refuse healthy scripts or bless broken ones."""
+
+    def test_action_members_match_live_injection(self):
+        known = {f'{m} = true' for m in scripting.ACTION_MEMBERS}
+        src = (
+            "local known = {" + ", ".join(sorted(known)) + "} "
+            "local missing = {} "
+            "for k in pairs(ctx.action) do "
+            "  if not known[k] then missing[#missing+1] = k end "
+            "end "
+            "for _, m in ipairs({" +
+            ", ".join(f'"{m}"' for m in scripting.ACTION_MEMBERS) + "}) do "
+            "  if ctx.action[m] == nil then missing[#missing+1] = m end "
+            "end "
+            "if #missing > 0 then return missing[1] end "
+            "return 'OK'"
+        )
+        result = scripting._engine.run(src, scripting.synthetic_ctx())
+        assert result.error is None, result.error
+        assert result.return_value == "OK"
+
+    def test_query_members_match_build_queries(self, session):
+        queries = scripting.build_queries(session)
+        assert set(queries) == set(scripting.QUERY_MEMBERS)
+
+    def test_std_members_carry_the_sugar(self):
+        sugar = {"at", "need_level", "balance", "is_day"}
+        core = {"holding_qty", "unreserved", "market_price", "best_bid",
+                "best_ask", "has_unlock", "need_by_code", "running_recipe",
+                "facility_parcel", "deposit_parcel", "amount_str", "hour",
+                "day", "is_night"}
+        assert sugar | core <= set(scripting.STDLIB_MEMBERS)
