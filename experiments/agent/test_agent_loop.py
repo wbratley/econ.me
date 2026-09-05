@@ -1086,3 +1086,34 @@ def test_agent_loop_wires_nimmodel_on_trace(tmp_path):
                       max_tokens=65536, usage=None)
     rec = json.loads((tmp_path / "calls.log").read_text().splitlines()[0])
     assert rec["seat"] == "House Harald" and rec["round"] == 1
+
+
+def test_model_trace_writes_repetition_break_dump(tmp_path):
+    """A breaker-aborted attempt (llm.RepetitionBreaker) dumps the
+    partial reasoning under a repetition-break- filename, with the
+    abort reason in the header — run 32's burns, this time caught
+    mid-stream."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    def transport(method, params):
+        raise AssertionError("no MCP call happens in this test")
+
+    lp = AgentLoop(McpClient(transport), ScriptedModel(["KEEP"]),
+                   trace_dir=str(tmp_path), seat="House Lagertha")
+    lp._trace_ctx = {"round": 11, "kind": "author"}
+    lp._on_model_trace({
+        "model": "nim:openai/gpt-oss-20b", "attempt": 1, "ok": False,
+        "elapsed_s": 312.0, "finish_reason": None,
+        "error": "repetition breaker (reasoning): top line 62/150 = 41%",
+        "breaker": True, "breaker_channel": "reasoning",
+        "content_chars": 0, "reasoning_chars": 30000,
+        "content_deltas": 0, "reasoning_deltas": 900,
+        "max_tokens": 65536, "usage": None,
+        "reasoning_text": "Thus we need warmth at night. " * 3})
+    dump = tmp_path / "repetition-break-house-lagertha.round-11.author.txt"
+    body = dump.read_text()
+    assert "repetition breaker" in body and "attempt 1" in body
+    assert "Thus we need warmth at night." in body
+    assert not list(tmp_path.glob("reasoning-burn-*"))
+    rec = json.loads((tmp_path / "calls.log").read_text().splitlines()[0])
+    assert rec["breaker"] is True and rec["breaker_channel"] == "reasoning"

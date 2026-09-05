@@ -550,8 +550,9 @@ class AgentLoop:
 
     def _on_model_trace(self, trace: dict) -> None:
         """Sink for llm.NimModel's per-attempt hook: one calls.log line
-        always, a reasoning-burn file when an attempt died length-
-        exhausted with its whole budget spent thinking."""
+        always; a dump file when an attempt died with its thinking on
+        film — length-exhausted (reasoning-burn) or aborted by the
+        repetition breaker (repetition-break)."""
         if not self.trace_dir:
             return
         line = dict(trace)
@@ -565,19 +566,23 @@ class AgentLoop:
         except OSError:
             return
         if (trace.get("ok") is False
-                and trace.get("finish_reason") == "length"
-                and trace.get("reasoning_text")):
+                and trace.get("reasoning_text")
+                and (trace.get("finish_reason") == "length"
+                     or trace.get("breaker"))):
             rnd = self._trace_ctx.get("round") or "na"
+            kind = ("repetition-break" if trace.get("breaker")
+                    else "reasoning-burn")
             burn = (Path(self.trace_dir) /
-                    f"reasoning-burn-{_slug(self.seat or 'seat')}."
+                    f"{kind}-{_slug(self.seat or 'seat')}."
                     f"round-{rnd}.{self._trace_ctx.get('kind', 'author')}.txt")
-            header = (f"# reasoning burn: {self.seat} round {rnd} "
+            header = (f"# {kind}: {self.seat} round {rnd} "
                       f"{self._trace_ctx.get('kind')} "
                       f"attempt {trace.get('attempt')}\n"
                       f"# model {trace.get('model')} elapsed "
                       f"{trace.get('elapsed_s')}s reasoning_chars "
                       f"{trace.get('reasoning_chars')} max_tokens "
-                      f"{trace.get('max_tokens')}\n\n")
+                      f"{trace.get('max_tokens')}\n"
+                      f"# aborted: {trace.get('error')}\n\n")
             try:
                 burn.write_text(header + trace["reasoning_text"])
             except OSError:

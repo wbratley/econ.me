@@ -26,7 +26,7 @@ import os
 import re
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Protocol
@@ -562,6 +562,116 @@ def nim_limiter() -> _RateLimiter:
         return _nim_limiter
 
 
+class _BreakerFired(RuntimeError):
+    """The repetition breaker tripped mid-stream (run 32's marathon
+    taxonomy: a model that has degenerated never recovers within the
+    attempt — Harald r1 was 15,482 lines of which 54 distinct, Lagertha
+    r11 re-walked one warmth argument 330 times). Internal to llm.py:
+    raised inside the stream loop, caught at the attempt level, turned
+    into a trace + a fresh attempt."""
+
+    def __init__(self, channel: str, reason: str):
+        super().__init__(f"repetition breaker ({channel}): {reason}")
+        self.channel = channel
+        self.reason = reason
+
+
+class RepetitionBreaker:
+    """In-stream degeneration detector — the run-32 cure for the
+    reasoning marathon. Three modes were captured on film:
+
+      Mode A  token-degenerate loops — "We can..." x7,120 alternating
+              with "We need..." x7,096 (Harald r1: 15,482 lines, 54
+              distinct = 0.3%); "Ok." x4,973 + "Stop." x2,481 (r3).
+      Mode B  impasse circling — the SAME signature sentences re-walked
+              (Lagertha r11: "Thus we need to find a way to get warmth
+              at night..." x330, "Ok, this is not working..." x166).
+      Mode C  silent near-miss — finish=stop with a 4-char answer —
+              is NOT repetition and stays out of scope.
+
+    Modes A and B share one shape: within any 150-line window, a handful
+    of identical lines dominate. Healthy reasoning does not — checked
+    against every captured burn and against prose/Lua controls, the
+    rule below fires at 6-29% of each real burn (seconds-to-minutes in,
+    not 42 minutes in) and never on the controls. False negatives just
+    cost today's status quo (a full-budget burn); false positives abort
+    healthy thinking, so the thresholds sit far from anything a sane
+    stream produces.
+
+    Fed raw deltas (arbitrary fragments — lines assemble across pushes).
+    `push` returns True exactly once, when the breaker fires; `reason`
+    then names the trigger for the trace/log.
+    """
+
+    WINDOW = 150        # rolling line window (non-blank lines only)
+    MIN_LINES = 100     # no verdicts before this many lines are seen
+    CHECK_EVERY = 25    # evaluate at most this often (lines between checks)
+    TOP1 = 0.40         # one line >= 40% of the window -> degenerate
+    TOP2 = 0.60         # two lines >= 60% -> alternation (Harald r1)
+    MIN_DISTINCT = 8    # fewer distinct lines than this -> collapse
+
+    def __init__(self) -> None:
+        self._buf = ""                       # partial line across deltas
+        self._lines: deque[str] = deque()    # the rolling window
+        self._seen = 0                       # complete non-blank lines ever
+        self._checked = 0                    # lines seen at last evaluation
+        self.fired = False
+        self.reason: str | None = None
+
+    def push(self, fragment: str) -> bool:
+        """Feed one delta; True once the stream is declared degenerate."""
+        if self.fired:
+            return True
+        self._buf += fragment
+        *done, self._buf = self._buf.split("\n")
+        for ln in done:
+            ln = ln.strip()
+            if not ln:
+                continue
+            self._lines.append(ln)
+            self._seen += 1
+            if len(self._lines) > self.WINDOW:
+                self._lines.popleft()
+        if (self._seen >= self.MIN_LINES
+                and self._seen - self._checked >= self.CHECK_EVERY):
+            self._checked = self._seen
+            self._evaluate()
+        return self.fired
+
+    def _evaluate(self) -> None:
+        window = list(self._lines)
+        n = len(window)
+        if not n:
+            return
+        counts = Counter(window)
+        top = counts.most_common(2)
+        (l1, n1) = top[0]
+        (l2, n2) = (top[1] if len(top) > 1 else (None, 0))
+        distinct = len(counts)
+        if n1 / n >= self.TOP1:
+            self._fire(f"top line {n1}/{n} = {n1 / n:.0%} — {l1[:60]!r}")
+        elif (n1 + n2) / n >= self.TOP2:
+            self._fire(f"two lines {(n1 + n2)}/{n} = "
+                       f"{(n1 + n2) / n:.0%} — {l1[:40]!r} / {l2[:40]!r}")
+        elif distinct < self.MIN_DISTINCT:
+            self._fire(f"only {distinct} distinct lines in last {n}")
+
+    def _fire(self, reason: str) -> None:
+        self.fired = True
+        self.reason = reason
+
+
+def _breaker_enabled(explicit: bool | None) -> bool:
+    """The breaker defaults ON (run 32: four burns = 57% of the run's
+    wall-clock, every one recoverable by a fresh attempt).
+    ECON_AGENT_REPETITION_BREAKER=off|0|false is the escape hatch for a
+    suspected false positive — the run keeps its old marathons back."""
+    if explicit is not None:
+        return explicit
+    return (os.environ.get("ECON_AGENT_REPETITION_BREAKER", "")
+            .strip().lower() not in ("off", "0", "false"))
+
+
 class NimModel(OpenAIModel):
     """NVIDIA NIM (OpenAI-compatible hosted inference): same chat
     completions call, NIM base URL, plus the two courtesies a shared
@@ -575,7 +685,8 @@ class NimModel(OpenAIModel):
                  temperature: float = 0.3, max_tokens: int | None = None,
                  limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter,
                  extra_body: dict | None = None,
-                 on_trace: Callable[[dict], None] | None = None):
+                 on_trace: Callable[[dict], None] | None = None,
+                 repetition_breaker: bool | None = None):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
@@ -604,6 +715,9 @@ class NimModel(OpenAIModel):
         # `raise max_tokens` -- so they get a bigger default than the
         # 8192 a plain instruct model is fine with.
         self._max_tokens = max_tokens or _default_max_tokens(model)
+        # In-stream degeneration guard (see RepetitionBreaker): one
+        # detector per channel per attempt, armed unless disabled.
+        self._breaker = _breaker_enabled(repetition_breaker)
 
     @property
     def on_trace(self) -> Callable[[dict], None] | None:
@@ -647,6 +761,10 @@ class NimModel(OpenAIModel):
                 n_content = n_reasoning = 0
                 finish: str | None = None
                 usage: dict | None = None
+                rb_reason = (RepetitionBreaker()
+                             if self._breaker else None)
+                rb_content = (RepetitionBreaker()
+                              if self._breaker else None)
                 with httpx.stream(
                     "POST",
                     f"{self._base_url}/v1/chat/completions",
@@ -708,13 +826,22 @@ class NimModel(OpenAIModel):
                             finish = choice.get("finish_reason") or finish
                             delta = choice.get("delta") or {}
                             if delta.get("reasoning_content"):
-                                reason_bits.append(
-                                    str(delta["reasoning_content"]))
+                                frag = str(delta["reasoning_content"])
+                                reason_bits.append(frag)
                                 n_reasoning += 1
+                                if rb_reason is not None \
+                                        and rb_reason.push(frag):
+                                    raise _BreakerFired(
+                                        "reasoning", rb_reason.reason)
                             piece = delta.get("content")
                             if piece:
-                                chunks.append(str(piece))
+                                frag = str(piece)
+                                chunks.append(frag)
                                 n_content += 1
+                                if rb_content is not None \
+                                        and rb_content.push(frag):
+                                    raise _BreakerFired(
+                                        "content", rb_content.reason)
                 text = "".join(chunks)
                 elapsed = time.monotonic() - t0
                 if not text.strip():
@@ -746,6 +873,26 @@ class NimModel(OpenAIModel):
                     content_deltas=n_content, reasoning_deltas=n_reasoning,
                     max_tokens=self._max_tokens, usage=usage)
                 return text
+            except _BreakerFired as exc:
+                # The attempt is declared degenerate mid-stream: raising
+                # out of the stream context closed generation. Evidence
+                # (run 32): every marathon's follow-up attempt succeeded
+                # with 15-40x less thinking — abort early, retry fresh.
+                # The partial reasoning ships in the trace so the dump
+                # path keeps its forensics.
+                last_error = str(exc)
+                self._emit_trace(
+                    model=self.name, attempt=attempt + 1, ok=False,
+                    elapsed_s=round(time.monotonic() - t0, 1),
+                    finish_reason=None, error=last_error,
+                    breaker=True, breaker_channel=exc.channel,
+                    content_chars=sum(len(c) for c in chunks),
+                    reasoning_chars=sum(len(b) for b in reason_bits),
+                    content_deltas=n_content,
+                    reasoning_deltas=n_reasoning,
+                    max_tokens=self._max_tokens,
+                    reasoning_text="".join(reason_bits))
+                continue
             except httpx.HTTPError as exc:
                 last_error = str(exc)
                 self._emit_trace(
@@ -848,7 +995,8 @@ class DeepSeekModel(NimModel):
                  window: str | None = None,
                  wait_minutes: float | None = None,
                  reasoning_effort: str | None = None,
-                 on_trace: Callable[[dict], None] | None = None):
+                 on_trace: Callable[[dict], None] | None = None,
+                 repetition_breaker: bool | None = None):
         eff = (reasoning_effort
                if reasoning_effort is not None
                else os.environ.get("ECON_DEEPSEEK_REASONING", "low"))
@@ -856,7 +1004,8 @@ class DeepSeekModel(NimModel):
                          base_url=base_url, temperature=temperature,
                          max_tokens=max_tokens, limiter_factory=None,
                          extra_body={"reasoning_effort": eff} if eff else {},
-                         on_trace=on_trace)
+                         on_trace=on_trace,
+                         repetition_breaker=repetition_breaker)
         self.name = f"deepseek:{model}"
         self._window = window
         self._wait_minutes = wait_minutes
