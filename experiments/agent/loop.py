@@ -37,9 +37,16 @@ import datetime as _dt
 import hashlib
 import json
 import re
+from pathlib import Path
 
 from .llm import (ScriptedModelEmpty, extract_script_detailed,
                   strip_fences, strip_think)
+
+
+def _slug(name: str) -> str:
+    """Seat name -> filename shard (mirrors nim_run.slug without the
+    import cycle: nim_run imports this module)."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 # ---------------------------------------------------------------------------
 # MCP client (transport-free: tests inject a TestClient adapter, run.py an
@@ -469,7 +476,8 @@ class AgentLoop:
                  max_attempts: int = 3, journal_path: str | None = None,
                  last_ticks: int = 8, edit_mode: bool = False,
                  diary: bool = False, manual: str | None = None,
-                 catalog: str | None = None):
+                 catalog: str | None = None,
+                 trace_dir: str | None = None, seat: str | None = None):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
@@ -482,6 +490,21 @@ class AgentLoop:
         self.catalog = catalog            # generated readable world (3a fold)
         self._feedback: list[str] = []          # rides into the next prompt
         self.journal_lines: list[dict] = []
+        # Call forensics (run 31: an 85-minute thinking attempt left no
+        # artifact — the reasoning text was discarded client-side). When
+        # trace_dir is set, every model attempt lands as one JSON line in
+        # <trace_dir>/calls.log, each round's exact prompts are persisted
+        # for offline replay, and a length-exhausted attempt dumps its
+        # full reasoning text to a readable file.
+        self.trace_dir = trace_dir
+        self.seat = seat
+        self._trace_ctx: dict = {}       # round + kind, set by cycle()
+        self._prompt_parts: dict[str, dict] = {}
+        if trace_dir:
+            try:
+                self.model.on_trace = self._on_model_trace
+            except (AttributeError, TypeError):
+                pass          # a model without the hook just traces nothing
 
     # -- identity ----------------------------------------------------------
 
@@ -496,6 +519,69 @@ class AgentLoop:
         else:
             self.entity_id = self.mcp.call("join")["entity"]["id"]
         return self.entity_id
+
+    # -- forensics --------------------------------------------------------
+
+    def _persist_prompt(self, kind: str, sys_text: str,
+                        user_text: str) -> None:
+        """The exact prompt, on disk, before the call it feeds — a call
+        that hangs or burns its budget still leaves the artifact replay
+        wants (replay_prompt.py re-fires these files at the provider)."""
+        if not self.trace_dir:
+            return
+        parts = self._prompt_parts.setdefault(
+            kind, {"sys": sys_text, "users": []})
+        parts["sys"] = sys_text
+        parts["users"].append(user_text)
+        rnd = self._trace_ctx.get("round") or "na"
+        path = (Path(self.trace_dir) /
+                f"seat-{_slug(self.seat or 'seat')}.round-{rnd}."
+                f"{kind}.prompt.md")
+        body = [f"# model: {self.model.name}", f"# seat: {self.seat}",
+                f"# round: {self._trace_ctx.get('round')}",
+                f"# kind: {kind}", "",
+                "## SYSTEM", parts["sys"], ""]
+        for i, u in enumerate(parts["users"], 1):
+            body += [f"## USER (attempt {i})", u, ""]
+        try:
+            path.write_text("\n".join(body))
+        except OSError:
+            pass             # forensics must never kill a round
+
+    def _on_model_trace(self, trace: dict) -> None:
+        """Sink for llm.NimModel's per-attempt hook: one calls.log line
+        always, a reasoning-burn file when an attempt died length-
+        exhausted with its whole budget spent thinking."""
+        if not self.trace_dir:
+            return
+        line = dict(trace)
+        line.update(seat=self.seat, round=self._trace_ctx.get("round"),
+                    kind=self._trace_ctx.get("kind"),
+                    ts=_dt.datetime.now(
+                        _dt.timezone.utc).isoformat(timespec="seconds"))
+        try:
+            with open(Path(self.trace_dir) / "calls.log", "a") as fh:
+                fh.write(json.dumps(line) + "\n")
+        except OSError:
+            return
+        if (trace.get("ok") is False
+                and trace.get("finish_reason") == "length"
+                and trace.get("reasoning_text")):
+            rnd = self._trace_ctx.get("round") or "na"
+            burn = (Path(self.trace_dir) /
+                    f"reasoning-burn-{_slug(self.seat or 'seat')}."
+                    f"round-{rnd}.{self._trace_ctx.get('kind', 'author')}.txt")
+            header = (f"# reasoning burn: {self.seat} round {rnd} "
+                      f"{self._trace_ctx.get('kind')} "
+                      f"attempt {trace.get('attempt')}\n"
+                      f"# model {trace.get('model')} elapsed "
+                      f"{trace.get('elapsed_s')}s reasoning_chars "
+                      f"{trace.get('reasoning_chars')} max_tokens "
+                      f"{trace.get('max_tokens')}\n\n")
+            try:
+                burn.write_text(header + trace["reasoning_text"])
+            except OSError:
+                pass
 
     # -- one cycle ---------------------------------------------------------
 
@@ -558,6 +644,10 @@ class AgentLoop:
         round' — the loop journals it and continues."""
         eid = self.ensure_entity()
         obs = self.observe()
+        self._trace_ctx = {
+            "round": (obs.get("round") or {}).get("current_round"),
+            "kind": "author"}
+        self._prompt_parts = {}
         libraries = self.mcp.call("get_script_libraries")
         try:
             current = self.mcp.call("get_behaviour", {"entity_id": eid})
@@ -580,6 +670,7 @@ class AgentLoop:
             try:
                 usr_text = user_prompt(obs, current, feedback,
                                        edit_mode=self.edit_mode)
+                self._persist_prompt("author", sys_text, usr_text)
                 raw = self.model.complete(sys_text, usr_text)
             except ScriptedModelEmpty:
                 raise                  # a missing fixture, not a provider hiccup
@@ -700,9 +791,12 @@ class AgentLoop:
         thoughts = ""
         if self.diary:
             try:
+                d_sys, d_usr = diary_prompt(sys_text, transcript,
+                                            action, last_error)
+                self._trace_ctx["kind"] = "diary"
+                self._persist_prompt("diary", d_sys, d_usr)
                 thoughts = strip_think(self.model.complete(
-                    *diary_prompt(sys_text, transcript,
-                                  action, last_error))).strip()
+                    d_sys, d_usr)).strip()
             except ScriptedModelEmpty:
                 raise                 # a missing fixture, not a provider hiccup
             except Exception:

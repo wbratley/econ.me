@@ -963,3 +963,94 @@ def test_rejection_findings_ride_into_the_round_prompt():
     assert entry["action"] == "keep"           # KEEP rode the first attempt
     assert "travel rejected x1" in model.calls[0]["user"]
     assert "already at Berry thicket" in model.calls[0]["user"]
+
+
+# ===========================================================================
+# Call forensics: prompts persisted, calls.log, reasoning-burn dumps
+# (track-0 PR-1 — run 31's 85-minute thinking attempts left no artifact)
+# ===========================================================================
+
+def _forensics_canned():
+    return {
+        "round_state": {"current_round": 2},
+        "leaderboard": {"rows": []},
+        "entity_activity": {"activity": []},
+        "entity_state": {"entity": {"id": "e-ivar", "status": "ACTIVE"}},
+        "entity_events": {"ticks": []},
+        "market_prices": {"markets": []},
+        "epoch_state": {},
+        "get_script_libraries": {"std": {"source": "-- std"},
+                                 "world": {"source": "-- world"},
+                                 "pack": {"source": "-- pack"}},
+        "get_behaviour": {"id": "s1", "source": "ctx.state.x = 1",
+                          "state": {}, "description": "", "timeout_ms": 100},
+    }
+
+
+def test_cycle_persists_round_prompts(tmp_path):
+    """The exact prompt lands on disk BEFORE the call it feeds — a call
+    that hangs or burns its budget still leaves the artifact replay
+    wants, one file per round, attempts appended."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    canned = _forensics_canned()
+
+    def transport(method, params):
+        return {"content": [{"type": "text",
+                             "text": json.dumps(canned[params["name"]])}]}
+
+    model = ScriptedModel(["KEEP"])
+    lp = AgentLoop(McpClient(transport), model, entity_id="e-ivar",
+                   trace_dir=str(tmp_path), seat="House Harald")
+    entry = lp.cycle()
+    assert entry["action"] == "keep"
+
+    f = tmp_path / "seat-house-harald.round-2.author.prompt.md"
+    text = f.read_text()
+    assert text.startswith("# model: scripted")
+    assert "# seat: House Harald" in text
+    assert "## SYSTEM" in text and "## USER (attempt 1)" in text
+    # and the persisted user prompt is the one the model actually saw
+    assert model.calls[0]["user"] in text
+
+
+def test_model_trace_writes_calls_log_and_burn_dump(tmp_path):
+    """The per-attempt hook: one JSON line in calls.log always; a
+    length-exhausted attempt with reasoning text also dumps the burn
+    file. A successful attempt never writes one."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    def transport(method, params):
+        raise AssertionError("no MCP call happens in this test")
+
+    lp = AgentLoop(McpClient(transport), ScriptedModel(["KEEP"]),
+                   trace_dir=str(tmp_path), seat="House Harald")
+    lp._trace_ctx = {"round": 3, "kind": "author"}
+
+    lp._on_model_trace({"model": "nim:openai/gpt-oss-20b", "attempt": 2,
+                        "ok": True, "elapsed_s": 21.0,
+                        "finish_reason": "stop", "content_chars": 900,
+                        "reasoning_chars": 4100, "content_deltas": 300,
+                        "reasoning_deltas": 1200, "max_tokens": 65536,
+                        "usage": None})
+    lines = (tmp_path / "calls.log").read_text().splitlines()
+    rec = json.loads(lines[0])
+    assert rec["seat"] == "House Harald" and rec["round"] == 3
+    assert rec["kind"] == "author" and rec["ok"] is True
+    assert not list(tmp_path.glob("reasoning-burn-*"))
+
+    lp._on_model_trace({"model": "nim:openai/gpt-oss-20b", "attempt": 3,
+                        "ok": False, "elapsed_s": 5107.0,
+                        "finish_reason": "length",
+                        "error": "empty final content (finish_reason=length)",
+                        "content_chars": 0, "reasoning_chars": 190000,
+                        "content_deltas": 0, "reasoning_deltas": 60000,
+                        "max_tokens": 65536, "usage": None,
+                        "reasoning_text": "consider the wolves. " * 3})
+    burn = tmp_path / "reasoning-burn-house-harald.round-3.author.txt"
+    body = burn.read_text()
+    assert "attempt 3" in body and "5107" in body
+    assert "consider the wolves." in body
+    recs = [json.loads(l) for l in
+            (tmp_path / "calls.log").read_text().splitlines()]
+    assert recs[-1]["ok"] is False and recs[-1]["seat"] == "House Harald"
