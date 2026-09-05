@@ -519,6 +519,72 @@ def _static_shape_findings(source: str) -> list[str]:
     return findings
 
 
+def _run_smoke_matrix(source: str,
+                       libraries: dict[str, str] | None
+                       ) -> tuple[list[dict], dict[str, list[str]],
+                                  dict[str, list[str]], int]:
+    """The 8-state matrix run, raw. Shared by the submit gate
+    (check_player_script, which folds the rows into problems/warnings)
+    and the dry-run surface (smoke_matrix_detail, which reports the
+    rows). Returns (rows, errors, bounces, n_error_states):
+
+      rows      -- one dict per state: label, ok, error, intents the
+                   script would submit there (type + params), and the
+                   travel-bounce target when it would travel to where
+                   it already stands;
+      errors    -- error text -> state labels (the fold's grouping);
+      bounces   -- travel target -> state labels;
+      n_error_states -- how many states errored.
+    """
+    errors: dict[str, list[str]] = {}   # error text -> state labels
+    bounces: dict[str, list[str]] = {}  # travel target -> state labels
+    n_error_states = 0
+    rows: list[dict] = []
+    for label, overrides in smoke_states():
+        ctx = synthetic_ctx()
+        ctx.update(overrides)
+        result = _engine.run(source, ctx, timeout_ms=_GATE_TIMEOUT_MS,
+                             libraries=libraries, strict_globals=True)
+        if result.error:
+            n_error_states += 1
+            errors.setdefault(result.error, []).append(label)
+            rows.append({"label": label, "ok": False,
+                         "error": result.error,
+                         "intents": [], "bounce": None})
+            continue
+        # Mini-resolver bounce check: an intent the engine would refuse
+        # as written. Travel to where you already stand is THE silent
+        # killer of run 30 (16 rejections unread) -- warned here, in the
+        # submit report, not refused: the warning rides the #162
+        # feedback path and the script may branch on live state the
+        # matrix cannot see.
+        at = overrides["entity"]["place"]
+        bounced = None
+        for intent in result.intents:
+            if (intent.intent_type == "travel"
+                    and intent.params.get("to") == at):
+                bounces.setdefault(at, []).append(label)
+                bounced = intent.params.get("to")
+        rows.append({"label": label, "ok": True, "error": None,
+                     "intents": [{"type": i.intent_type, "params": i.params}
+                                 for i in result.intents],
+                     "bounce": bounced})
+    return rows, errors, bounces, n_error_states
+
+
+def smoke_matrix_detail(source: str,
+                        libraries: dict[str, str] | None = None
+                        ) -> list[dict]:
+    """Per-state smoke rows for the player dry-run surface: one dict per
+    gate state -- ok/error, the intents the script would submit there,
+    and a travel-bounce flag. The voluntary deeper check behind the
+    submit gate's warnings: a state-dependent script can be perfectly
+    healthy AND broken somewhere specific; this says where, and what it
+    would have done. Read-only; installs nothing."""
+    rows, _, _, _ = _run_smoke_matrix(source, libraries)
+    return rows
+
+
 def check_player_script(source: str,
                         libraries: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """Lint a player-authored behaviour at submit time. Returns
@@ -563,44 +629,23 @@ def check_player_script(source: str,
     # warnings, labeled with the state that produced them; an error in
     # EVERY state collapses to one warning, the single-run gate's old
     # verdict for state-dependent scripts.
-    states = smoke_states()
-    errors: dict[str, list[str]] = {}   # error text -> state labels
-    bounces: dict[str, list[str]] = {}  # travel target -> state labels
-    n_error_states = 0
-    for label, overrides in states:
-        ctx = synthetic_ctx()
-        ctx.update(overrides)
-        result = _engine.run(source, ctx, timeout_ms=_GATE_TIMEOUT_MS,
-                             libraries=libraries, strict_globals=True)
-        if result.error:
-            n_error_states += 1
-            errors.setdefault(result.error, []).append(label)
-            continue
-        # Mini-resolver bounce check: an intent the engine would refuse
-        # as written. Travel to where you already stand is THE silent
-        # killer of run 30 (16 rejections unread) -- warned here, in the
-        # submit report, not refused: the warning rides the #162
-        # feedback path and the script may branch on live state the
-        # matrix cannot see.
-        at = overrides["entity"]["place"]
-        for intent in result.intents:
-            if (intent.intent_type == "travel"
-                    and intent.params.get("to") == at):
-                bounces.setdefault(at, []).append(label)
+    rows, errors, bounces, n_error_states = _run_smoke_matrix(
+        source, libraries)
+    states_count = len(rows)
 
     if any(marker in err for err in errors for marker in _FATAL_MARKERS):
         err = next(iter(errors))
         return ([f"lint: {err}"], [])
 
-    if n_error_states == len(states):
+    if n_error_states == states_count:
         err = next(iter(errors))
         return ([], [f"smoke-run: {err}"])
     warnings: list[str] = []
     for err, labels in errors.items():
         warnings.append(f"smoke-run[{', '.join(labels)}]: {err}")
     for to, labels in sorted(bounces.items()):
-        where = ("every gate state" if len(labels) == len(states)
-                 else f"{len(labels)}/{len(states)} gate states")
+        where = ("every gate state" if len(labels) == states_count
+                 else f"{len(labels)}/{states_count} gate states")
         warnings.append(
             f"smoke-run: travel to {to} bounces (you are already at {to}) "
             f"in {where} -- check how the script decides where you are")

@@ -245,6 +245,15 @@ does not have, whatever it calls.
    `warnings` field, MCP `lint_warnings`). The join paths lint too (a
    broken starter fails join loudly rather than handing out zombies;
    operator content is pre-gated, so this never fires in practice).
+   *The read-only twin (M1, agent seats):* `dry_run_behaviour` (MCP)
+   runs the same gate on a candidate WITHOUT installing it — the
+   verdict is bit-identical to what `set_behaviour` would say — and
+   additionally reports the smoke matrix per state (day/night x
+   hearth/thicket x stocked/empty): the error, or the intents the
+   script would submit there, plus the travel-bounce flag. An external
+   agent iterates against this surface and submits only on
+   accept; nothing is stored, so the active behaviour survives every
+   dry-run unchanged.
    The votable-world-lib analysis is §8 — analysis only, deliberately:
    decision #2 stays deferred, and nothing built forecloses it.
    *Scope boundary:* the legislation path (`set_script`) is not linted
