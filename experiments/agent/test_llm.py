@@ -6,6 +6,7 @@ full, the next call waits for the oldest entry to age out, and the
 429-retry path consumes budget too (it is, after all, another request).
 """
 
+import json
 import time
 
 import pytest
@@ -442,3 +443,151 @@ def test_nim_trace_hook_failure_never_kills_the_call(monkeypatch):
     ]))
     m = NimModel("k", "openai/gpt-oss-20b", on_trace=boom)
     assert m.complete("s", "u") == "fine"
+
+
+# --- RepetitionBreaker: the run-32 marathon cure ----------------------------
+#
+# Four burns = 57% of run 32's wall-clock, all one shape: within any
+# 150-line window a handful of identical lines dominate (Harald r1:
+# "We can..." x7,120 / "We need..." x7,096; Lagertha r11: one warmth
+# argument sentence x330). The breaker detects that in-stream and aborts
+# the attempt; every captured burn's follow-up attempt succeeded with
+# 15-40x less thinking, so abort-then-retry is the cure.
+
+def _rb_lines(n, line):
+    return [f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': line + chr(10)}}]})}"
+            for _ in range(n)]
+
+
+def test_repetition_breaker_fires_on_token_loop():
+    # Mode A: two alternating degenerate lines (Harald r1's shape)
+    from experiments.agent.llm import RepetitionBreaker
+    rb = RepetitionBreaker()
+    assert rb.push("We can..." + "\nWe can...\n" * 54) is False
+    # a line split across deltas must assemble, not double-count
+    assert rb.push("We ne") is False
+    assert rb.push("ed...\n") is False
+    assert rb.push("We need...\n" * 54) is True
+    assert rb.fired and rb.reason
+    assert "top line" in rb.reason and "..." in rb.reason
+
+
+def test_repetition_breaker_fires_on_impasse_circling():
+    # Mode B (Lagertha r11): unique intro, then the same signature
+    # sentence re-walked between one-off filler lines
+    from experiments.agent.llm import RepetitionBreaker
+    rb = RepetitionBreaker()
+    sig = ("Thus we need to find a way to get warmth at night. "
+           "The only way is to start TEND_FIRE at night.")
+    fired = False
+    for i in range(70):
+        fired = rb.push(f"filler consideration number {i} about the "
+                        f"hearth and the wolves, distinct each time\n")
+        if fired:
+            break
+        fired = rb.push(sig + "\n")
+        if fired:
+            break
+    assert fired, "circling signature sentence must trip the breaker"
+
+
+def test_repetition_breaker_ignores_healthy_streams():
+    # varied deliberation prose, and a Lua-ish tail whose `end` lines
+    # repeat the way real scripts do — neither may fire
+    from experiments.agent.llm import RepetitionBreaker
+    rb = RepetitionBreaker()
+    for i in range(150):
+        assert rb.push(f"-- step {i}: rotate stock, eat when satiety "
+                       f"of {i * 7} runs low\n") is False
+    for i in range(50):
+        assert rb.push(f"local x{i} = stock[{i}] + {i}\n") is False
+        assert rb.push("end\n") is False
+    assert not rb.fired
+
+
+def test_nim_breaker_aborts_degenerate_reasoning_and_retries(monkeypatch):
+    # attempt 1 degenerates (Mode A): the stream is aborted mid-burn,
+    # the trace says why with the partial reasoning aboard, and the
+    # existing attempt loop re-fires — attempt 2 answers normally
+    import httpx
+    import experiments.agent.llm as llm_mod
+    assert NimModel("k", "openai/gpt-oss-20b")._breaker is True
+
+    healthy = _Stream(200, [
+        'data: {"choices": [{"delta": {"reasoning_content": "hm"}}]}',
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+        'data: [DONE]',
+    ])
+    responses = [
+        _Stream(200, _rb_lines(110, "We can...")
+                + ['data: {"choices": [{"delta": {"content": "never"}}]}',
+                   'data: [DONE]']),
+        healthy,
+    ]
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return responses[len(posts) - 1]
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    traces = []
+    m = NimModel("k", "openai/gpt-oss-20b", on_trace=traces.append)
+    assert m.complete("s", "u") == "ok"
+    assert len(posts) == 2                       # aborted, retried, done
+    t = traces[0]
+    assert t["ok"] is False and t["breaker"] is True
+    assert t["breaker_channel"] == "reasoning"
+    assert "repetition breaker" in t["error"]
+    assert "We can..." in t["reasoning_text"]    # forensics survive
+    assert traces[1]["ok"] is True and "breaker" not in traces[1]
+
+
+def test_nim_breaker_all_attempts_degenerate_raises(monkeypatch):
+    # three degenerate attempts exhaust the model-level retry; the loop
+    # then treats it like any failed call (keep-old-script round)
+    import httpx
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(
+        200, _rb_lines(120, "Ok.")))
+    with pytest.raises(RuntimeError, match="repetition breaker"):
+        NimModel("k", "openai/gpt-oss-20b").complete("s", "u")
+
+
+def test_nim_breaker_covers_content_channel(monkeypatch):
+    # degeneration is not reasoning-only: a content stream of one line
+    # aborts the attempt too (the garbage script never gets submitted)
+    import httpx
+    content = [f"data: {json.dumps({'choices': [{'delta': {'content': line}}]})}"
+               for line in ["x = 1\n"] * 120]
+    responses = [
+        _Stream(200, content + ['data: [DONE]']),
+        _Stream(200, [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: [DONE]']),
+    ]
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return responses[len(posts) - 1]
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    m = NimModel("k", "openai/gpt-oss-20b")
+    assert m.complete("s", "u") == "ok"
+    assert len(posts) == 2
+
+
+def test_nim_breaker_env_off_disables(monkeypatch):
+    # the escape hatch: ECON_AGENT_REPETITION_BREAKER=off lets a
+    # degenerate stream run to its natural end (old marathon behavior)
+    import httpx
+    monkeypatch.setenv("ECON_AGENT_REPETITION_BREAKER", "off")
+    m = NimModel("k", "openai/gpt-oss-20b")
+    assert m._breaker is False
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(
+        200, _rb_lines(200, "We can...")
+        + ['data: {"choices": [{"delta": {"content": "ok"}}]}',
+           'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+           'data: [DONE]']))
+    assert m.complete("s", "u") == "ok"

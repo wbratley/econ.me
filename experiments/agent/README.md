@@ -198,3 +198,18 @@ audition attempt died at `length` with empty content), so the seat
 sends `reasoning_effort: low` — ~9× cheaper and faster, well inside
 the budget; `ECON_DEEPSEEK_REASONING` overrides (medium/high/…, or
 empty to take the API default).
+
+Repetition breaker (default ON): run 32's forensics showed reasoning
+marathons — a degenerated stream burning its whole 65,536-token budget
+re-walking the same lines ("We can..." x7,120; one warmth argument
+x330; four burns = 57% of the run's wall-clock) — and every burn's
+follow-up attempt succeeding with 15–40× less thinking. So the streamed
+call watches both channels in-flight: if, within any rolling 150-line
+window, one line is ≥40% of it, two lines ≥60%, or fewer than 8
+distinct lines appear (validated against all three captured burn dumps
+— fires at 6–29% of their length — and against prose/Lua controls,
+which never fire), the attempt is aborted mid-stream, traced
+(`breaker: true` + the partial reasoning, dumped as
+`repetition-break-<seat>.round-N.author.txt`), and retried fresh by the
+existing 3-attempt loop. `ECON_AGENT_REPETITION_BREAKER=off` restores
+the old let-it-burn behavior.
