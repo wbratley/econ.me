@@ -23,11 +23,12 @@ The loop is the payoff of the scripting arc (docs/scripting.md):
     behaviour throughout.
 
 One cycle = observe, think, submit (retried on lint refusal, bounded),
-journal. Warnings and per-tick script errors ride into the next cycle's
-prompt: the model sees the consequences of its last rewrite. The model
-has three ways to answer: the complete script, edit blocks (edit_mode),
-or KEEP to carry the current behaviour forward verbatim — a player
-whose script is right readies up without gambling on a rewrite.
+journal. Warnings, per-tick script errors and rejected intents (with
+their reasons, translated) ride into the next cycle's prompt: the model
+sees the consequences of its last rewrite. The model has three ways to
+answer: the complete script, edit blocks (edit_mode), or KEEP to carry
+the current behaviour forward verbatim — a player whose script is
+right readies up without gambling on a rewrite.
 """
 
 from __future__ import annotations
@@ -332,6 +333,78 @@ def _crash_feedback(ticks: list[dict]) -> list[str]:
     for err, n in counts.items():
         lines.append(f"script_error x{n} ticks: {err}{_runtime_hint(err)}")
     return lines
+
+
+# Rejection findings: the other half of the events tail. Run 30's silent
+# killer was not a crash — House Ivar's script fired travel("THICKET")
+# while standing IN the thicket, and the engine's own words ("already at
+# Berry thicket") sat unread in an 8-tick feed for a day because the
+# line never reached the mind that could fix it. The script CAN read
+# ctx.events; the loop makes sure the author does too: one window's
+# rejections deduped by (intent, reason), translated into the move that
+# addresses the class, capped so a bouncing script cannot spam the
+# prompt. Read-only — findings ride the #162 feedback path.
+_REJECTION_HINTS = (
+    ("travel", "already at",
+     "your script believes you stand somewhere you do not -- check how "
+     "it reads your place (ctx.entity.place is the place KEY STRING)"),
+    ("travel", "no route",
+     "no road connects those keys -- walk in hops the map wires "
+     "(ctx.query.route(from, to) plans them)"),
+    ("start_process", "too dark",
+     "that recipe needs daylight -- gate it on std.is_day()"),
+    ("start_process", "not enough",
+     "the entity lacks an input -- check ctx.holdings first (quantities "
+     "are strings: tonumber before comparing)"),
+    ("place_order", "",
+     "check the order shape: place_order(symbol, side, quantity, "
+     "limit_price, account_id) -- arity 5, decimals as strings, the "
+     "account must be yours"),
+    ("attack", "",
+     "combat is up close -- travel to the target's place first"),
+)
+
+_MAX_REJECTION_FINDINGS = 4
+
+
+def _rejection_hint(kind: str, reason: str) -> str:
+    for type_pat, needle, hint in _REJECTION_HINTS:
+        if kind == type_pat and needle in reason:
+            return hint
+    return ""
+
+
+def _rejection_feedback(ticks: list[dict],
+                        status: str | None = None) -> list[str]:
+    """Feedback lines from rejected intents in the observed event tail:
+    deduped by (intent type, reason), most frequent first, capped. A
+    window with zero applied intents while the entity is ACTIVE earns
+    one line of its own — a script that returns quietly is as mute as
+    one the engine refuses."""
+    rejected: dict[tuple[str, str], int] = {}
+    applied = 0
+    for tick in ticks:
+        for ev in tick.get("events", []):
+            if ev.get("status") == "rejected":
+                key = (str(ev.get("type")),
+                       str(ev.get("reason") or "no reason given"))
+                rejected[key] = rejected.get(key, 0) + 1
+            elif ev.get("status") == "applied":
+                applied += 1
+    lines: list[str] = []
+    for (kind, reason), n in sorted(rejected.items(),
+                                    key=lambda kv: -kv[1])[:_MAX_REJECTION_FINDINGS]:
+        line = f'{kind} rejected x{n}: "{reason}"'
+        hint = _rejection_hint(kind, reason)
+        if hint:
+            line += f" -- {hint}"
+        lines.append(line[:200])
+    if (status == "ACTIVE" and ticks and applied == 0 and not rejected):
+        lines.append(
+            "no intents were applied in the observed window -- if your "
+            "script should have acted, check its gates (place, daylight, "
+            "stock)")
+    return lines
 _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
                 "refused. Add `local` at the first use of that name (or "
                 "capture ctx.state in a local at the top of the script).")
@@ -471,6 +544,11 @@ class AgentLoop:
         # translated (a raw Lua error is a riddle; the run-6 "fix" was
         # byte-identical to the crasher).
         self._feedback.extend(_crash_feedback(obs["events"].get("ticks", [])))
+        # Rejections ride the same path (run 30: 16 travel bounces with
+        # the reasons in hand, unread for a day). Read-only aggregation.
+        self._feedback.extend(_rejection_feedback(
+            obs["events"].get("ticks", []),
+            status=(obs["entity"].get("entity") or {}).get("status")))
         return obs
 
     def cycle(self) -> dict:
