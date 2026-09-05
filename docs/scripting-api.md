@@ -60,7 +60,11 @@ strings have no `.key`. This exact line killed House Ivar (run 30; §7).
 The submit gate refuses it statically now — member access on a known
 string path, and reads of members `std`/`ctx.action`/`ctx.query` do not
 carry, are REFUSED with the fix in the message. The gate catches what
-it can prove; §7 still documents the whole class.
+it can prove; §7 still documents the whole class. The gate's smoke-run
+is a state matrix (day/night × hearth/thicket × stocked/empty) over a
+truthful sample ctx — and a `travel` intent aimed at where you already
+stand comes back as a **warning** with the bounce spelled out, not a
+silent rejection you never read.
 
 **Nil-ability is documented per field.** The rule of the engine: a
 world that does not carry a feature ships its absence as the real

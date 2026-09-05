@@ -206,27 +206,75 @@ def synthetic_queries() -> dict:
     }
 
 
+#: Truthful samples (run 30 postmortem, tick.py _build_script_ctx
+#: shapes, verbatim from the live run): the gate ctx used to carry only
+#: EMPTY state -- every place-gated, pantry-gated, needs-reading branch
+#: took its nil path at smoke time and the gate learned nothing. These
+#: rows are real shapes, so the smoke matrix below exercises real code.
+_GATE_PLACE_FACTS = {
+    "HEARTH": {
+        "key": "HEARTH", "name": "Hearth clearing", "kind": "camp",
+        "region_id": None,
+        "description": "A wind-sheltered clearing around a fire ring.",
+    },
+    "THICKET": {
+        "key": "THICKET", "name": "Berry thicket", "kind": "forage",
+        "region_id": None,
+        "description": "Dense berry thicket good for gathering.",
+    },
+}
+
+_GATE_HOLDINGS = [
+    {"symbol": "BERRIES", "quantity": "3.0000"},
+    {"symbol": "WOOD", "quantity": "2.0000"},
+]
+
+_GATE_NEEDS = [{
+    "code": "WARMTH", "priority": 1, "quantity_per_tick": "1.0000",
+    "satisfiers": ["WARMTH"], "satisfaction": "0.5000",
+    "condition": "EXPOSURE",
+}]
+
+_GATE_EVENTS = [
+    # The feed shapes a behaviour script actually receives (witness.py
+    # script_feed + intent events): its own last-tick rows, rejections
+    # with the reason string in hand.
+    {"type": "need_unmet", "entity_id": "gate-entity", "need": "WARMTH",
+     "consumed": "0.0000", "required": "1.0000", "satisfaction": "0.5000",
+     "condition": "EXPOSURE", "condition_granted": "0.5000"},
+    {"type": "travel", "entity_id": "gate-entity",
+     "params": {"to": "HEARTH"}, "status": "rejected",
+     "reason": "already at Hearth clearing"},
+]
+
+
 #: The synthetic ctx itself: the shape _build_ctx expects, with no session
 #: behind it. Pure-Lua library members can only touch what is injected, so
 #: running them here is safe by construction -- and catches the nil-call
 #: class at install time instead of at a player's tick.
 SYNTHETIC_CTX = {
     "entity": {"id": "gate-entity", "name": "Gate", "entity_type": "individual",
-               "is_monetary_authority": False, "place": None,
+               "is_monetary_authority": False, "place": "HEARTH",
                "age": 0, "capabilities": []},
     "accounts": [{"id": "gate-account", "currency": "USD", "balance": "1000.0000"}],
-    "holdings": [], "processes": [], "parcels": [], "needs": [],
-    # The map (docs/spatial.md S1): an empty map is a real world-shape
-    # (abstract economies), so the gate ctx carries the keys -- a nil
-    # here would be a vocabulary lie, not a clean smoke run.
-    "places": [], "place": None,
+    # Real rows, real shapes (the samples above): placed at HEARTH, a
+    # stocked pantry, a live need, a feed with a rejection in it. The
+    # empty-pantry / unplaced worlds stay represented in the smoke
+    # matrix below -- one lie-free state for every branch a behaviour
+    # actually lives in.
+    "holdings": list(_GATE_HOLDINGS), "processes": [], "parcels": [],
+    "needs": list(_GATE_NEEDS),
+    # The map (docs/spatial.md S1): the entity's own place first, every
+    # place public. Keys are strings; facts are tables (docs §1).
+    "places": [dict(_GATE_PLACE_FACTS["HEARTH"]), dict(_GATE_PLACE_FACTS["THICKET"])],
+    "place": dict(_GATE_PLACE_FACTS["HEARTH"]),
     # The clock (clock.clock_facts): behaviours schedule off it, so the
     # gate ctx carries the same shape production does (run 29: scripts
     # reading ctx.clock crashed ONLY at smoke time -- accepted with a
     # warning, and the harness's crash-retry held them hostage to a
     # vocabulary lie). Tick 1 matches ctx.tick below.
     "clock": _clock.clock_facts(1),
-    "unlocks": [], "events": [], "state": {},
+    "unlocks": [], "events": list(_GATE_EVENTS), "state": {},
     # _build_ctx exposes the executing tick as ctx.tick (scripting.py
     # "tick"); behaviours schedule off it (the post peddles every 10th
     # tick), so the gate ctx carries a scalar too -- a nil here would
@@ -249,6 +297,36 @@ def synthetic_ctx() -> dict:
     ctx = dict(SYNTHETIC_CTX)
     ctx["queries"] = synthetic_queries()
     return ctx
+
+
+#: Ticks the matrix smokes: hour 12 (full daylight) and hour 01 (deep
+#: night) -- the two regimes stone-age behaviours branch on
+#: (docs/spatial.md S2, daylight hours 06..19).
+_SMOKE_DAY_TICK, _SMOKE_NIGHT_TICK = 13, 2
+
+
+def smoke_states() -> list[tuple[str, dict]]:
+    """(label, ctx overrides) for the player gate's smoke matrix:
+    day/night x hearth/thicket x stocked/empty pantry -- the states a
+    stone-age behaviour actually lives in. Each override layers onto
+    synthetic_ctx(); the base ctx stays one coherent placed state so
+    single-run callers (pack validation, the dry-run endpoint) see the
+    same truth the matrix does."""
+    states = []
+    for light, tick in (("day", _SMOKE_DAY_TICK), ("night", _SMOKE_NIGHT_TICK)):
+        for at in _GATE_PLACE_FACTS:
+            for pantry, holdings in (("stocked", _GATE_HOLDINGS), ("empty", [])):
+                states.append((
+                    f"{light}@{at.lower()},{pantry}",
+                    {
+                        "tick": tick,
+                        "clock": _clock.clock_facts(tick),
+                        "entity": {**SYNTHETIC_CTX["entity"], "place": at},
+                        "place": dict(_GATE_PLACE_FACTS[at]),
+                        "holdings": list(holdings),
+                    },
+                ))
+    return states
 
 
 # Gate runs use synthetic_ctx() (fresh per call).
@@ -477,13 +555,56 @@ def check_player_script(source: str,
     if findings:
         return (findings, [])
 
-    result = _engine.run(source, synthetic_ctx(), timeout_ms=_GATE_TIMEOUT_MS,
-                         libraries=libraries, strict_globals=True)
-    if result.error:
-        if any(marker in result.error for marker in _FATAL_MARKERS):
-            return ([f"lint: {result.error}"], [])
-        return ([], [f"smoke-run: {result.error}"])
-    return ([], [])
+    # The smoke matrix (run 30 postmortem): one strict run per state a
+    # behaviour actually lives in, so place-gated and pantry-gated code
+    # is exercised, not just its nil path. Refusal semantics are
+    # unchanged -- problems stay the state-independent classes (syntax,
+    # static lint, fatal markers). State-dependent findings are
+    # warnings, labeled with the state that produced them; an error in
+    # EVERY state collapses to one warning, the single-run gate's old
+    # verdict for state-dependent scripts.
+    states = smoke_states()
+    errors: dict[str, list[str]] = {}   # error text -> state labels
+    bounces: dict[str, list[str]] = {}  # travel target -> state labels
+    n_error_states = 0
+    for label, overrides in states:
+        ctx = synthetic_ctx()
+        ctx.update(overrides)
+        result = _engine.run(source, ctx, timeout_ms=_GATE_TIMEOUT_MS,
+                             libraries=libraries, strict_globals=True)
+        if result.error:
+            n_error_states += 1
+            errors.setdefault(result.error, []).append(label)
+            continue
+        # Mini-resolver bounce check: an intent the engine would refuse
+        # as written. Travel to where you already stand is THE silent
+        # killer of run 30 (16 rejections unread) -- warned here, in the
+        # submit report, not refused: the warning rides the #162
+        # feedback path and the script may branch on live state the
+        # matrix cannot see.
+        at = overrides["entity"]["place"]
+        for intent in result.intents:
+            if (intent.intent_type == "travel"
+                    and intent.params.get("to") == at):
+                bounces.setdefault(at, []).append(label)
+
+    if any(marker in err for err in errors for marker in _FATAL_MARKERS):
+        err = next(iter(errors))
+        return ([f"lint: {err}"], [])
+
+    if n_error_states == len(states):
+        err = next(iter(errors))
+        return ([], [f"smoke-run: {err}"])
+    warnings: list[str] = []
+    for err, labels in errors.items():
+        warnings.append(f"smoke-run[{', '.join(labels)}]: {err}")
+    for to, labels in sorted(bounces.items()):
+        where = ("every gate state" if len(labels) == len(states)
+                 else f"{len(labels)}/{len(states)} gate states")
+        warnings.append(
+            f"smoke-run: travel to {to} bounces (you are already at {to}) "
+            f"in {where} -- check how the script decides where you are")
+    return ([], warnings)
 
 
 # ---------------------------------------------------------------------------
