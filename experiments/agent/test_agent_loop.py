@@ -849,3 +849,117 @@ def test_crash_feedback_no_hint_for_unknown_error():
     lines = _crash_feedback([{"tick": 1, "events": [
         {"type": "script_error", "error": "something exotic"}]}])
     assert lines == ["script_error x1 ticks: something exotic"]
+
+
+# ===========================================================================
+# Rejection findings: intents the engine refused, deduped, translated,
+# capped — run 30's 16 unread travel bounces made the case (the reasons
+# were in the feed all along; the author never saw them)
+# ===========================================================================
+
+def test_rejection_feedback_dedups_and_translates():
+    from experiments.agent.loop import _rejection_feedback
+    # Ivar, d2h00-d2h15 verbatim: travel("THICKET") from inside the
+    # thicket, rejected with the reason in hand, every tick.
+    ticks = [{"tick": t, "events": [
+        {"type": "travel", "entity_id": "e", "params": {"to": "THICKET"},
+         "idempotency_key": f"k{t}", "status": "rejected",
+         "reason": "already at Berry thicket"}]}
+        for t in range(40, 56)]
+    lines = _rejection_feedback(ticks, status="ACTIVE")
+    assert len(lines) == 1                     # one line, not sixteen
+    assert "travel rejected x16" in lines[0]
+    assert "already at Berry thicket" in lines[0]
+    assert "KEY STRING" in lines[0]            # the translation
+    assert len(lines[0]) <= 200
+
+
+def test_rejection_feedback_groups_and_sorts_by_frequency():
+    from experiments.agent.loop import _rejection_feedback
+    ticks = [{"tick": t, "events": [
+        {"type": "start_process", "params": {"recipe": "GATHER"},
+         "status": "rejected", "reason": "too dark: GATHER needs daylight"}]}
+        for t in range(6, 14)] + [
+        {"tick": 14, "events": [
+            {"type": "start_process", "params": {"recipe": "HUNT"},
+             "status": "rejected", "reason": "not enough MEAT"},
+            {"type": "say", "status": "applied"}]}]
+    lines = _rejection_feedback(ticks, status="ACTIVE")
+    assert len(lines) == 2                     # two groups, applied `say`
+    assert lines[0].startswith("start_process rejected x8")  # most first
+    assert "std.is_day()" in lines[0]
+    assert "tonumber" in lines[1]              # the holdings translation
+
+
+def test_rejection_feedback_unknown_reason_is_plain_but_counted():
+    from experiments.agent.loop import _rejection_feedback
+    ticks = [{"tick": 3, "events": [
+        {"type": "levy", "status": "rejected", "reason": "no authority"}]}]
+    assert _rejection_feedback(ticks) == ['levy rejected x1: "no authority"']
+
+
+def test_rejection_feedback_caps_the_findings():
+    from experiments.agent.loop import _rejection_feedback
+    ticks = [{"tick": t, "events": [
+        {"type": "transfer", "status": "rejected", "reason": f"no {t}"}]}
+        for t in range(1, 7)]                  # six distinct groups
+    lines = _rejection_feedback(ticks)
+    assert len(lines) == 4                     # capped, no spam
+
+
+def test_rejection_feedback_notes_a_zero_intent_span():
+    from experiments.agent.loop import _rejection_feedback
+    ticks = [{"tick": 9, "events": [
+        {"type": "need_unmet", "need": "WARMTH", "condition": "EXPOSURE",
+         "consumed": "0.0000", "required": "1.0000"}]}]  # feed, no intents
+    lines = _rejection_feedback(ticks, status="ACTIVE")
+    assert len(lines) == 1 and "no intents were applied" in lines[0]
+    assert _rejection_feedback(ticks, status="INCAPACITATED") == []
+    assert _rejection_feedback([]) == []       # nothing observed
+
+
+def test_rejection_feedback_quiet_when_all_applied():
+    from experiments.agent.loop import _rejection_feedback
+    ticks = [{"tick": 5, "events": [
+        {"type": "travel", "params": {"to": "HEARTH"},
+         "status": "applied", "route_id": "r1"}]}]
+    assert _rejection_feedback(ticks, status="ACTIVE") == []
+
+
+def test_rejection_findings_ride_into_the_round_prompt():
+    """The wiring, end to end: this round's observed rejections surface
+    in this round's user prompt (the ticks advanced since the last
+    cycle), riding the same feedback list as lint warnings."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    canned = {
+        "round_state": {"current_round": 2},
+        "leaderboard": {"rows": []},
+        "entity_activity": {"activity": []},
+        "entity_state": {"entity": {"id": "e-ivar", "status": "ACTIVE"}},
+        "entity_events": {"ticks": [
+            {"tick": 61, "events": [
+                {"type": "travel", "entity_id": "e-ivar",
+                 "params": {"to": "THICKET"}, "status": "rejected",
+                 "reason": "already at Berry thicket"}]}]},
+        "market_prices": {"markets": []},
+        "epoch_state": {},
+        "get_script_libraries": {"std": {"source": "-- std"},
+                                 "world": {"source": "-- world"},
+                                 "pack": {"source": "-- pack"}},
+        "get_behaviour": {"id": "s1", "source": "ctx.state.x = 1",
+                          "state": {}, "description": "", "timeout_ms": 100},
+    }
+
+    def transport(method, params):
+        name = params["name"]
+        assert method == "tools/call"
+        return {"content": [{"type": "text",
+                             "text": json.dumps(canned[name])}]}
+
+    model = ScriptedModel(["KEEP"])
+    lp = AgentLoop(McpClient(transport), model, entity_id="e-ivar")
+    entry = lp.cycle()
+    assert entry["action"] == "keep"           # KEEP rode the first attempt
+    assert "travel rejected x1" in model.calls[0]["user"]
+    assert "already at Berry thicket" in model.calls[0]["user"]
