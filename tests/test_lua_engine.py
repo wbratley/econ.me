@@ -276,6 +276,37 @@ def test_stdlib_pure_helpers_work():
         assert result.return_value == expected[name], name
 
 
+def test_stdlib_sugar_helpers():
+    """std.at / std.is_day / std.need_level / std.balance (run 30
+    postmortem): the idioms every house rewrote by hand, with the
+    hand-rolled versions failing silently."""
+    at_ctx = dict(_LIB_CTX, entity={**_LIB_CTX["entity"], "place": "HEARTH"})
+    need_ctx = dict(_LIB_CTX,
+                    needs=[{"code": "WARMTH", "satisfaction": "0.5000"}])
+
+    def run(src, ctx):
+        result = engine.run(src, ctx)
+        assert result.error is None, result.error
+        return result.return_value
+
+    # std.at: true only at the key you stand on (entity.place is a STRING)
+    assert run("return std.at('HEARTH')", at_ctx) is True
+    assert run("return std.at('THICKET')", at_ctx) is False
+    assert run("return std.at('HEARTH')", _LIB_CTX) is False  # unplaced
+    assert run("return std.at(nil)", at_ctx) is False
+    # std.is_day mirrors is_night: boolean with a clock, nil without
+    assert run("return std.is_day()", _LIB_CTX) is False      # clock: night
+    assert run("return std.is_day()", dict(_LIB_CTX, clock=None)) is None
+    # std.need_level: the numeric read of a string satisfaction
+    assert abs(run("return std.need_level('WARMTH')", need_ctx) - 0.5) < 1e-9
+    assert abs(run("return std.need_level('FOOD')", _LIB_CTX) - 1.0) < 1e-9
+    assert run("return std.need_level('NOPE')", _LIB_CTX) is None
+    # std.balance: first account (or first in a currency) as a number
+    assert abs(run("return std.balance()", _LIB_CTX) - 100.0) < 1e-9
+    assert abs(run("return std.balance('USD')", _LIB_CTX) - 100.0) < 1e-9
+    assert run("return std.balance('EUR')", _LIB_CTX) == 0
+
+
 def test_stdlib_namespace_is_read_only():
     result = engine.run("std.holding_qty = nil", _LIB_CTX)
     assert result.error is not None

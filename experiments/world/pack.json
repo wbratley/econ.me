@@ -25,7 +25,7 @@
   "summary": "Two scenarios -- the frontier economy and the stone age -- plus the shared clerk, miner, smith and trading-post casts.",
   "title": "The Demo World"
  },
- "engine_std": "5ff85b5419f977c8",
+ "engine_std": "f1a7fad89397b98f",
  "lua": {
   "clerk.lua": "999bf6c106578846",
   "miner.lua": "3d985d09a4275581",

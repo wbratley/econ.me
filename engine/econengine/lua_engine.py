@@ -276,6 +276,44 @@ function std.day()
   return nil
 end
 
+function std.is_day()
+  if ctx.clock then return not ctx.clock.is_night end
+  return nil
+end
+
+-- Place helpers (run 30 postmortem): ctx.entity.place is the place KEY
+-- STRING (or nil when unplaced) -- comparing it with == is the only
+-- sound test. `place.key` on it is a silent nil that killed House Ivar:
+-- every place-gated branch collapsed to its fallback and the house
+-- froze while walking nowhere. std.at is the guard-free idiom.
+function std.at(key)
+  if key == nil then return false end
+  return ctx.entity.place == key
+end
+
+-- The numeric read of a need's satisfaction. need_by_code returns the
+-- row, whose satisfaction is an EXACT DECIMAL STRING ("0.5000") like
+-- every engine quantity -- arithmetic on it errors. This is tonumber
+-- done for you; nil when the world carries no such need.
+function std.need_level(code)
+  local n = std.need_by_code(code)
+  if n then return tonumber(n.satisfaction) end
+  return nil
+end
+
+-- First account balance in `currency` (nil = your first account), as a
+-- NUMBER. The ctx.accounts rows carry string balances; this is the
+-- loop-every-script-rewrites done once, correctly. 0 when there is no
+-- such account.
+function std.balance(currency)
+  for _, a in ipairs(ctx.accounts) do
+    if currency == nil or a.currency == currency then
+      return tonumber(a.balance) or 0
+    end
+  end
+  return 0
+end
+
 return std
 """
 
