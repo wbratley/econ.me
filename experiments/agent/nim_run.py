@@ -385,7 +385,7 @@ def main(argv=None) -> int:
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
                 journal_path=str(out / f"journal-{slug(d.name)}.jsonl"),
                 edit_mode=args.edit_mode, diary=diary, manual=manual,
-                catalog=catalog)
+                catalog=catalog, trace_dir=str(out), seat=d.name)
             loops.append((d, lp))
 
         print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")

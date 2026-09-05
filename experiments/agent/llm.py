@@ -574,7 +574,8 @@ class NimModel(OpenAIModel):
                  base_url: str = NIM_DEFAULT_BASE,
                  temperature: float = 0.3, max_tokens: int | None = None,
                  limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter,
-                 extra_body: dict | None = None):
+                 extra_body: dict | None = None,
+                 on_trace: Callable[[dict], None] | None = None):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
@@ -584,12 +585,28 @@ class NimModel(OpenAIModel):
         # payload (e.g. DeepSeek's reasoning_effort) — harmless empty
         # for plain NIM calls.
         self._extra_body = dict(extra_body or {})
+        # Per-attempt call forensics (reasoning burns: run 31's Harald
+        # spent ~85 minutes thinking per attempt and the reasoning
+        # text was discarded client-side). The hook sees one dict per
+        # HTTP attempt — ok/elapsed/finish_reason/char+delta counts/
+        # usage when the provider sends it, and the full reasoning
+        # text when an attempt ends length-exhausted. Hook failures
+        # are swallowed: instrumentation must never kill a call.
+        self._on_trace = on_trace
         # Per-model defaults, overridable by argument: reasoning models
         # (the stone-run3 GPT-OSS evidence) spend the completion budget
         # thinking and finish_reason=length with an empty final channel --
         # `raise max_tokens` -- so they get a bigger default than the
         # 8192 a plain instruct model is fine with.
         self._max_tokens = max_tokens or _default_max_tokens(model)
+
+    def _emit_trace(self, **fields) -> None:
+        if self._on_trace is None:
+            return
+        try:
+            self._on_trace(fields)
+        except Exception:
+            pass                 # forensics must never be the failure
 
     def complete(self, system: str, user: str) -> str:
         import httpx
@@ -600,6 +617,7 @@ class NimModel(OpenAIModel):
                 self._limiter_factory().wait()   # shared per-minute budget
             if attempt:
                 time.sleep(2.0 * attempt)          # 2s, 4s — polite, bounded
+            t0 = time.monotonic()
             try:
                 # Streamed, always. With the 32k completion budget a
                 # reasoning model thinks for many minutes, and a NON-
@@ -612,8 +630,10 @@ class NimModel(OpenAIModel):
                 # timeout is a BETWEEN-chunks budget: a slow generation
                 # keeps both the bytes and the deadline alive.
                 chunks: list[str] = []
-                reasoning = False
+                reason_bits: list[str] = []
+                n_content = n_reasoning = 0
                 finish: str | None = None
+                usage: dict | None = None
                 with httpx.stream(
                     "POST",
                     f"{self._base_url}/v1/chat/completions",
@@ -635,6 +655,13 @@ class NimModel(OpenAIModel):
                     if r.status_code == 429 or r.status_code >= 500:
                         last_error = (f"HTTP {r.status_code}: "
                                       f"{r.read()[:200]!r}")
+                        self._emit_trace(
+                            model=self.name, attempt=attempt + 1, ok=False,
+                            elapsed_s=round(time.monotonic() - t0, 1),
+                            finish_reason=None, error=last_error,
+                            content_chars=0, reasoning_chars=0,
+                            content_deltas=0, reasoning_deltas=0,
+                            max_tokens=self._max_tokens)
                         continue
                     r.raise_for_status()
                     for line in r.iter_lines():
@@ -649,27 +676,72 @@ class NimModel(OpenAIModel):
                         except ValueError:
                             continue   # keep-alive comments, blanks
                         if isinstance(obj.get("error"), dict):
-                            raise RuntimeError(
-                                f"{self.name} stream error: "
-                                + str(obj["error"].get("message"))[:200])
+                            msg = (f"{self.name} stream error: "
+                                   + str(obj["error"].get("message"))[:200])
+                            self._emit_trace(
+                                model=self.name, attempt=attempt + 1,
+                                ok=False,
+                                elapsed_s=round(time.monotonic() - t0, 1),
+                                finish_reason=finish, error=msg,
+                                content_chars=0, reasoning_chars=sum(
+                                    len(b) for b in reason_bits),
+                                content_deltas=n_content,
+                                reasoning_deltas=n_reasoning,
+                                max_tokens=self._max_tokens)
+                            raise RuntimeError(msg)
+                        if isinstance(obj.get("usage"), dict):
+                            usage = obj["usage"]
                         for choice in obj.get("choices") or []:
                             finish = choice.get("finish_reason") or finish
                             delta = choice.get("delta") or {}
                             if delta.get("reasoning_content"):
-                                reasoning = True
+                                reason_bits.append(
+                                    str(delta["reasoning_content"]))
+                                n_reasoning += 1
                             piece = delta.get("content")
                             if piece:
                                 chunks.append(str(piece))
+                                n_content += 1
                 text = "".join(chunks)
+                elapsed = time.monotonic() - t0
                 if not text.strip():
                     why = ("; reasoning consumed the token budget — "
-                           "raise max_tokens") if reasoning else ""
-                    raise RuntimeError(
-                        f"empty final content (finish_reason="
-                        f"{finish or '?'}{why})")
+                           "raise max_tokens") if reason_bits else ""
+                    error = (f"empty final content (finish_reason="
+                             f"{finish or '?'}{why})")
+                    # the burn dump: an attempt that spent its whole
+                    # budget thinking ships the reasoning text to the
+                    # hook — the only place an hour of thinking can
+                    # still be read after the fact
+                    self._emit_trace(
+                        model=self.name, attempt=attempt + 1, ok=False,
+                        elapsed_s=round(elapsed, 1),
+                        finish_reason=finish, error=error,
+                        content_chars=0, reasoning_chars=sum(
+                            len(b) for b in reason_bits),
+                        content_deltas=n_content,
+                        reasoning_deltas=n_reasoning,
+                        max_tokens=self._max_tokens,
+                        usage=usage, reasoning_text="".join(reason_bits))
+                    raise RuntimeError(error)
+                self._emit_trace(
+                    model=self.name, attempt=attempt + 1, ok=True,
+                    elapsed_s=round(elapsed, 1),
+                    finish_reason=finish,
+                    content_chars=len(text), reasoning_chars=sum(
+                        len(b) for b in reason_bits),
+                    content_deltas=n_content, reasoning_deltas=n_reasoning,
+                    max_tokens=self._max_tokens, usage=usage)
                 return text
             except httpx.HTTPError as exc:
                 last_error = str(exc)
+                self._emit_trace(
+                    model=self.name, attempt=attempt + 1, ok=False,
+                    elapsed_s=round(time.monotonic() - t0, 1),
+                    finish_reason=None, error=f"{exc}",
+                    content_chars=0, reasoning_chars=0,
+                    content_deltas=0, reasoning_deltas=0,
+                    max_tokens=self._max_tokens)
         raise RuntimeError(f"NIM {self._model} failed after 3 attempts: "
                            f"{last_error}")
 
@@ -762,14 +834,16 @@ class DeepSeekModel(NimModel):
                  temperature: float = 0.3, max_tokens: int | None = None,
                  window: str | None = None,
                  wait_minutes: float | None = None,
-                 reasoning_effort: str | None = None):
+                 reasoning_effort: str | None = None,
+                 on_trace: Callable[[dict], None] | None = None):
         eff = (reasoning_effort
                if reasoning_effort is not None
                else os.environ.get("ECON_DEEPSEEK_REASONING", "low"))
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url, temperature=temperature,
                          max_tokens=max_tokens, limiter_factory=None,
-                         extra_body={"reasoning_effort": eff} if eff else {})
+                         extra_body={"reasoning_effort": eff} if eff else {},
+                         on_trace=on_trace)
         self.name = f"deepseek:{model}"
         self._window = window
         self._wait_minutes = wait_minutes

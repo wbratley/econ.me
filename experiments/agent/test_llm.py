@@ -375,3 +375,70 @@ def test_deepseek_reasoning_effort_default_low_env_overridable(monkeypatch):
     llm.DeepSeekModel("k", "deepseek-v4-flash", window="any",
                       reasoning_effort="high").complete("s", "u")
     assert posts[-1]["json"]["reasoning_effort"] == "high"
+
+
+# ===========================================================================
+# Call traces: the reasoning-burn forensics hook (run 31: Harald burned
+# ~85 min per attempt thinking and the text was discarded client-side)
+# ===========================================================================
+
+def test_nim_complete_emits_trace_on_success(monkeypatch):
+    import httpx
+    traces = []
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_content": "plan "}}]}',
+        'data: {"choices": [{"delta": {"reasoning_content": "more"}}]}',
+        'data: {"choices": [{"delta": {"content": "return "}}]}',
+        'data: {"choices": [{"delta": {"content": "1"}}]}',
+        'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+        'data: {"usage": {"completion_tokens": 42}}',
+        'data: [DONE]',
+    ]
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(200, lines))
+    m = NimModel("k", "openai/gpt-oss-20b", on_trace=traces.append)
+    assert m.complete("s", "u") == "return 1"
+    assert len(traces) == 1
+    t = traces[0]
+    assert t["ok"] is True and t["attempt"] == 1
+    assert t["finish_reason"] == "stop"
+    assert t["content_chars"] == 8 and t["reasoning_chars"] == 9
+    assert t["content_deltas"] == 2 and t["reasoning_deltas"] == 2
+    assert t["usage"]["completion_tokens"] == 42
+    assert t["max_tokens"] == 65536 and t["elapsed_s"] >= 0
+    assert "reasoning_text" not in t      # success ships no reasoning blob
+
+
+def test_nim_complete_emits_reasoning_text_on_length_exhaustion(monkeypatch):
+    import httpx
+    traces = []
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_content": "loop "}}]}',
+        'data: {"choices": [{"delta": {"reasoning_content": "loop"}}]}',
+        'data: {"choices": [{"finish_reason": "length", "delta": {}}]}',
+        'data: [DONE]',
+    ]
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(200, lines))
+    m = NimModel("k", "openai/gpt-oss-20b", on_trace=traces.append)
+    with pytest.raises(RuntimeError, match="finish_reason=length"):
+        m.complete("s", "u")
+    t = traces[0]
+    assert t["ok"] is False
+    assert t["reasoning_text"] == "loop loop"
+    assert t["finish_reason"] == "length"
+    assert t["reasoning_deltas"] == 2 and t["content_deltas"] == 0
+    assert "empty final content" in t["error"]
+
+
+def test_nim_trace_hook_failure_never_kills_the_call(monkeypatch):
+    import httpx
+
+    def boom(trace):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(200, [
+        'data: {"choices": [{"delta": {"content": "fine"}}]}',
+        'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+        'data: [DONE]',
+    ]))
+    m = NimModel("k", "openai/gpt-oss-20b", on_trace=boom)
+    assert m.complete("s", "u") == "fine"
