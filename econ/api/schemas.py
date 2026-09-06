@@ -642,6 +642,22 @@ class GateModeUpdate(BaseModel):
     mode: str = Field(pattern="^(readiness|operator)$")
 
 
+class TokenMintRequest(BaseModel):
+    """Operator request for a seat token (M2a): mint a long-lived JWT for
+    an existing user, over the wire -- what run bootstrap does in-process,
+    exposed so an internet seat can join without filesystem access to
+    world.db."""
+    user_id: str
+
+
+class TokenMintResponse(BaseModel):
+    """The minted bearer credential. Lifetime is the server's configured
+    ACCESS_TOKEN_EXPIRE_MINUTES (run harnesses raise it to outlast a game)."""
+    user_id: str
+    token: str
+    expires_minutes: int
+
+
 class RoundSummary(BaseModel):
     """Returned by ``POST /admin/rounds/advance`` -- the round just resolved."""
     round_number: int          # the round that just completed
@@ -650,6 +666,7 @@ class RoundSummary(BaseModel):
     events_by_type: dict[str, int]
     next_round: int            # the now-open round
     ticks_per_round: int
+    next_opened_at: Optional[float] = None  # epoch the next window opened (deadline anchor)
     victory_stamps: list[dict] = []    # observer output, if an epoch ran (§14.2)
     eliminations: list[dict] = []      # dynasty extinctions stamped this round
 

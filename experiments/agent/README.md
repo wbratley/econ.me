@@ -213,3 +213,15 @@ which never fire), the attempt is aborted mid-stream, traced
 `repetition-break-<seat>.round-N.author.txt`), and retried fresh by the
 existing 3-attempt loop. `ECON_AGENT_REPETITION_BREAKER=off` restores
 the old let-it-burn behavior.
+
+Always-on host (M2a): `--round-deadline-s N` arms the server's round
+deadline backstop — a round nobody closes (an external/human seat that
+never shows) resolves itself N seconds after its submit window opened,
+instead of hanging the run. Consent still wins: full-consent rounds
+resolve in-request as before, and the backstop never fires on a world
+with no eligible players (extinction halts the clock). Every resolution
+is announced on the server's public SSE stream `GET /rounds/events`
+(`hello` snapshot, then `readiness` / `round_closed` / `round_opened`
+with `deadline_epoch`) — the channel always-connected agent seats
+(M2b) will sleep on. `POST /admin/tokens` mints a long-lived seat token
+for an existing user, over the wire — the join path for internet seats.

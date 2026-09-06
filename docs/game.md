@@ -312,9 +312,23 @@ policy: the gate mode lives as a WorldSetting (`"readiness"` |
 (existing worlds and demo flows unchanged). Amendment of the gate by
 legislation — a world voting its own clock policy — is exactly the kind
 of question the mid-epoch amendment analysis (scripting.md §8) was
-scoped for; nothing built here forecloses it. A wall-clock backstop
-(`ECON_SUBMIT_WINDOW_SECONDS`, auto-ready on expiry) is deliberately
-deferred until a public world shows an AFK-human problem worth solving.
+scoped for; nothing built here forecloses it.
+
+**The deadline backstop** (§9.1, shipped with the always-on host): a
+wall-clock arm on the gate, deliberately deferred until a public world
+had an AFK problem worth solving — external/human seats (M2) are that
+problem. `ECON_ROUND_DEADLINE_S > 0` arms it: a round that stays open
+`N` seconds past its anchor (the register's `opened_at`, written at
+every legitimate reset) closes itself, whoever is missing. Consent
+stays king — full consent still resolves in-request at the final ready;
+the backstop only catches rounds nobody closes, and it **halts on an
+empty consent set** (the extinction brake: a dead world stops, it does
+not tick a corpse). Pace-not-policy: deployment env, like
+`ECON_TICKS_PER_ROUND`, 0/off by default. Every resolution — consent,
+operator, or deadline — is broadcast on the public SSE stream
+`GET /rounds/events` (`hello` snapshot on connect, then `readiness` /
+`round_closed` / `round_opened{deadline_epoch}`), so an always-connected
+seat hears the world without polling.
 
 ## 10. Logistics — planned, triggered, and specified
 
