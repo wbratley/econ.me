@@ -593,6 +593,109 @@ def test_nim_breaker_env_off_disables(monkeypatch):
     assert m.complete("s", "u") == "ok"
 
 
+# --- Drain cap: the diverse-trickle bound ----------------------------------
+#
+# Run 33's breaker A/B killed the repetitive marathons but exposed what
+# content-based guards are structurally blind to: a DIVERSE ~4 tok/s
+# trickle — every line distinct, every chunk inside the read timeout —
+# that ends only when the 65,536-token budget drains (4 drains = 2.13h,
+# each 2,300–2,800s, finish_reason=length, empty content). Only wall
+# time bounds it; healthy authoring p95 is ~400s, so the cap sits at
+# 600s and health never sees it.
+
+class _Trickle(_Stream):
+    """A diverse stream on a cadence: every line distinct (the breaker
+    stays quiet) and arriving every per_line_s (the read timeout never
+    trips) — run 33's residual burn mode, compressed in time."""
+
+    def __init__(self, lines, per_line_s, status_code=200):
+        super().__init__(status_code, lines)
+        self._per_line_s = per_line_s
+
+    def iter_lines(self):
+        for ln in self._lines:
+            time.sleep(self._per_line_s)
+            yield ln
+
+
+def _trickle_lines(n):
+    return [f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': f'distinct deliberation {i} about the berry hedge\n'}}]})}"
+            for i in range(n)]
+
+
+def test_nim_drain_cap_aborts_trickle_and_retries(monkeypatch):
+    # attempt 1 trickles past the cap: aborted mid-stream with full
+    # forensics (drained=True + the partial reasoning), retried fresh;
+    # attempt 2 answers normally
+    import httpx
+    responses = [
+        _Trickle(_trickle_lines(400), per_line_s=0.02),
+        _Stream(200, [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+            'data: [DONE]',
+        ]),
+    ]
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return responses[len(posts) - 1]
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    traces = []
+    m = NimModel("k", "openai/gpt-oss-20b", drain_cap_s=0.1,
+                 on_trace=traces.append)
+    assert m.complete("s", "u") == "ok"
+    assert len(posts) == 2                       # aborted, retried, done
+    t = traces[0]
+    assert t["ok"] is False and t["drained"] is True
+    assert "breaker" not in t                    # a different guard
+    assert t["elapsed_s"] >= 0.1
+    assert "drain cap" in t["error"]
+    assert "distinct deliberation" in t["reasoning_text"]  # forensics
+    assert traces[1]["ok"] is True and "drained" not in traces[1]
+
+
+def test_nim_drain_cap_all_attempts_drain_raises(monkeypatch):
+    # a model that trickles every attempt exhausts the ladder; the
+    # loop treats it like any failed call (keep-old-script round)
+    import httpx
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Trickle(
+        _trickle_lines(400), per_line_s=0.02))
+    with pytest.raises(RuntimeError, match="drain cap"):
+        NimModel("k", "openai/gpt-oss-20b",
+                 drain_cap_s=0.05).complete("s", "u")
+
+
+def test_nim_drain_cap_env_zero_disables(monkeypatch):
+    # the escape hatch: ECON_AGENT_DRAIN_CAP_S=0 lets a trickle run to
+    # its natural end (old behavior) — the cap must never be the thing
+    # that kills a legitimate slow answer when disarmed
+    import httpx
+    monkeypatch.setenv("ECON_AGENT_DRAIN_CAP_S", "0")
+    m = NimModel("k", "openai/gpt-oss-20b")
+    assert m._drain_cap_s == 0.0
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Trickle(
+        _trickle_lines(8) +
+        ['data: {"choices": [{"delta": {"content": "ok"}}]}',
+         'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+         'data: [DONE]'], per_line_s=0.02))
+    assert m.complete("s", "u") == "ok"
+
+
+def test_nim_drain_cap_resolution(monkeypatch):
+    # default 600s (1.5x healthy authoring p95); env retunes; a typo
+    # falls back to the default, never to off
+    assert NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 600.0
+    monkeypatch.setenv("ECON_AGENT_DRAIN_CAP_S", "900")
+    assert NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 900.0
+    monkeypatch.setenv("ECON_AGENT_DRAIN_CAP_S", "off")
+    assert NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 0.0
+    monkeypatch.setenv("ECON_AGENT_DRAIN_CAP_S", "not-a-number")
+    assert NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 600.0
+
+
 # ===========================================================================
 # ApprovalModel — the assisted-autonomy dial stop (M2b seat kit)
 # ===========================================================================

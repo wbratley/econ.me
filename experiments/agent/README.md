@@ -214,6 +214,19 @@ which never fire), the attempt is aborted mid-stream, traced
 existing 3-attempt loop. `ECON_AGENT_REPETITION_BREAKER=off` restores
 the old let-it-burn behavior.
 
+Drain cap (default 600s per attempt): run 33's breaker A/B killed the
+repetitive marathons (10 fires, 2,723s total vs run 32's 4 burns =
+57% of wall) but exposed what no content-based guard can see — a
+DIVERSE ~4 tok/s trickle that never repeats a line, keeps the
+between-chunks read timeout alive, and ends only when the 65,536-token
+budget drains (4 drains = 2.13h, each 2,300–2,800s, finish_reason=
+length, empty content; healthy authoring p95 ≈ 400s). The streamed
+call now also watches the wall clock: an attempt older than the cap is
+aborted mid-stream, traced (`drained: true` + the partial reasoning)
+and retried fresh by the same 3-attempt ladder.
+`ECON_AGENT_DRAIN_CAP_S=900` retunes it; `0`/`off` restores the
+let-it-trickle behavior.
+
 Always-on host (M2a): `--round-deadline-s N` arms the server's round
 deadline backstop — a round nobody closes (an external/human seat that
 never shows) resolves itself N seconds after its submit window opened,
