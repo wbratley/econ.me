@@ -225,3 +225,55 @@ is announced on the server's public SSE stream `GET /rounds/events`
 with `deadline_epoch`) — the channel always-connected agent seats
 (M2b) will sleep on. `POST /admin/tokens` mints a long-lived seat token
 for an existing user, over the wire — the join path for internet seats.
+
+## The seat kit (M2b): occupy an always-on world from anywhere
+
+`seat_driver.py` is the client half of the always-on host: a long-lived,
+event-driven process that connects with a host-minted Bearer token
+(`POST /admin/tokens`), sleeps on `GET /rounds/events`, and takes
+exactly one turn per round — observe → author → submit → ready through
+the unchanged `AgentLoop`, all over the public MCP surface. What it adds
+is the WHEN (round events, not a run loop) and the race guards:
+
+- **dedupe by round number** — `hello` on (re)connect and `round_opened`
+  both mean "a round is open"; one turn per round, never two, so
+  reconnect storms and replayed frames cost nothing;
+- **catch-up** — if the round moves mid-turn (the deadline backstop or
+  an operator's advance resolving round N while the model thought), the
+  turn re-cycles for the round now open; consent never attaches to a
+  round the seat didn't play;
+- **elimination** — the dead get a tombstone (no model call, the last
+  behaviour stands), then exit — or `--spectate` to keep listening.
+
+The autonomy dial decides WHO answers the prompt:
+
+- `--autonomy proxy` — `FileModel`: the file rendezvous
+  (`seat-<slug>.prompt.md` → `seat-<slug>.response.txt` in the
+  workspace). Whoever writes the response IS the seat — a human with a
+  coding agent. `--init-workspace` scaffolds the workspace
+  (`AGENTS.md`, the agent's manual, + `seat.json`, the public facts —
+  the token rides `ECON_SEAT_TOKEN`, never the workspace).
+- `--autonomy assisted` — `ApprovalModel`: a hosted model drafts, the
+  draft lands in the same rendezvous, the human replies empty/`OK` to
+  submit it verbatim or writes the reply they want instead.
+- `--autonomy auto` — a hosted model alone (`--model` NIM slug or
+  `deepseek:<slug>`): exactly a builtin seat, the server's deadline as
+  the only wall-clock bound.
+
+    ECON_SEAT_TOKEN=... .venv/bin/python -m experiments.agent.seat_driver \
+        --base http://127.0.0.1:8925 --workspace ~/my-seat \
+        --seat "House Mine" --autonomy proxy --init-workspace
+
+Journals: `journal.jsonl` (the loop's decision record, one entry per
+cycle), `driver.jsonl` (driver facts: rounds resolved under the seat,
+catch-ups, tombstones, ready refusals), `calls.log` + per-round prompt
+files when tracing is on. The manual gap: builtin runs fold the pack's
+authored WORLD NOTES into the prompt from the DB; remote seats get the
+generated catalog (via the `world_catalog` tool) but not the manual —
+no public surface carries it yet.
+
+Tests: `test_seat_driver.py` drives the whole driver against the real
+app (TestClient MCP transports, injected event streams) — parser frames,
+one-turn-per-round dedupe, own-consent resolution, mid-turn catch-up
+(an advance firing during the model call), tombstones, spectate, and
+the scaffold; `test_llm.py` covers `ApprovalModel`'s rendezvous.

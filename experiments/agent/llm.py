@@ -158,6 +158,90 @@ class FileModel:
             f"(call {self._seq})")
 
 
+class ApprovalModel:
+    """Assisted autonomy (M2b, the seat kit): the inner model drafts,
+    a human approves. The autonomy dial's middle stop — between
+    FileModel (the human IS the model) and an unattended NimModel (the
+    model alone). Every complete() runs the inner model first, then
+    drops the SAME rendezvous FileModel uses (`seat-<slug>.prompt.md` /
+    `seat-<slug>.response.txt`) with the draft embedded: an empty reply
+    or `OK` submits the draft verbatim; anything else becomes the reply
+    (edited Lua, edit blocks, KEEP — the loop's full grammar). The
+    draft never skips the human; the human never faces a blank page.
+    """
+
+    HEARTBEAT_S = FileModel.HEARTBEAT_S
+
+    def __init__(self, inner, name: str, seat_dir: str | Path,
+                 poll_s: float = 2.0, timeout_s: float = 86400.0):
+        self.inner = inner
+        self.name = f"assisted:{inner.name}"
+        self.seat_name = name
+        self.seat_dir = Path(seat_dir)
+        self.slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        self.poll_s = poll_s
+        self.timeout_s = timeout_s
+        self._seq = 0
+
+    def _path(self, kind: str) -> Path:
+        return self.seat_dir / f"seat-{self.slug}.{kind}"
+
+    def complete(self, system: str, user: str) -> str:
+        import datetime as _dt
+
+        draft = self.inner.complete(system, user)
+        self._seq += 1
+        self.seat_dir.mkdir(parents=True, exist_ok=True)
+        resp = self._path("response.txt")
+        prompt = self._path("prompt.md")
+        if resp.exists():         # stale answer from a dead cycle
+            resp.unlink()
+        tmp = prompt.with_suffix(".tmp")
+        tmp.write_text(
+            f"# assisted seat {self.seat_name} — call {self._seq} of "
+            f"this run\n"
+            f"# {self.inner.name} drafted the reply below. Approve or "
+            f"replace:\n"
+            f"#   reply empty or `OK` -> the draft is submitted verbatim\n"
+            f"#   anything else     -> your text becomes the reply "
+            f"(Lua / edit blocks / KEEP)\n"
+            f"# answer by ATOMICALLY writing (tmp + mv):\n"
+            f"#   {resp}\n"
+            f"# written {_dt.datetime.now(_dt.timezone.utc).isoformat()}\n\n"
+            f"===== SYSTEM =====\n\n{system}\n\n"
+            f"===== USER =====\n\n{user}\n\n"
+            f"===== DRAFT (model's proposed reply) =====\n\n{draft}\n")
+        tmp.replace(prompt)
+        print(f"assisted seat {self.seat_name}: call {self._seq} waiting "
+              f"for {resp.name} in {self.seat_dir}", flush=True)
+        deadline = time.monotonic() + self.timeout_s
+        heartbeat = 0.0
+        while time.monotonic() < deadline:
+            if resp.exists():
+                text = resp.read_text()
+                resp.unlink()
+                if text.strip().lower() in ("", "ok", "approve", "approved"):
+                    print(f"assisted seat {self.seat_name}: call "
+                          f"{self._seq} approved verbatim", flush=True)
+                    prompt.unlink(missing_ok=True)
+                    return draft
+                print(f"assisted seat {self.seat_name}: call {self._seq} "
+                      f"overridden ({len(text)} chars)", flush=True)
+                prompt.unlink(missing_ok=True)
+                return text
+            if time.monotonic() - heartbeat >= self.HEARTBEAT_S:
+                print(f"assisted seat {self.seat_name}: call {self._seq} "
+                      f"still waiting ({time.monotonic() - heartbeat:.0f}s)",
+                      flush=True)
+                heartbeat = time.monotonic()
+            time.sleep(self.poll_s)
+        # The prompt file STAYS: a timed-out seat's last ask is exactly
+        # what the postmortem wants to see.
+        raise LiveSeatTimeout(
+            f"{self.seat_name}: no approval within {self.timeout_s:.0f}s "
+            f"(call {self._seq})")
+
+
 def strip_fences(text: str) -> str:
     """Defensively unwrap a ```lua fence a model may add around the
     source. Raw Lua passes through untouched.
