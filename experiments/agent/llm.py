@@ -660,6 +660,41 @@ class _BreakerFired(RuntimeError):
         self.reason = reason
 
 
+class _DrainCapExceeded(RuntimeError):
+    """A streamed attempt outlived the per-attempt wall-time cap
+    (run 33's residual burn: a DIVERSE ~4 tok/s trickle that never
+    repeats a line — so the repetition breaker is structurally blind
+    to it — keeps the between-chunks read timeout alive, and ends only
+    when the whole completion budget drains: 2,300–2,800s per attempt,
+    finish_reason=length, empty content). Internal to llm.py: raised
+    inside the stream loop, caught at the attempt level, turned into
+    a trace + a fresh attempt."""
+
+
+_DRAIN_CAP_DEFAULT_S = 600.0
+
+
+def _drain_cap_s(explicit: float | None) -> float:
+    """Resolve the per-attempt wall cap in seconds (0 disables it).
+    Healthy authoring p95 is ~400s (run 33: authors 200–360s, diaries
+    30–160s, deepseek ~85s), so 600s is 1.5x headroom over health —
+    only the trickle mode ever sees it. ECON_AGENT_DRAIN_CAP_S
+    overrides (seconds; 0/off/false restores the let-it-trickle
+    behavior); unparseable values fall back to the default, not to
+    off — a typo must not silently unarm the cap."""
+    if explicit is not None:
+        return max(0.0, float(explicit))
+    raw = os.environ.get("ECON_AGENT_DRAIN_CAP_S", "").strip().lower()
+    if not raw:
+        return _DRAIN_CAP_DEFAULT_S
+    if raw in ("0", "off", "false"):
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DRAIN_CAP_DEFAULT_S
+
+
 class RepetitionBreaker:
     """In-stream degeneration detector — the run-32 cure for the
     reasoning marathon. Three modes were captured on film:
@@ -770,7 +805,8 @@ class NimModel(OpenAIModel):
                  limiter_factory: Callable[[], "_RateLimiter"] | None = nim_limiter,
                  extra_body: dict | None = None,
                  on_trace: Callable[[dict], None] | None = None,
-                 repetition_breaker: bool | None = None):
+                 repetition_breaker: bool | None = None,
+                 drain_cap_s: float | None = None):
         super().__init__(api_key, model=model, timeout=timeout,
                          base_url=base_url)
         self.name = f"nim:{model}"
@@ -802,6 +838,9 @@ class NimModel(OpenAIModel):
         # In-stream degeneration guard (see RepetitionBreaker): one
         # detector per channel per attempt, armed unless disabled.
         self._breaker = _breaker_enabled(repetition_breaker)
+        # Wall-clock guard against diverse trickles the breaker cannot
+        # see (see _DrainCapExceeded): 0 disarms it.
+        self._drain_cap_s = _drain_cap_s(drain_cap_s)
 
     @property
     def on_trace(self) -> Callable[[dict], None] | None:
@@ -879,7 +918,15 @@ class NimModel(OpenAIModel):
                             max_tokens=self._max_tokens)
                         continue
                     r.raise_for_status()
+                    cap = self._drain_cap_s
                     for line in r.iter_lines():
+                        if cap and time.monotonic() - t0 > cap:
+                            raise _DrainCapExceeded(
+                                f"drain cap: attempt aborted after "
+                                f"{time.monotonic() - t0:.0f}s (cap "
+                                f"{cap:.0f}s) — a diverse trickle "
+                                f"would otherwise drain the whole "
+                                f"{self._max_tokens}-token budget")
                         line = line.strip()
                         if not line.startswith("data:"):
                             continue
@@ -970,6 +1017,27 @@ class NimModel(OpenAIModel):
                     elapsed_s=round(time.monotonic() - t0, 1),
                     finish_reason=None, error=last_error,
                     breaker=True, breaker_channel=exc.channel,
+                    content_chars=sum(len(c) for c in chunks),
+                    reasoning_chars=sum(len(b) for b in reason_bits),
+                    content_deltas=n_content,
+                    reasoning_deltas=n_reasoning,
+                    max_tokens=self._max_tokens,
+                    reasoning_text="".join(reason_bits))
+                continue
+            except _DrainCapExceeded as exc:
+                # Wall-time is the only bound a diverse trickle can hit:
+                # every chunk arrives inside the read timeout and no
+                # line repeats, so content-based guards see nothing.
+                # The attempt dies at the cap with full forensics and
+                # the ladder retries fresh (run 33: every drain's
+                # follow-up attempt was healthy — burns never carried
+                # over into the next attempt).
+                last_error = str(exc)
+                self._emit_trace(
+                    model=self.name, attempt=attempt + 1, ok=False,
+                    elapsed_s=round(time.monotonic() - t0, 1),
+                    finish_reason=None, error=last_error,
+                    drained=True,
                     content_chars=sum(len(c) for c in chunks),
                     reasoning_chars=sum(len(b) for b in reason_bits),
                     content_deltas=n_content,
@@ -1080,7 +1148,8 @@ class DeepSeekModel(NimModel):
                  wait_minutes: float | None = None,
                  reasoning_effort: str | None = None,
                  on_trace: Callable[[dict], None] | None = None,
-                 repetition_breaker: bool | None = None):
+                 repetition_breaker: bool | None = None,
+                 drain_cap_s: float | None = None):
         eff = (reasoning_effort
                if reasoning_effort is not None
                else os.environ.get("ECON_DEEPSEEK_REASONING", "low"))
@@ -1089,7 +1158,8 @@ class DeepSeekModel(NimModel):
                          max_tokens=max_tokens, limiter_factory=None,
                          extra_body={"reasoning_effort": eff} if eff else {},
                          on_trace=on_trace,
-                         repetition_breaker=repetition_breaker)
+                         repetition_breaker=repetition_breaker,
+                         drain_cap_s=drain_cap_s)
         self.name = f"deepseek:{model}"
         self._window = window
         self._wait_minutes = wait_minutes
