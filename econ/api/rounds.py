@@ -25,6 +25,7 @@ a round is a scheduler batch, not a tick quotient.
 from __future__ import annotations
 
 import os
+import time
 from collections import Counter
 from typing import Any
 
@@ -37,6 +38,13 @@ from econengine.tick import run_tick
 
 ROUND_STATE_KEY = "round.state"
 DEFAULT_TICKS_PER_ROUND = 10
+
+#: The deadline backstop (game.md §9.1): how many seconds a round may
+#: stay open after its last consent-reset before the server closes it
+#: itself. Deployment pace like ECON_TICKS_PER_ROUND (env, not a
+#: WorldSetting): 0/absent/invalid = off, and existing worlds never see
+#: a server-closed round -- consent or the operator still does it.
+DEADLINE_ENV = "ECON_ROUND_DEADLINE_S"
 
 #: The readiness gate (game.md §9.1): rounds close by player consent in
 #: ``readiness`` mode; ``operator`` mode (the default) keeps the clock
@@ -66,6 +74,20 @@ def ticks_per_round() -> int:
     except (TypeError, ValueError):
         return DEFAULT_TICKS_PER_ROUND
     return n if n > 0 else DEFAULT_TICKS_PER_ROUND
+
+
+def round_deadline_s() -> float:
+    """Seconds a round may stay open before the server closes it (0 =
+    the backstop is off; negative/invalid reads as off too — a bad env
+    value must not turn into a zero-second world)."""
+    raw = os.environ.get(DEADLINE_ENV)
+    if not raw:
+        return 0.0
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if n > 0 else 0.0
 
 
 def _rounds_completed(session: Session) -> int:
@@ -132,19 +154,38 @@ def eligible_users(session: Session) -> set[str]:
 def _readiness_register(session: Session) -> tuple[int, list[str]]:
     """The raw persisted register: ``(round, ready_user_ids)``.
     ``(0, [])`` before the first ready ever recorded."""
+    return _read_register(session)[:2]
+
+
+def _read_register(session: Session) -> tuple[int, list[str], float | None]:
+    """The register with its clock anchor: ``(round, ready_user_ids,
+    opened_at_epoch)``. ``opened_at`` is when the round's submit window
+    opened — written at every legitimate reset (advance, stale-register
+    normalization, deadline anchoring) so the deadline backstop always
+    has a wall-clock anchor. ``None`` on registers from before this
+    field existed (a world mid-migration: the next reset anchors it)."""
     row = session.get(WorldSetting, READINESS_KEY)
     if row is None:
-        return 0, []
+        return 0, [], None
     value = dict(row.value)
-    return int(value.get("round", 0)), [str(u) for u in value.get("ready", [])]
+    opened = value.get("opened_at")
+    return (int(value.get("round", 0)), [str(u) for u in value.get("ready", [])],
+            float(opened) if isinstance(opened, (int, float)) else None)
 
 
-def _write_readiness_register(session: Session, round_no: int, ready: list[str]) -> None:
+def _write_readiness_register(session: Session, round_no: int, ready: list[str],
+                              opened_at: float | None = None) -> None:
     """Persist the register, locking its row so two simultaneous final-ready
     POSTs serialize on it (SQLite's single writer does this for free; the
     ``with_for_update`` is for a future Postgres)."""
     row = session.get(WorldSetting, READINESS_KEY, with_for_update=True)
     value = {"round": round_no, "ready": list(ready)}
+    if opened_at is not None:
+        value["opened_at"] = opened_at
+    elif row is not None and row.value is not None:
+        prior = dict(row.value).get("opened_at")  # preserve across rewrites
+        if isinstance(prior, (int, float)):
+            value["opened_at"] = prior
     if row is None:
         session.add(WorldSetting(key=READINESS_KEY, value=value))
     else:
@@ -189,7 +230,10 @@ def set_user_ready(session: Session, user_id: str) -> dict[str, Any]:
         ready = []
     if user_id not in ready:
         ready.append(user_id)
-    _write_readiness_register(session, current, ready)
+    # A first consent on a round the register predates opens the window
+    # officially now (the deadline anchor the backstop will count from).
+    opened_at = time.time() if reg_round != current else None
+    _write_readiness_register(session, current, ready, opened_at=opened_at)
 
     state = readiness_state(session)
     resolved = None
@@ -303,7 +347,10 @@ def advance_round(session: Session) -> dict[str, Any]:
     # Reset the readiness register for the now-open round (§9.1): readiness
     # is per-round consent, and a resolved round's consents are historical.
     # Runs on every advance -- operator override and final-ready alike.
-    _write_readiness_register(session, rounds_before + 2, [])
+    # The new round's submit window opens NOW; the summary carries the
+    # epoch so the post-commit event broadcast can state the deadline.
+    opened_at = time.time()
+    _write_readiness_register(session, rounds_before + 2, [], opened_at=opened_at)
 
     # Dynasty-extinction scan: once per round, after the batch (§14.2).
     eliminations = epochs_mod.scan_eliminations(session, tick_numbers[-1])
@@ -315,6 +362,48 @@ def advance_round(session: Session) -> dict[str, Any]:
         "events_by_type": dict(events_by_type),
         "next_round": rounds_before + 2,
         "ticks_per_round": k,
+        "next_opened_at": opened_at,
         "victory_stamps": stamps_made,
         "eliminations": eliminations,
     }
+
+
+# ---------------------------------------------------------------------------
+# The deadline backstop (§9.1) -- the server closes rounds nobody closes
+# ---------------------------------------------------------------------------
+
+def maybe_auto_advance(session: Session, now: float | None = None) -> dict[str, Any] | None:
+    """Close the open round by deadline, if the backstop is armed and the
+    clock has run out. Consent stays king: a full-consent resolve happens
+    in-request at the final ready and never needs this; the backstop exists
+    for the seat that never shows (M2a: external/human seats).
+
+    Returns the advance summary when it closed a round, ``None`` otherwise
+    -- including every "not yet" case: backstop off, gate in operator
+    mode, deadline not elapsed, or **no eligible users** (the extinction
+    brake: a world whose last dynasty died stops, it does not tick a
+    corpse forever).
+
+    May persist without advancing: a round whose register predates the
+    deadline machinery (or was reset without an anchor) gets anchored
+    ``opened_at`` on the first look -- the caller should commit either
+    way. Callers should treat check+advance as one transaction (SQLite's
+    single writer makes the flush serialize; a busy-timeout loss rolls
+    back and the next scheduler poll retries).
+    """
+    deadline = round_deadline_s()
+    if deadline <= 0 or gate_mode(session) != "readiness":
+        return None
+    if not eligible_users(session):
+        return None                      # nobody left to play for
+    now = time.time() if now is None else now
+    current = _rounds_completed(session) + 1
+    reg_round, ready, opened_at = _read_register(session)
+    if reg_round != current or opened_at is None:
+        # First sight of this round's window: anchor it, don't punish it.
+        _write_readiness_register(session, current, ready, opened_at=now)
+        session.flush()
+        return None
+    if now < opened_at + deadline:
+        return None
+    return advance_round(session)

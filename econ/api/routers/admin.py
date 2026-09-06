@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import re
 from sqlalchemy.orm import Session
 
+from econ.api.auth import ACCESS_TOKEN_EXPIRE_MINUTES, create_token
 from econengine import conditions, councils, delegations, scripting, services, tick
 from econengine.capabilities import ALL as ALL_CAPABILITIES
 from econ.api.deps import get_session, require_admin
@@ -10,7 +11,8 @@ from econ.api.schemas import (
     AdminEntityCreate, ComputeBudgetRead, ComputeBudgetUpdate, CouncilRead,
     CouncilWrite, DelegationRead, DelegationWrite, EntityRead, EntityUpdate,
     EstateRuleRead, EstateRuleUpdate, JoinConfigRead, JoinConfigWrite,
-    ScriptingTiersRead, UserRead, UserUpdate, WorldLibRead, WorldLibUpdate,
+    ScriptingTiersRead, TokenMintRequest, TokenMintResponse, UserRead,
+    UserUpdate, WorldLibRead, WorldLibUpdate,
 )
 from econengine.models import Entity, User
 
@@ -20,6 +22,25 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/entities", response_model=list[EntityRead])
 def list_all_entities(session: Session = Depends(get_session), _: User = Depends(require_admin)):
     return session.query(Entity).all()
+
+
+@router.post("/tokens", response_model=TokenMintResponse, status_code=201)
+def mint_token(
+    body: TokenMintRequest,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Mint a seat token for an existing user (M2a): a long-lived bearer
+    JWT, exactly what a run harness mints in-process at bootstrap, but
+    over the wire -- so an internet seat (a human with a coding agent, an
+    autonomous driver) can join a live world without filesystem access
+    to world.db. Admin-only: minting for someone is granting their seat."""
+    user = session.get(User, body.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"User not found: {body.user_id}")
+    token = create_token(user.id, user.email, user.is_admin)
+    return TokenMintResponse(user_id=user.id, token=token,
+                             expires_minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
 
 @router.post("/entities", response_model=EntityRead, status_code=201)

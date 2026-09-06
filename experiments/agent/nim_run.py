@@ -224,10 +224,22 @@ def main(argv=None) -> int:
                     metavar="SEC",
                     help="how long a live seat's call waits before "
                          "failing the attempt (default 24h)")
+    ap.add_argument("--round-deadline-s", type=float, default=0.0,
+                    metavar="SEC",
+                    help="arm the server's round deadline backstop: a "
+                         "round nobody closes resolves this many seconds "
+                         "after opening (0 = off; the server announces "
+                         "deadline_epoch on its /rounds/events stream)")
     args = ap.parse_args(argv)
 
     if not args.models and not args.scripted:
         ap.error("need --models (NIM) or --scripted (offline rehearsal)")
+
+    if args.round_deadline_s and args.round_deadline_s > 0:
+        # Rides the environment into the spawned server (the always-on
+        # host's backstop — a seat that never shows costs one deadline
+        # period, not a hung round). Launch-time only, like the port.
+        os.environ["ECON_ROUND_DEADLINE_S"] = str(args.round_deadline_s)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
