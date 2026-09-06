@@ -248,6 +248,20 @@ def tool_set_ready(session: Session, user: User, args: dict[str, Any]) -> dict:
     else:
         out = unset_user_ready(session, user.id)
     session.commit()
+    # M2a's contract, completed for the door seats actually use: every
+    # readiness change -- and every resolution, whichever surface it
+    # came through -- is announced on /rounds/events. The REST endpoint
+    # always published; the MCP tool did not, so an MCP-consented round
+    # closed SILENTLY and connected seats slept through the round that
+    # opened under them (found by the M2b live smoke: the driver only
+    # woke when the deadline backstop published 6s later).
+    from fastapi.encoders import jsonable_encoder
+
+    from econ.api import events
+
+    events.publish("readiness", jsonable_encoder(out["readiness"]))
+    if out.get("resolved") is not None:
+        events.publish_round_closed(jsonable_encoder(out["resolved"]))
     return out
 
 

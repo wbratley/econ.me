@@ -591,3 +591,94 @@ def test_nim_breaker_env_off_disables(monkeypatch):
            'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
            'data: [DONE]']))
     assert m.complete("s", "u") == "ok"
+
+
+# ===========================================================================
+# ApprovalModel — the assisted-autonomy dial stop (M2b seat kit)
+# ===========================================================================
+
+def _wait_for(path, timeout=2.0):
+    import time as _t
+    deadline = _t.monotonic() + timeout
+    while _t.monotonic() < deadline:
+        if path.exists():
+            return
+        _t.sleep(0.005)
+    raise AssertionError(f"{path} never appeared")
+
+
+def _answer(path, text):
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def test_approval_ok_submits_draft_verbatim(tmp_path):
+    from experiments.agent.llm import ApprovalModel, ScriptedModel
+    m = ApprovalModel(ScriptedModel(["-- the draft"]), "House X", tmp_path,
+                      poll_s=0.005, timeout_s=5.0)
+    import threading
+
+    out = {}
+
+    def approve():
+        resp = tmp_path / "seat-house-x.response.txt"
+        _wait_for(tmp_path / "seat-house-x.prompt.md")
+        assert "===== DRAFT" in (tmp_path / "seat-house-x.prompt.md").read_text()
+        _answer(resp, "OK")
+
+    t = threading.Thread(target=approve)
+    t.start()
+    out["r"] = m.complete("sys", "user")
+    t.join()
+    assert out["r"] == "-- the draft"
+    # the rendezvous is consumed: both files gone
+    assert not (tmp_path / "seat-house-x.prompt.md").exists()
+    assert not (tmp_path / "seat-house-x.response.txt").exists()
+
+
+def test_approval_empty_reply_approves(tmp_path):
+    from experiments.agent.llm import ApprovalModel, ScriptedModel
+    import threading
+    m = ApprovalModel(ScriptedModel(["draft()"]), "House X", tmp_path,
+                      poll_s=0.005, timeout_s=5.0)
+
+    def approve():
+        resp = tmp_path / "seat-house-x.response.txt"
+        _wait_for(tmp_path / "seat-house-x.prompt.md")
+        _answer(resp, "   \n")
+
+    t = threading.Thread(target=approve)
+    t.start()
+    assert m.complete("s", "u") == "draft()"
+    t.join()
+
+
+def test_approval_override_replaces_draft(tmp_path):
+    from experiments.agent.llm import ApprovalModel, ScriptedModel
+    import threading
+    m = ApprovalModel(ScriptedModel(["-- model's idea"]), "House X", tmp_path,
+                      poll_s=0.005, timeout_s=5.0)
+
+    def override():
+        resp = tmp_path / "seat-house-x.response.txt"
+        _wait_for(tmp_path / "seat-house-x.prompt.md")
+        _answer(resp, "ctx.state.human = true   -- the human's edit")
+
+    t = threading.Thread(target=override)
+    t.start()
+    assert m.complete("s", "u") == "ctx.state.human = true   -- the human's edit"
+    t.join()
+    assert m.name == "assisted:scripted"
+
+
+def test_approval_timeout_keeps_the_prompt(tmp_path):
+    from experiments.agent.llm import ApprovalModel, LiveSeatTimeout, ScriptedModel
+    m = ApprovalModel(ScriptedModel(["-- draft"]), "House X", tmp_path,
+                      poll_s=0.005, timeout_s=0.05)
+    with pytest.raises(LiveSeatTimeout):
+        m.complete("s", "u")
+    # the ask stays on disk — a timed-out seat's last prompt is the
+    # postmortem artifact (FileModel's doctrine, kept)
+    prompt = tmp_path / "seat-house-x.prompt.md"
+    assert prompt.exists() and "-- draft" in prompt.read_text()

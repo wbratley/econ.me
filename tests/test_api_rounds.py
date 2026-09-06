@@ -465,3 +465,34 @@ def test_deadline_poll_closes_a_stale_round(client, monkeypatch):
     assert summary["round_number"] == 1
     # and it committed: the clock moved
     assert _current(client).json()["round_number"] == 1
+
+
+def test_mcp_set_ready_publishes_on_the_event_stream(client, monkeypatch):
+    """The MCP tool is the door agent seats actually use -- its consent
+    resolves must broadcast the same readiness / round_closed /
+    round_opened triple the REST endpoint does (found by the M2b live
+    smoke: an MCP-consented round closed silently and connected seats
+    slept through the round that opened under them)."""
+    from econ.api import events as events_mod
+
+    seen = []
+
+    def spy(event, data):
+        seen.append((event, data))
+
+    monkeypatch.setattr(events_mod, "publish", spy)
+    _set_gate(client, "readiness")
+    _make_eligible()
+
+    r = client.post("/mcp", headers=_auth("u-alice"), json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "set_ready", "arguments": {"ready": True}}})
+    assert r.status_code == 200, r.text
+    result = r.json()["result"]
+    assert not result.get("isError"), result
+    assert json.loads(result["content"][0]["text"])["resolved"] is not None
+
+    kinds = [e for e, _ in seen]
+    assert kinds == ["readiness", "round_closed", "round_opened"]
+    opened = next(d for e, d in seen if e == "round_opened")
+    assert opened["round"] == 2
