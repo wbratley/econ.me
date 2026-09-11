@@ -532,9 +532,15 @@ class TestSmokeMatrix:
 
     def test_the_real_starter_passes_clean(self):
         from pathlib import Path
-        starter = (Path(__file__).parents[1]
-                   / "experiments" / "world" / "lua" / "stone_age_starter.lua")
-        problems, warnings = scripting.check_player_script(starter.read_text())
+        root = Path(__file__).parents[1] / "experiments" / "world"
+        starter = (root / "lua" / "stone_age_starter.lua").read_text()
+        # the starter speaks the world lib (world.lit_fires, P1) -- validate
+        # against the same libraries the pack gates it with
+        libraries = {
+            "world": (root / "lua" / "world_lib.lua").read_text(),
+            "pack": (root / "lua" / "pack.lua").read_text(),
+        }
+        problems, warnings = scripting.check_player_script(starter, libraries)
         assert (problems, warnings) == ([], [])
 
     def test_reading_truthful_rows_runs_clean(self):

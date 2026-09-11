@@ -48,7 +48,18 @@ class Parcel(Base):
 class Facility(Base):
     """A built improvement standing on a parcel (FARM, SMITHY, …). Facilities
     enter the world through construction recipes (builds_facility) or genesis
-    placement; recipes that require one make production *located*."""
+    placement; recipes that require one make production *located*.
+
+    The commons columns (P1, the fire rework): `access` decides who may bind
+    a process to it -- OWNER (default, the parcel controller only, all of
+    history's behavior) or PLACE (public: any active entity; localize with
+    the recipe's own presence gates, the way a village fire warms whoever
+    walks up to it). `capacity` is how many processes may hold it at once
+    (one smithy, one smelt; a four-stone hearth seats four). `fuel` /
+    `fuel_capacity` / `fuel_burn_per_tick` give a facility a burning stock:
+    stoking credits fuel (never past fuel_capacity), the tick pass burns it
+    down, and fuel reaching zero is the fire going dark -- a facility that
+    consumes to stay lit, the recurring-cost shape processes already had."""
 
     __tablename__ = "facilities"
 
@@ -56,6 +67,26 @@ class Facility(Base):
     parcel_id: Mapped[str] = mapped_column(String(36), ForeignKey("parcels.id"), nullable=False)
     facility_type: Mapped[str] = mapped_column(String(32), nullable=False)  # uppercase, e.g. SMITHY
     built_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)  # NULL: genesis placement
+    # who may bind: "OWNER" (the parcel controller) or "PLACE" (public)
+    access: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="OWNER", server_default="OWNER"
+    )
+    # concurrent binder slots (running processes of the required type)
+    capacity: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    # the burning stock: stoked up (capped at fuel_capacity), burned down
+    # fuel_burn_per_tick each tick; zero = dark. "Unusable when dark" is the
+    # PACK's business -- the engine only counts and reports.
+    fuel: Mapped[Decimal] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=False, default=Decimal("0"),
+        server_default="0",
+    )
+    fuel_capacity: Mapped[Decimal | None] = mapped_column(Numeric(precision=18, scale=4), nullable=True)
+    fuel_burn_per_tick: Mapped[Decimal] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=False, default=Decimal("0"),
+        server_default="0",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

@@ -447,6 +447,23 @@ This step is where recipe **requirements** (§ recipes) get built — the
 present-but-not-consumed check with reservation is one mechanism serving
 facilities ("a SMITHY you control") and machinery ("hold 1 OVEN") alike.
 
+A facility is also a **commons-capable object** (the P1 fire rework):
+`access` decides who may bind a process to it — `OWNER` (the parcel
+controller; the default, all of history's behavior) or `PLACE` (public:
+any active entity; a recipe's own presence gates localize it, the way a
+village fire warms whoever walks up). `capacity` is how many processes
+may hold it at once (one smithy, one smelt; a four-stone hearth seats
+four). `fuel` / `fuel_capacity` / `fuel_burn_per_tick` give a facility
+a burning stock: a recipe may credit fuel (`facility_fuel_output`,
+capped at `fuel_capacity`), the tick pass burns it down whether anyone
+is using the facility, and `requires_facility_lit` gates binding on
+fuel > 0 — a facility that consumes to stay lit, the recurring-cost
+shape per-tick process inputs already had. A construction recipe may
+set the birth params (`builds_facility_access`, `builds_facility_config`)
+so built facilities arrive public and burning. Symmetrically, a good
+may cap holdings (`max_holding`): positive credits clip at the cap,
+never refusing — warmth is a seat by the fire, not a warehouse good.
+
 A **Deposit** is a natural resource dotted onto the map: a parcel/region
 carries deposit rows (IRON, TIMBER, fertile soil as a FIELD quality tier)
 with a remaining quantity and optionally a regeneration rate. Extraction

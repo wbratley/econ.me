@@ -173,6 +173,7 @@ to your own entity). Prefer the `std.*` wrappers for the common ones.
 | `parents` / `children` | `(entity_id)` | arrays of ids |
 | `route` | `(from_key, to_key, modes?)` | `{hops={{from,to,mode,cost_ticks}…}, total_ticks}` or nil |
 | `distance_ticks` | `(from_key, to_key, modes?)` | number or nil |
+| `public_facilities` | `(place_key?)` | array of PLACE-access facility rows (`facility_type`, `place`, `parcel_id`, `fuel`, `fuel_capacity`) — the commons register; stone_age's `world.lit_fires(place)` is the readable front |
 | `world_setting` | `(key)` | value or nil |
 | `fiscal_policy` | `()` | table or nil |
 | `constitution` | `()` | table or nil |
@@ -268,7 +269,11 @@ injected source is the normative doc; summary:
 ships): `world.settle_last_orders()` (cancel-and-report order fills),
 `world.places()`, `world.place(key?)` (bare call = where you stand,
 facts table), `world.route(from, to, modes?)`,
-`world.distance_ticks(from, to, modes?)`. The content pack's `pack`
+`world.distance_ticks(from, to, modes?)`,
+`world.lit_fires(place?)` (P1: the burning public fires — rows as
+`public_facilities` — a beacon read from anywhere),
+`world.public_facilities(place?)`.
+The content pack's `pack`
 namespace is world opinion (concession rules, ask schedules) — read
 its source via `get_script_libraries`.
 
@@ -290,6 +295,7 @@ you). Common types and their payload keys:
 | `combat` | `entity_id` (attacker), `target_id`, `attack`, `defense`, `hit`, `damage`, `target_hits`, `killed`, `loot` | |
 | `entity_incapacitated` | `condition`, `quantity`, `threshold`, estate settlement | death; the estate record nests under `death` in the world feed |
 | `decay` | goods lost | per-tick rotting |
+| `facility_fuel` / `facility_lit` / `facility_dark` | `facility_type`, `parcel_id`, `fuel` | the commons register's burn telemetry — world-feed facts (not delivered to behaviour scripts; `world.lit_fires()` is the beacon read) |
 | `script_error` / `script_reverted` / `compute_budget_exceeded` | | your script's own failures |
 | `say` | speaker, `text` | speech delivered to you |
 

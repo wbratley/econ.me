@@ -34,14 +34,19 @@ from econengine.tick import run_tick
 
 from experiments.world import stone_age
 from experiments.world.stone_age import (
-    BERRY_BUFFER, COIN, POST_FOOD, SEAT_COIN, WARMTH_BUFFER, create_content,
-    make_house,
+    BERRY_BUFFER, COIN, FIRE_FUEL_BURN, FIRE_FUEL_CAP, FIRE_FUEL_START,
+    FIRE_SEATS, POST_FOOD, SEAT_COIN, WARMTH_BUFFER, WARMTH_CAP,
+    create_content, make_house,
 )
 
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite:///:memory:")
+    # check_same_thread off: ctx.query.* callbacks run on the script
+    # thread (lua_engine.run executes in a worker) -- the starter reads
+    # world.lit_fires() every tick now (P1)
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     with Session(engine) as s:
         yield s
@@ -231,16 +236,17 @@ def test_bag_doubles_the_gather(session):
 
 
 def test_tool_and_facility_gates(session):
-    """HUNT_SPEAR needs a held SPEAR; TEND_FIRE/COOK_MEAT need a FIRE on
-    the parcel; REST needs a SHELTER; HUDDLE needs CLOTHES. MAKE_FIRE
-    builds the FIRE from scratch."""
+    """HUNT_SPEAR needs a held SPEAR; WARM_BY_FIRE/COOK_MEAT/SMOKE_MEAT
+    need a LIT FIRE (the commons fire stands at genesis, but not on the
+    seat's own camp); REST needs a SHELTER; HUDDLE needs CLOTHES.
+    MAKE_FIRE builds another FIRE from scratch -- public, born lit."""
     create_content(session)
     w = _seat(session)
     camp = _camp(session, w)
     with pytest.raises(Exception, match="SPEAR"):
         production.start_process(session, w, "HUNT_SPEAR")
     with pytest.raises(Exception, match="no free FIRE"):
-        production.start_process(session, w, "TEND_FIRE", camp.id)
+        production.start_process(session, w, "WARM_BY_FIRE", camp.id)
     with pytest.raises(Exception, match="no free FIRE"):
         production.start_process(session, w, "COOK_MEAT", camp.id)
     with pytest.raises(Exception, match="no free FIRE"):
@@ -249,15 +255,28 @@ def test_tool_and_facility_gates(session):
         production.start_process(session, w, "REST_SHELTERED", camp.id)
     with pytest.raises(Exception, match="CLOTHES"):
         production.start_process(session, w, "HUDDLE")
-    # The fire chain, built the intended way.
+    # The commons fire warms a house that owns no fire (auto-bind finds
+    # the public fire-ground; no parcel id needed). Seated at tick 1's
+    # start, the hour lands at tick 2's top: +6 capped at 6, minus that
+    # tick's 3-draw and the 0.2 fade on what remains -> 2.4 exactly.
+    markets.adjust_holding(session, w, "WARMTH", -WARMTH_BUFFER)
+    assert _act(session, w, "WARM_BY_FIRE")
+    _run(session, 2)
+    assert _hold(session, w.id, "WARMTH") == Decimal("2.4")
+    # MAKE_FIRE builds the house's own -- public on build, born burning
+    # (2 fuel: the wood that made it), four seats, one fuel an hour.
     markets.adjust_holding(session, w, "WOOD", Decimal("2"))
     assert _act(session, w, "MAKE_FIRE", camp.id)
     _run(session, 2)
     assert _facilities(session, w) == ["FIRE"]
-    markets.adjust_holding(session, w, "WOOD", Decimal("1"))
-    assert _act(session, w, "TEND_FIRE", camp.id)
-    _run(session, 2)
-    assert _hold(session, w.id, "WARMTH") > 0
+    fire = session.execute(
+        select(parcels.Facility)
+        .where(parcels.Facility.parcel_id == camp.id)
+    ).scalar_one()
+    assert (fire.access, fire.capacity) == ("PLACE", FIRE_SEATS)
+    assert fire.fuel_burn_per_tick == FIRE_FUEL_BURN
+    assert fire.fuel_capacity == FIRE_FUEL_CAP
+    assert fire.fuel > 0
 
 
 def test_axe_chops_certain_wood_and_fights_at_two(session):
@@ -298,7 +317,7 @@ def test_cook_meat_converts(session):
     create_content(session)
     w = _seat(session)
     camp = _camp(session, w)
-    parcels.add_facility(session, camp, "FIRE")
+    parcels.add_facility(session, camp, "FIRE", fuel=Decimal("6"))
     markets.adjust_holding(session, w, "MEAT", Decimal("2"))
     assert _act(session, w, "COOK_MEAT", camp.id)
     _run(session, 2)
@@ -316,7 +335,7 @@ def test_smoke_meat_converts_slowly_and_keeps(session):
     w = _biz(session, "Smoker")
     parcels.create_parcel(session, "LAND", name="Smoker's Camp", owner=w)
     camp = _camp(session, w)
-    parcels.add_facility(session, camp, "FIRE")
+    parcels.add_facility(session, camp, "FIRE", fuel=Decimal("6"))
     markets.adjust_holding(session, w, "MEAT", Decimal("2"))
     markets.adjust_holding(session, w, "WOOD", Decimal("1"))
     assert _act(session, w, "SMOKE_MEAT", camp.id)
@@ -468,6 +487,109 @@ def test_spear_hunt_beats_bare_hunt(session):
                 total += Decimal(e["outputs"].get("MEAT", "0"))
         return total
     assert meat(hunter) > meat(bare) * Decimal("1.5")
+
+
+# ===========================================================================
+# THE COMMONS FIRE (P1: the fire rework -- one fire warms many)
+# ===========================================================================
+
+def _commons_fire(session):
+    ground = session.execute(
+        select(parcels.Parcel).where(parcels.Parcel.parcel_type == "COMMONS")
+    ).scalar_one()
+    return ground, session.execute(
+        select(parcels.Facility)
+        .where(parcels.Facility.parcel_id == ground.id)
+    ).scalar_one()
+
+
+def _fuel(session):
+    return _commons_fire(session)[1].fuel
+
+
+def test_the_commons_fire_stands(session):
+    """Genesis furniture: one UNOWNED fire-ground at the hearth carrying a
+    PUBLIC fire -- four seats, six banked hours, burning one an hour --
+    and the catalog prices stoking (1 WOOD = 2 hours) and warming (+6
+    seated, a body caps at 6) around it. TEND_FIRE is gone: banking
+    warmth stopped being a strategy."""
+    create_content(session)
+    ground, fire = _commons_fire(session)
+    assert ground.owner_id is None
+    assert ground.place.key == "HEARTH"
+    assert (fire.access, fire.capacity) == ("PLACE", FIRE_SEATS)
+    assert fire.fuel == FIRE_FUEL_START
+    assert fire.fuel_capacity == FIRE_FUEL_CAP
+    assert fire.fuel_burn_per_tick == FIRE_FUEL_BURN
+    assert production.get_recipe(session, "TEND_FIRE") is None
+    stoke = production.get_recipe(session, "STOKE_FIRE")
+    assert stoke.facility_fuel_output == Decimal("2")
+    assert stoke.duration_ticks == 0 and not stoke.requires_daylight
+    warm = production.get_recipe(session, "WARM_BY_FIRE")
+    assert warm.outputs[0].quantity == WARMTH_CAP and warm.requires_facility_lit
+    for code in ("COOK_MEAT", "SMOKE_MEAT"):
+        assert production.get_recipe(session, code).requires_facility_lit
+    from econengine.goods import get_good
+    assert get_good(session, "WARMTH").max_holding == WARMTH_CAP
+
+
+def test_stoke_burns_and_goes_dark(session):
+    """The fuel cycle: the bank burns one an hour whether anyone sits,
+    runout is a facility_dark fact, a dark fire warms no one, and a log
+    relights it (1 WOOD = 2 hours -- a full bank refuses more)."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Stoker")
+    markets.adjust_holding(session, w, "WOOD", Decimal("3"))
+    # genesis bank is full: stoking bounces (and keeps its wood)
+    with pytest.raises(Exception, match="fully banked"):
+        production.start_process(session, w, "STOKE_FIRE")
+    assert _hold(session, w.id, "WOOD") == Decimal("3")
+    _run(session, 5)
+    assert _fuel(session) == Decimal("1")     # six banked, five burned
+    assert _events(session, "facility_dark") == []
+    _run(session, 1)
+    assert _fuel(session) == Decimal("0")     # the beacon goes out
+    assert len(_events(session, "facility_dark")) == 1
+    # dark: the seat refuses, the stoke relights
+    markets.adjust_holding(
+        session, w, "WARMTH", -_hold(session, w.id, "WARMTH"))  # to zero
+    with pytest.raises(Exception, match="dark"):
+        production.start_process(session, w, "WARM_BY_FIRE")
+    assert _act(session, w, "STOKE_FIRE")
+    assert _fuel(session) == Decimal("2")
+    assert _act(session, w, "WARM_BY_FIRE")
+
+
+def test_the_fire_seats_four(session):
+    """Capacity is seats: four houses warm at the commons fire in the
+    same hour; the fifth bounces (and can build a second fire -- MAKE_FIRE
+    is public on build)."""
+    create_content(session)
+    _no_wolves(session)
+    houses = [_seat(session, f"House {i}") for i in range(5)]
+    for h in houses[:4]:
+        assert _act(session, h, "WARM_BY_FIRE")
+    with pytest.raises(Exception, match="free seat"):
+        production.start_process(session, houses[4], "WARM_BY_FIRE")
+    _run(session, 2)                               # the seated hour completes
+    assert _act(session, houses[4], "WARM_BY_FIRE")   # a seat freed
+
+
+def test_warmth_cannot_be_banked(session):
+    """The holding cap: a body holds at most 6 WARMTH. Seated warmth
+    clips instead of banking (freeze-to-warm is one seated hour), and
+    an estate transfer cannot bank more than the living could."""
+    create_content(session)
+    _no_wolves(session)
+    w, other = _seat(session, "Warm"), _seat(session, "Heir")
+    markets.adjust_holding(session, w, "WARMTH", -WARMTH_BUFFER)
+    markets.adjust_holding(session, w, "WARMTH", Decimal("50"))  # clip at 6
+    assert _hold(session, w.id, "WARMTH") == WARMTH_CAP
+    # the same clip on the estate path (conditions._credit_holding)
+    from econengine import conditions
+    conditions._credit_holding(session, other, "WARMTH", Decimal("9"))
+    assert _hold(session, other.id, "WARMTH") == WARMTH_CAP
 
 
 # ===========================================================================

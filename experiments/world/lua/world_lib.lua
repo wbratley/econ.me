@@ -60,6 +60,23 @@ function world.place(key)
   return nil
 end
 
+-- The commons register (P1, the fire rework): PUBLIC facilities -- a
+-- fire is visible from far off, whoever fed it. world.lit_fires()
+-- returns the burning ones ({facility_type, place, parcel_id, fuel,
+-- fuel_capacity}); world.public_facilities(place) is everything public,
+-- optionally scoped to one place key. Fuel strings are exact decimals
+-- (tonumber them for arithmetic).
+function world.lit_fires(place)
+  local lit = {}
+  for _, f in ipairs(ctx.query.public_facilities(place)) do
+    if tonumber(f.fuel) > 0 then lit[#lit + 1] = f end
+  end
+  return lit
+end
+function world.public_facilities(place)
+  return ctx.query.public_facilities(place)
+end
+
 -- Roads (docs/spatial.md S3): the published itinerary. ----
 -- world.route(from, to, modes) returns {hops={{from,to,mode,cost_ticks},...},
 -- total_ticks} for the cheapest road, or nil when there is none -- the

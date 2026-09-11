@@ -176,13 +176,25 @@ answers what bites him; kill him and his shelf and purse go to
 whoever has hands — and the market dies with him.
 Food comes from GATHER (a
 loot-table recipe) and HUNT (a lottery: 55% nothing bare-handed);
-warmth from TEND_FIRE (1 WOOD → 10 WARMTH at a FIRE facility — a log
-carries the colder night) plus a graded ladder — REST under a SHELTER
-(1.0, labor-free), HUDDLE in CLOTHES (+0.5, labor-free). Shelter +
-clothes cover every mild day for free; nights still draw 3 an hour,
-so dusk wants either banked warmth stock or the fire tended. MEAT rots
+warmth from **the commons fire** (P1) plus a graded ladder — REST
+under a SHELTER (1.0, labor-free), HUDDLE in CLOTHES (+0.5,
+labor-free). The fire is a **pure commons**: a standing fire-ground at
+the hearth clearing — no owner, four seats, six banked hours of fuel,
+burning one an hour whether anyone sits. Anyone may STOKE (1 WOOD → +2
+hours of fuel, instant, night-legal, capped at 6) or take a seat
+(WARM_BY_FIRE: +6 WARMTH for the hour, labor-free, needs a lit fire);
+the same fire cooks (COOK/SMOKE bind it by day, warmth has it by
+night — capacity is seats, and day and night never contend).
+MAKE_FIRE erects another public fire on the commons, born lit at two
+hours (the wood that made it) — for a crowded clearing. Warming is a
+seat, not a stock: a body holds at most 6 WARMTH (the cap clips, never
+refuses), so frozen-to-warm is one seated hour and there is no banking
+warmth against the winter any more; `world.lit_fires(place)` is the
+beacon read for scripts (and wolves). Shelter + clothes cover every
+mild day for free; nights still draw 3 an hour, so dusk wants a seat
+at a lit fire and a log in the bank. MEAT rots
 (0.30/hour) and eating it raw is a 25%-per-meal DISEASE lottery —
-cooking is a FIRE facility away. Capital goods are the escape: SPEAR /
+cooking is the commons fire away. Capital goods are the escape: SPEAR /
 BAG / TRAP improve the hunt and the gather, CLOTHES / SHELTER / BED
 the warmth budget. All conditions follow the run-5 equilibrium lesson:
 grant/decay equilibrium sits **above** the incapacitation threshold

@@ -252,6 +252,11 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     finally:
         set_executing_tick(None)
     events.extend(production.consume_per_tick_inputs(session, tick_number=number))
+    # Facilities burn their fuel (P1): the recurring-cost twin of
+    # consume_per_tick_inputs -- a fire pays wood whether anyone sits by
+    # it or not, drawn down in the same pass window, before needs so the
+    # night's warmth draws and the fire's burn settle in one cadence.
+    events.extend(parcels.burn_facility_fuel(session, tick_number=number))
     events.extend(needs.run_consumption(session, tick_number=number))
     # Threats pressurize after needs and before decay: this tick's says
     # are already in the event list, and the decay pass fades the fresh

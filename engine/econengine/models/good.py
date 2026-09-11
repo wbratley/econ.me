@@ -51,6 +51,15 @@ class Good(Base):
     incapacitates_at: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
     )  # holding >= threshold deactivates the entity and applies the estate rule
+    # the banking cap (P1, the fire rework): a holding may never be credited
+    # above this -- positive deltas clip at the credit choke points (adjust
+    # _holding, estate transfer). NULL = uncapped, all of history's behavior.
+    # WARMTH caps at 6: warmth becomes something you sit by a fire to keep,
+    # not a stock you bank against the night (hot-water-bottle tech, later,
+    # raises the cap).
+    max_holding: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

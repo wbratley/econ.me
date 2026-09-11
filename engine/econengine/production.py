@@ -95,6 +95,10 @@ def create_recipe(
     per_tick_inputs: dict[str, Decimal] | None = None,
     requires_facility: str | None = None,
     builds_facility: str | None = None,
+    builds_facility_access: str = "OWNER",
+    builds_facility_config: dict | None = None,
+    facility_fuel_output: Decimal | None = None,
+    requires_facility_lit: bool = False,
     requires_daylight: bool = False,
     requires_place_kind: str | None = None,
     requires_place_key: str | None = None,
@@ -118,7 +122,7 @@ def create_recipe(
     # has to declare what it yields.
     is_travel_template = str(code).upper().startswith("TRAVEL_")
     if (not outputs and not branches and not unlocks and not builds_facility
-            and not is_travel_template):
+            and facility_fuel_output is None and not is_travel_template):
         raise ValueError(
             "recipe must declare at least one output, branch, unlock, or built facility"
         )
@@ -153,6 +157,43 @@ def create_recipe(
             outputs=rows(RecipeBranchOutput, branch.get("outputs") or {}),
         ))
 
+    # The commons knobs (P1): stoking credits fuel to the bound facility at
+    # completion (so it needs a facility to stoke), and a builder may erect
+    # its facility PLACE-access (public on build). Defaults keep every
+    # historical recipe private and fuel-free.
+    builds_access = str(builds_facility_access).upper()
+    if builds_access not in ("OWNER", "PLACE"):
+        raise ValueError(
+            f"builds_facility_access must be OWNER or PLACE, not {builds_facility_access!r}")
+    if facility_fuel_output is not None:
+        facility_fuel_output = Decimal(facility_fuel_output).quantize(_QUANTUM)
+        if facility_fuel_output <= 0:
+            raise ValueError("facility_fuel_output must be positive when set")
+        if not requires_facility:
+            raise ValueError(
+                "facility_fuel_output needs requires_facility -- a stoke must "
+                "name the facility it feeds")
+    if requires_facility_lit and not requires_facility:
+        raise ValueError(
+            "requires_facility_lit needs requires_facility -- a lit gate "
+            "must name the facility it reads")
+    if builds_facility_config is not None:
+        if not builds_facility:
+            raise ValueError(
+                "builds_facility_config needs builds_facility -- birth "
+                "parameters are for a facility being built")
+        allowed = {"capacity", "fuel", "fuel_capacity", "fuel_burn_per_tick"}
+        unknown = set(builds_facility_config) - allowed
+        if unknown:
+            raise ValueError(
+                f"builds_facility_config keys must be {sorted(allowed)}, "
+                f"not {sorted(unknown)} -- access is builds_facility_access's job")
+        # JSON cannot carry Decimal: validate numeric-ness loudly, store
+        # as strings (add_facility re-Decimals every knob it accepts)
+        builds_facility_config = {
+            key: str(Decimal(value)) for key, value in builds_facility_config.items()
+        }
+
     recipe = Recipe(
         code=code.upper(),
         name=name,
@@ -160,6 +201,10 @@ def create_recipe(
         duration_ticks=duration_ticks,
         requires_facility=requires_facility.upper() if requires_facility else None,
         builds_facility=builds_facility.upper() if builds_facility else None,
+        builds_facility_access=builds_access,
+        builds_facility_config=builds_facility_config,
+        facility_fuel_output=facility_fuel_output,
+        requires_facility_lit=requires_facility_lit,
         requires_daylight=requires_daylight,
         requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
@@ -287,28 +332,49 @@ def start_process(
         if parcel is None:
             raise ValueError("unknown parcel")
         if parcel.owner_id != entity.id:
-            raise ValueError("entity does not control parcel")
+            # The commons rule (P1): an entity may bind a parcel it does not
+            # control only where that parcel hosts a PLACE-access facility of
+            # the required type -- the village fire warms anyone who walks
+            # up to it. Everything else (building, deposits) stays the
+            # owner's alone.
+            if not (recipe.requires_facility
+                    and parcels.has_public_facility(
+                        session, parcel.id, recipe.requires_facility)):
+                raise ValueError("entity does not control parcel")
     elif recipe.requires_facility:
         # Auto-bind (run 15: 20 refusals "recipe TEND_FIRE must be bound
         # to a parcel" while the engine knew exactly where the entity's
         # FIRE stood). A facility recipe started without a parcel binds
         # itself to the first owned parcel with a FREE facility of that
         # type -- where the facility lives is bookkeeping, not strategy.
+        # The commons fallback (P1): owning none, bind the first parcel
+        # hosting a PLACE-access facility with a free seat -- the fire at
+        # the clearing. Owned first (your hearth before the village's),
+        # then public, both deterministic.
         owned = session.execute(
             select(Parcel).where(Parcel.owner_id == entity.id).order_by(Parcel.id)
         ).scalars().all()
         has_any = False
         for p in owned:
-            count = parcels.facility_count(session, p.id, recipe.requires_facility)
-            if not count:
+            cap = parcels.facility_capacity(session, p.id, recipe.requires_facility)
+            if not cap:
                 continue
             has_any = True
-            free = count - parcels.reserved_facilities(
+            free = cap - parcels.reserved_facilities(
                 session, p.id, recipe.requires_facility
             )
             if free > 0:
                 parcel = p
                 break
+        if parcel is None and not has_any:
+            for p in parcels.public_facility_parcels(session, recipe.requires_facility):
+                cap = parcels.facility_capacity(session, p.id, recipe.requires_facility)
+                free = cap - parcels.reserved_facilities(
+                    session, p.id, recipe.requires_facility
+                )
+                if free > 0:
+                    parcel = p
+                    break
         if parcel is None:
             if has_any:
                 raise ValueError(
@@ -317,7 +383,8 @@ def start_process(
                 )
             raise ValueError(
                 f"recipe {recipe.code} requires a {recipe.requires_facility} "
-                f"facility on a parcel you control; you have none"
+                f"facility on a parcel you control or a public one with a "
+                f"free seat; you have none"
             )
     elif recipe_needs_parcel(recipe):
         raise ValueError(
@@ -327,13 +394,43 @@ def start_process(
 
     if recipe.requires_facility:
         free = (
-            parcels.facility_count(session, parcel.id, recipe.requires_facility)
+            parcels.facility_capacity(session, parcel.id, recipe.requires_facility)
             - parcels.reserved_facilities(session, parcel.id, recipe.requires_facility)
         )
         if free < 1:
             raise ValueError(
                 f"parcel has no free {recipe.requires_facility} facility"
             )
+        # The lit gate (P1): warming and cooking want a BURNING fire. The
+        # check is parcel-level (any facility of the type with fuel > 0) --
+        # one fire per parcel is the shape this world builds, and a
+        # half-check is a worse lie than a coarse one.
+        if recipe.requires_facility_lit:
+            lit = any(
+                f.fuel > 0 for f in parcels.facilities_of_type(
+                    session, parcel.id, recipe.requires_facility
+                )
+            )
+            if not lit:
+                raise ValueError(
+                    f"recipe {recipe.code}: the {recipe.requires_facility} is "
+                    f"dark -- stoke it first (fuel is the fire's life)"
+                )
+        # Stoking (P1): refuse before drawing inputs when the bound facility
+        # cannot bank the fuel -- the same predictability as an input
+        # shortage, so wood is never silently wasted on a full fire.
+        if recipe.facility_fuel_output is not None:
+            for facility in parcels.facilities_of_type(
+                session, parcel.id, recipe.requires_facility
+            ):
+                cap = facility.fuel_capacity
+                if cap is None or facility.fuel + recipe.facility_fuel_output <= cap:
+                    break
+            else:
+                raise ValueError(
+                    f"recipe {recipe.code}: the {recipe.requires_facility} is "
+                    f"fully banked -- wait for it to burn down"
+                )
 
     modifiers = (
         conditions.held_modifiers(session, entity.id) if recipe.good_requirements else []
@@ -451,6 +548,11 @@ def complete_processes(session: Session, tick_number: int) -> list[dict]:
             # road entirely. Unlocks still announce -- arriving somewhere
             # can teach you something.
             events.append(_completed_event(process, granted))
+        # the stoke's beacon (facility_lit / facility_fuel), credited inside
+        # _complete -- a fact of the tick the way the completion is
+        fuel_event = getattr(process, "fuel_event", None)
+        if isinstance(fuel_event, dict):
+            events.append(fuel_event)
         for unlock in granted:
             events.append({
                 "type": "unlocked",
@@ -585,9 +687,9 @@ def _credit_output(session: Session, entity: Entity, item, reference: str) -> No
 
 def _complete(session: Session, process: Process, seed: str) -> list:
     """Credit outputs — rolling the outcome branch first if the recipe is
-    stochastic — erect the built facility, and grant the recipe's unlocks;
-    returns the Unlock rows actually created (technology-code order,
-    already-held ones skipped)."""
+    stochastic — erect the built facility, credit facility fuel (stoking,
+    P1), and grant the recipe's unlocks; returns the Unlock rows actually
+    created (technology-code order, already-held ones skipped)."""
     recipe = process.recipe
     outputs = recipe.outputs
     if recipe.branches:
@@ -602,7 +704,25 @@ def _complete(session: Session, process: Process, seed: str) -> list:
         parcels.add_facility(
             session, process.parcel, recipe.builds_facility,
             built_tick=process.completes_tick,
+            access=recipe.builds_facility_access,
+            **(recipe.builds_facility_config or {}),
         )
+    if recipe.facility_fuel_output is not None and process.parcel is not None:
+        # Stoking: credit the fuel to the first bound facility with room
+        # (start_process verified room at start; a same-tick race past the
+        # cap clips -- state over noise). The beacon event rides the
+        # completion path (complete_processes appends it); the inline
+        # duration-0 path drops it, exactly as it drops process_completed.
+        for facility in parcels.facilities_of_type(
+            session, process.parcel.id, recipe.requires_facility
+        ):
+            cap = facility.fuel_capacity
+            if cap is None or facility.fuel + recipe.facility_fuel_output <= cap:
+                process.fuel_event = parcels.credit_fuel(
+                    session, facility, recipe.facility_fuel_output,
+                    entity_id=process.entity_id,
+                )
+                break
     granted = []
     for u in sorted(recipe.unlocks, key=lambda u: u.technology.code):
         unlock = tech.grant_unlock(
