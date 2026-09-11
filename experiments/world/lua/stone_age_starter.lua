@@ -1,16 +1,17 @@
 -- stone_age_starter.lua  (BEHAVIOUR) -- the default a player inherits.
 --
 -- A hand-to-mouth loop with a commute (S4: the world has places, and
--- they are hours apart): keep a fire at the hearth, feed it logs when
--- the warmth runs low, EAT when the stomach runs low (eating is your
--- decision now -- the engine no longer chews for you), gather whatever
--- the thicket offers, and WALK between them -- an hour each way, the
--- road exposed place by place. It survives -- barely. It never builds
--- capital (no spear, no bag, no shelter, no clothes) and spends nearly
--- every tick on the next meal or the next log: that is the point. The
--- stone-age seat is POOR, and this script shows the floor. A player
--- who changes nothing stays on the treadmill; every escape -- tools,
--- clothes, shelter, trade -- is their invention.
+-- they are hours apart): keep the COMMONS fire fed and take a seat by
+-- dark (warming is a seat, not a stock), EAT when the stomach runs low
+-- (eating is your decision now -- the engine no longer chews for you),
+-- gather whatever the thicket offers, and WALK between them -- an hour
+-- each way, the road exposed place by place. It survives -- barely. It
+-- never builds capital (no spear, no bag, no shelter, no clothes, not
+-- even its own fire -- the commons stands) and spends nearly every tick
+-- on the next meal or the next log: that is the point. The stone-age
+-- seat is POOR, and this script shows the floor. A player who changes
+-- nothing stays on the treadmill; every escape -- tools, clothes,
+-- shelter, trade -- is their invention.
 --
 -- The blocks are independent priorities, NOT one elseif chain: the
 -- fire-block's first branch ("no fire yet") must not swallow the gather
@@ -30,9 +31,6 @@
 --   a holding's spendable side is smaller than holding_qty when your
 --   running processes reserve some of it:
 --     if std.unreserved("LABOR") >= 1 then ... end
-
-local camp = ctx.parcels[1] and ctx.parcels[1].id
-local fire = std.facility_parcel("FIRE")
 
 local place  = ctx.entity.place   -- where I stand (a place key, or nil)
 local home   = "HEARTH"           -- the fire-ground: safe nights, the fire
@@ -65,26 +63,35 @@ if satiety < 1.5 then
   end
 end
 
--- 1. The fire: at the hearth. Night draws 3 warmth an hour -- bank a
---    stock before dark (hour 15 onward) and keep the fire fed while
---    labor lasts into the evening. MAKE_FIRE and TEND_FIRE are
---    night-legal (darkness only refuses gathering and hunting) but
---    hearth-bound: if the warmth will want work, walk home first --
---    the walk is the tick's act.
-if not fire then
-  if wood >= 2 then
-    if place ~= home then
-      ctx.action.travel(home)
-    else
-      ctx.action.start_process("MAKE_FIRE", camp)
-    end
-  end
-elseif warmth < (std.hour() and std.hour() >= 15 and 12 or 4)
-       and wood >= 1 and not std.running_recipe("TEND_FIRE") then
+-- 1. The fire is common ground: a standing fire at the clearing seats
+--    four and burns one fuel an hour, lit or empty. Keep it fed -- a
+--    split log (STOKE_FIRE: 1 WOOD) buys two hours for everyone it
+--    warms, free and night-legal -- and take a seat by dark (warming
+--    is a SEAT: +6 an hour, a body holds six). Both hearth-bound: if
+--    the fire will want work, walk home first -- the walk is the
+--    tick's act.
+local fires = world.lit_fires(home)
+local low_fuel = #fires == 0
+for _, f in ipairs(fires) do
+  if tonumber(f.fuel) <= 2 then low_fuel = true end
+end
+if low_fuel and wood >= 1 then
   if place ~= home then
     ctx.action.travel(home)
   else
-    ctx.action.start_process("TEND_FIRE", fire)
+    ctx.action.start_process("STOKE_FIRE")
+  end
+end
+
+-- 1a. Sit when cold or when dark falls: the commons fire warms whoever
+--     takes a seat while it burns (a dark fire warms no one -- feed it
+--     first). Night draws 3 warmth an hour; a body holds six.
+if (std.is_night() or warmth < 4) and #fires > 0
+   and not std.running_recipe("WARM_BY_FIRE") then
+  if place ~= home then
+    ctx.action.travel(home)
+  else
+    ctx.action.start_process("WARM_BY_FIRE")
   end
 end
 
@@ -105,10 +112,11 @@ if hits < 20 and std.is_night() then
   end
 end
 
--- 2. Cooking: fire + 2 raw meat -> 2 safe food. The fire is the camp's,
---    and the camp is at the hearth -- cook while home.
-if fire and place == home and meat >= 2 and food < 4 then
-  ctx.action.start_process("COOK_MEAT", fire)
+-- 2. Cooking: fire + 2 raw meat -> 2 safe food. The commons fire
+--    cooks for anyone at the clearing (lit -- the starter stokes
+--    first; coals do not cook).
+if place == home and meat >= 2 and food < 4 then
+  ctx.action.start_process("COOK_MEAT")
 end
 
 -- 3. Everything else is gathering at the thicket: food first, then wood

@@ -16,7 +16,7 @@
    "markets": 15,
    "needs": 2,
    "places": 6,
-   "recipes": 28,
+   "recipes": 29,
    "technologies": 1,
    "threats": 0
   }
@@ -32,10 +32,10 @@
   "pack.lua": "4f68c575e7a8057b",
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
-  "stone_age_starter.lua": "7d512e92cac1600d",
+  "stone_age_starter.lua": "da0927afa865af95",
   "trading_post.lua": "fba344077106c200",
   "wolf_pack.lua": "f26c431b341e9cf6",
-  "world_lib.lua": "00189c986a1e00bf"
+  "world_lib.lua": "690f8b67278345e6"
  },
  "name": "demo-world",
  "pack_id": "demo-world",

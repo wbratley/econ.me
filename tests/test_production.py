@@ -280,3 +280,170 @@ def test_input_refusal_names_running_reservers(session):
                        match=r"unreserved OVEN of [\d.]+ held, "
                              r"reserved by your running BAKE"):
         start_process(session, alice, "SCRAP_OVEN")
+
+
+# --- the commons (P1: facility access, capacity, fuel, holding caps) --------
+
+def _commons_world(session, seats=1, fuel=Decimal("6"), cap=Decimal("6"),
+                   burn=Decimal("1")):
+    """A village: an unowned COMMONS parcel with a PUBLIC fire, a villager
+    who owns nothing, and WARM (duration 1, occupies a seat) and STOKE
+    (instant, banks fuel) recipes against it."""
+    from econengine.parcels import add_facility, create_parcel
+    villager = create_entity(session, "Villager", EntityType.INDIVIDUAL)
+    ground = create_parcel(session, "COMMONS", name="fire-ground")
+    add_facility(session, ground, "FIRE", access="PLACE", capacity=seats,
+                 fuel=fuel, fuel_capacity=cap, fuel_burn_per_tick=burn)
+    create_recipe(session, "WARM", inputs={},
+                  outputs={"WARMTH": Decimal("6")}, duration_ticks=1,
+                  requires_facility="FIRE", requires_facility_lit=True)
+    create_recipe(session, "STOKE", inputs={"WOOD": Decimal("1")},
+                  outputs={}, duration_ticks=0, requires_facility="FIRE",
+                  facility_fuel_output=Decimal("2"))
+    adjust_holding(session, villager, "WOOD", Decimal("5"))
+    return villager, ground
+
+
+def test_public_facility_binds_the_parcel_less(session):
+    """PLACE access is the commons: an entity that owns NO parcel warms at
+    the public fire by auto-bind, and may bind it explicitly too. Owning
+    parcels is not the price of admission -- presence is the recipe's
+    business."""
+    villager, ground = _commons_world(session)
+    process = start_process(session, villager, "WARM")       # auto-bind
+    assert process.parcel_id == ground.id
+    complete_processes(session, tick_number=process.completes_tick)
+    process = start_process(session, villager, "WARM", ground.id)  # explicit
+    assert process.parcel_id == ground.id
+
+
+def test_private_facility_still_refuses_strangers(session):
+    """The commons is per-facility, not a world flag: a stranger binding a
+    PRIVATE facility's parcel is refused exactly as before."""
+    from econengine.parcels import add_facility, create_parcel
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    stranger = create_entity(session, "Stranger", EntityType.INDIVIDUAL)
+    adjust_holding(session, stranger, "LABOR", Decimal("1"))
+    camp = create_parcel(session, "CAMP", owner=alice)
+    add_facility(session, camp, "FIRE", fuel=Decimal("6"))   # OWNER access
+    create_recipe(session, "WARM", inputs={},
+                  outputs={"WARMTH": Decimal("6")}, duration_ticks=1,
+                  requires_facility="FIRE")
+    with pytest.raises(ValueError, match="does not control"):
+        start_process(session, stranger, "WARM", camp.id)
+    # and auto-bind will not reach it either: no public fire exists
+    with pytest.raises(ValueError, match="free seat"):
+        start_process(session, stranger, "WARM")
+
+
+def test_facility_capacity_is_seats(session):
+    """capacity is concurrent binder slots: a two-seat fire warms two at
+    once and refuses the third until an hour frees."""
+    villagers = [create_entity(session, f"V{i}", EntityType.INDIVIDUAL)
+                 for i in range(3)]
+    villager, ground = _commons_world(session, seats=2)
+    for v in villagers[:2]:
+        start_process(session, v, "WARM")
+    with pytest.raises(ValueError, match="free seat"):
+        start_process(session, villagers[2], "WARM")
+    complete_processes(session, tick_number=2)   # the two seats free
+    start_process(session, villagers[2], "WARM")
+
+
+def test_stoking_banks_fuel_and_the_cap_refuses(session):
+    """A stoke credits fuel to the bound facility; a fully banked fire
+    refuses wood BEFORE drawing it (banking is capped, like every input)."""
+    villager, _ground = _commons_world(session, fuel=Decimal("4"),
+                                       cap=Decimal("6"))
+    process = start_process(session, villager, "STOKE")
+    assert process.status == ProcessStatus.COMPLETED   # instant: duration 0
+    fire = process.parcel.facilities[0]
+    assert fire.fuel == Decimal("6")                   # 4 + 2, exactly at the cap
+    with pytest.raises(ValueError, match="fully banked"):
+        start_process(session, villager, "STOKE")
+    assert get_holding(session, villager.id, "WOOD").quantity == Decimal("4")
+
+
+def test_lit_gate_refuses_a_dark_fire(session):
+    """requires_facility_lit: warming (or cooking) wants a BURNING fire;
+    dark, the refusal names the fix (stoke it), and a stoke relights it."""
+    villager, _ground = _commons_world(session, fuel=Decimal("1"))
+    from econengine.parcels import burn_facility_fuel
+    burn_facility_fuel(session, tick_number=1)          # fuel 1 -> 0: dark
+    with pytest.raises(ValueError, match="dark.*stoke"):
+        start_process(session, villager, "WARM")
+    start_process(session, villager, "STOKE")          # +2: lit again
+    start_process(session, villager, "WARM")
+
+
+def test_burn_pass_empties_the_bank_and_emits_dark(session):
+    """The tick pass burns one fuel an hour whether anyone sits, floors at
+    zero, and the runout is a facility_dark event -- the beacon going out."""
+    _v, ground = _commons_world(session, fuel=Decimal("2"))
+    from econengine.parcels import burn_facility_fuel
+    events = burn_facility_fuel(session, tick_number=1)
+    assert events == [] and ground.facilities[0].fuel == Decimal("1")
+    events = burn_facility_fuel(session, tick_number=2)
+    assert [e["type"] for e in events] == ["facility_dark"]
+    assert events[0]["facility_type"] == "FIRE"
+    assert ground.facilities[0].fuel == Decimal("0")
+    assert burn_facility_fuel(session, tick_number=3) == []  # stays dark, no noise
+
+
+def test_stoking_a_dark_fire_emits_the_beacon(session):
+    """Relighting is news: fuel crossing 0 -> positive is a facility_lit
+    event (visible from far off); topping a lit fire is quiet telemetry."""
+    villager, _ground = _commons_world(session, fuel=Decimal("0"))
+    process = start_process(session, villager, "STOKE")
+    # duration-0 stokes complete inline; the beacon rides only the
+    # tick-completion path, so read the state and re-run the event through
+    # parcels.credit_fuel's contract: lit once, fuel-facts after
+    from econengine.parcels import credit_fuel
+    fire = process.parcel.facilities[0]
+    assert fire.fuel == Decimal("2")
+    event = credit_fuel(session, fire, Decimal("2"), entity_id=villager.id)
+    assert event["type"] == "facility_fuel"      # already lit: not news
+    fire.fuel = Decimal("0")
+    event = credit_fuel(session, fire, Decimal("2"), entity_id=villager.id)
+    assert event["type"] == "facility_lit"       # dark -> lit: the beacon
+
+
+def test_built_facility_carries_birth_params(session):
+    """builds_facility_config: a recipe erects its facility with the
+    commons knobs -- the fire MAKE_FIRE builds burns like the standing
+    one (four seats, six-hour bank, one an hour, born lit)."""
+    from econengine.parcels import create_parcel, facility_capacity
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    adjust_holding(session, alice, "LABOR", Decimal("1"))
+    adjust_holding(session, alice, "WOOD", Decimal("2"))
+    camp = create_parcel(session, "CAMP", owner=alice)
+    create_recipe(session, "MAKE_FIRE", inputs={"LABOR": Decimal("1"),
+                  "WOOD": Decimal("2")}, outputs={}, duration_ticks=1,
+                  builds_facility="FIRE", builds_facility_access="PLACE",
+                  builds_facility_config={"capacity": 4, "fuel": Decimal("2"),
+                                          "fuel_capacity": Decimal("6"),
+                                          "fuel_burn_per_tick": Decimal("1")})
+    process = start_process(session, alice, "MAKE_FIRE", camp.id)
+    complete_processes(session, tick_number=process.completes_tick)
+    fire = camp.facilities[0]
+    assert (fire.access, fire.capacity) == ("PLACE", 4)
+    assert fire.fuel == Decimal("2") and fire.fuel_capacity == Decimal("6")
+    assert fire.fuel_burn_per_tick == Decimal("1")
+    assert facility_capacity(session, camp.id, "FIRE") == 4
+
+
+def test_holding_cap_clips_positive_credits(session):
+    """max_holding: positive credits clip at the cap (never an error),
+    debits are untouched, and a cap below the auto-issue target is a loud
+    content bug at create time."""
+    from econengine.goods import create_good, get_good
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    create_good(session, "WARMTH", max_holding=Decimal("6"))
+    adjust_holding(session, alice, "WARMTH", Decimal("4"))
+    adjust_holding(session, alice, "WARMTH", Decimal("4"))   # +4 -> clip at 6
+    assert get_holding(session, alice.id, "WARMTH").quantity == Decimal("6")
+    adjust_holding(session, alice, "WARMTH", Decimal("-6"))  # debits untouched
+    assert get_holding(session, alice.id, "WARMTH").quantity == Decimal("0")
+    with pytest.raises(ValueError, match="fights the cap"):
+        create_good(session, "RATION", auto_issue_quantity=Decimal("2"),
+                    max_holding=Decimal("1"))

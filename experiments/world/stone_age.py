@@ -70,8 +70,8 @@ hunted down over two cold nights, and the loud targeted by name --
 speech is free by day, priced at night.
 
 THE MAP (S4, docs/spatial.md): the world has places, and they are
-hours apart. Seats wake at the Hearth clearing (fires are made and
-tended there); the berry thicket is 1h (gather/chop), the river 2h
+hours apart. Seats wake at the Hearth clearing (the fire-ground: the
+commons fire stands there); the berry thicket is 1h (gather/chop), the river 2h
 (FISH: certain-ish meat, no wolves), the flint scrape 2h (certain
 flint), the deep forest 3h (the hunts, and the wolves' dens), the
 trading post 1h, down the valley -- an easy walk (the forest and
@@ -143,12 +143,33 @@ COIN_WEIGHT = Decimal("5")
 MANUAL_KEY = "world.manual"
 
 # --- Genesis buffers --------------------------------------------------------
-# What a seat starts with: a few days of food and one night's warmth. Not a
+# What a seat starts with: a few days of food and one cold evening's
+# warmth (the WARMTH cap is 6 -- two dark hours' grace, no more). Not a
 # lifestyle -- a runway. Bare survival (no tools, no capital) runs a LABOR
 # deficit against FOOD+WARMTH, so these buffers only postpone the reckoning;
 # capital (fire, clothes, shelter, tools) is the only way to a surplus.
 BERRY_BUFFER = Decimal("8")
-WARMTH_BUFFER = Decimal("15")
+WARMTH_BUFFER = Decimal("6")
+
+# --- The commons fire (P1, the fire rework: ROADMAP.md) --------------------
+# One fire warms many. The fire-ground's standing FIRE is PUBLIC (four
+# seats -- WARM_BY_FIRE occupies one for its hour, like every facility
+# process), burns one fuel per hour WHETHER ANYONE SITS OR NOT, and banks
+# at most six hours of burn (STOKE_FIRE: 1 WOOD = 2 hours -- splitting
+# the log is the craft). No one owns it; anyone may stoke, warm, or cook
+# at it, and everyone freezes when no one feeds it. WARMTH itself caps
+# at 6 -- a body holds about two cold hours' grace -- so banking warmth
+# is not a strategy (until hot-water-bottle tech); warming is presence
+# at a lit fire. A night is ten dark hours: a dusk-full bank (6) plus a
+# stoke or two from whoever sits carries the village for ~3 WOOD --
+# against ~12 and a dozen labor-hours when every house banked alone.
+WARMTH_CAP = Decimal("6")
+FIRE_SEATS = 4
+FIRE_FUEL_START = Decimal("6")
+FIRE_FUEL_CAP = Decimal("6")
+FIRE_FUEL_BURN = Decimal("1")
+STOKE_FUEL = Decimal("2")
+WARM_BY_FIRE_WARMTH = Decimal("6")
 
 # --- Needs and their teeth --------------------------------------------------
 # Both needs bill every tick. Each condition's death threshold sits BELOW
@@ -199,10 +220,18 @@ THE DAY IS THE BUDGET: tick = hour, and the day has 24 of them.
 Daylight is hours 06..19 -- you get 1 LABOR each daylight hour and
 exactly one LABOR-costing recipe runs per hour -- the first script
 call that takes it wins, later calls bounce. NIGHT issues no LABOR and
-refuses gathering and hunting (too dark); tending, cooking, smoking,
-eating and resting all work. WARMTH draws 3/hour at night vs 1 by day:
-bank warmth stock before dark, or sleep by a fire (std.hour() and
-std.is_night() read the clock). Unspent labor is nearly worthless.
+refuses gathering and hunting (too dark); stoking, warming, cooking,
+smoking, eating and resting all work. WARMTH draws 3/hour at night vs
+1 by day. THE FIRE IS A COMMONS, not a pantry: warmth is a SEAT, not a
+stock -- a body holds at most 6 WARMTH (two cold hours' grace), and
+only sitting at a lit fire fills it (WARM_BY_FIRE: +6 an hour seated,
+labor-free, night-legal). The standing fire at the clearing seats FOUR
+at once, burns one fuel an hour whether anyone sits or not, and banks
+at most six hours (STOKE_FIRE: 1 WOOD = 2 hours, free and instant --
+refused when the fire is fully banked). No one owns it; anyone may
+feed it, warm at it, cook on it -- and everyone freezes when no one
+feeds it. Keep a seat and keep it fed (std.hour() and std.is_night()
+read the clock). Unspent labor is nearly worthless.
 
 MEALS ARE DECISIONS: nothing is eaten for you. Meals are labor-free,
 instant and night-legal -- but they do not happen by themselves.
@@ -235,7 +264,8 @@ hears every fight). The packs breed: from day 5, every fifth day, up
 to three more, never more than four alive.
 Speech is free by day. At night it has a price.
 
-A fed
+A seated body is warm and a warm body (WARMTH >= 1) turns a wolf at
+the door: the fire that feeds you guards you. A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
 where each one kills.
@@ -256,9 +286,9 @@ road exposes you place by place. ctx.entity.place says where you
 stand; world.route(from, to) prices any walk before you take it;
 ctx.action.travel(to) sets out (nothing else may move you).
 WORK IS WHERE YOU ARE: gathering and chopping want the thicket,
-hunting wants the forest, fire-making and tending want the hearth,
-flint-digging wants the scrape, fishing wants the river. The refusal
-names where you stand and what the work wants.
+hunting wants the forest, fire-making, stoking and warming want the
+hearth, flint-digging wants the scrape, fishing wants the river. The
+refusal names where you stand and what the work wants.
 THE MARKETS LIVE AT THE POST: every order -- buying and selling both --
 requires standing there. An hour out, an hour back: the walk is
 cheap, so the question is what you carry and what you quote -- not
@@ -266,7 +296,11 @@ whether the trip survives the day. Mind the dark on the way all the
 same.
 
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
-1. FIRE first (2 WOOD + an hour): cooking + warmth. Do not sleep fireless.
+1. THE FIRE IS COMMON GROUND: a standing fire at the clearing already
+   seats four and cooks for anyone -- keep it fed (1 WOOD stokes two
+   hours) and take your seat by dark (WARM_BY_FIRE). MAKE_FIRE (2 WOOD)
+   adds four public seats when the clearing is crowded. Do not sleep
+   fireless.
 2. EAT what spoils first: berries within hours, cooked within a day;
    JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
    hunger kills the careless before any tool matters.)
@@ -384,6 +418,7 @@ def create_content(session: Session, verify: bool = True) -> None:
     not installation -- the shipped pins are stale by definition while
     the author is regenerating them."""
     _create_map(session)   # the map first: everything sited below
+    _create_commons(session)   # the fire-ground: the village hearth stands
     _create_goods(session)
     _create_recipes(session)
     _create_needs(session)
@@ -474,6 +509,24 @@ def _create_map(session: Session) -> None:
     )
 
 
+def _create_commons(session: Session) -> None:
+    """The fire-ground (P1, the fire rework): the village hearth as Genesis
+    furniture. One UNOWNED COMMONS parcel at the hearth clearing carrying a
+    PUBLIC fire -- four seats, a fuel bank (6 hours max), burning one an
+    hour lit or empty. Nobody's property precisely because everybody's
+    survival runs through it: stoking is a gift to whoever sits next
+    (free-riding is the experiment), and the fire dying at 02:00 is a
+    village-wide fact. Houses may still BUILD fires (MAKE_FIRE, public on
+    build) for more seats -- the commons is the floor, not the ceiling."""
+    ground = parcels.create_parcel(
+        session, "COMMONS", name="The fire-ground", place="HEARTH")
+    parcels.add_facility(
+        session, ground, "FIRE", access="PLACE", capacity=FIRE_SEATS,
+        fuel=FIRE_FUEL_START, fuel_capacity=FIRE_FUEL_CAP,
+        fuel_burn_per_tick=FIRE_FUEL_BURN,
+    )
+
+
 def _create_goods(session: Session) -> None:
     # The action ration: one auto-issued labor-HOUR per hour of DAYLIGHT
     # (14 a day, none at night — the clock, run 18). Unspent labor
@@ -544,24 +597,26 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "BED", name="Bed",
                       description="Craftable comfort, mechanically idle — "
                                   "the expansion hook.")
-    # Flows. WARMTH fades (0.2/tick): a tended fire warms you for a few
-    # ticks, not forever. SATIETY is the stomach: filled only by EAT
-    # recipes (conscious eating, run 19 -- the engine no longer chews
-    # for you), drawn by the FOOD need every hour, and spilling a tenth
-    # of itself each hour besides -- a banked belly keeps about a day,
-    # no more (compound spill: a full stomach is a wasting asset).
-    # The trader's hearth: the world keeps a standing fire lit for
-    # its businesses (he has done this a while; fire and shelter are
-    # why wolves almost never reach him). Houses get no such mercy --
-    # their warmth is their own labor. Top-up of 1 survives the night
-    # pass order (issues before scripts resolve attacks, decay after).
+    # Flows. WARMTH fades (0.2/tick) and now CAPS at 6 (the fire rework:
+    # a body holds about two cold hours -- banking warmth against the night
+    # is not a strategy; a SEAT at a lit fire is). SATIETY is the stomach:
+    # filled only by EAT recipes (conscious eating, run 19 -- the engine no
+    # longer chews for you), drawn by the FOOD need every hour, and spilling
+    # a tenth of itself each hour besides -- a banked belly keeps about a
+    # day, no more (compound spill: a full stomach is a wasting asset).
+    # The trader's hearth: the world keeps a standing warmth for its
+    # businesses (he has done this a while), a top-up of 1 -- under the
+    # cap, covering the day draw and deterring wolves at his door.
     goods.create_good(session, "WARMTH", name="Warmth",
-                      description="A flow, not a stock to hoard: made by fires, "
-                                  "shelter and clothes, fades fast. The WARMTH "
+                      description="A seat at a fire, not a stock to hoard: made "
+                                  "by fires (+6 an hour seated, WARM_BY_FIRE), "
+                                  "shelter and clothes; fades fast and holds at "
+                                  "most 6 -- two cold hours' grace. The WARMTH "
                                   "need drinks it every tick.",
                       decay_per_tick=Decimal("0.2"),
                       auto_issue_quantity=Decimal("1"),
-                      auto_issue_entity_type=EntityType.BUSINESS)
+                      auto_issue_entity_type=EntityType.BUSINESS,
+                      max_holding=WARMTH_CAP)
     goods.create_good(session, "SATIETY", name="Satiety",
                       description="The stomach. Only EAT recipes fill it "
                                   "(berries thin, jerky dense, raw meat a "
@@ -797,35 +852,61 @@ def _create_recipes(session: Session) -> None:
         ],
     )
 
-    # --- The fire chain: warmth and cooking --------------------------------
-    # MAKE_FIRE erects the FIRE facility on a parcel (one-time); TEND_FIRE
-    # burns wood into a warmth stock (~4 ticks of cover per log); COOK_MEAT
-    # needs the fire. Fire is the bootstrap technology: cheap, immediate,
-    # and superseded for warmth (not for cooking) by clothes + shelter.
+    # --- The fire chain: a commons, not a pantry (P1, the fire rework) -----
+    # The fire-ground's standing fire is PUBLIC (four seats, six hours of
+    # banked burn, one an hour lit or empty -- see _create_commons).
+    # MAKE_FIRE erects ANOTHER fire on your camp at the hearth: public on
+    # build too -- four more seats and its own fuel bank, the commons's
+    # answer to a crowded clearing. STOKE feeds any fire (1 WOOD = 2
+    # hours, refused at the bank cap); WARM_BY_FIRE takes a seat for an
+    # hour (+6 WARMTH -- a body caps at 6). Cooking and smoking bind the
+    # same public fire: day fires cook, night fires warm, one capacity to
+    # contend for.
     production.create_recipe(
         session, "MAKE_FIRE", name="Make Fire",
-        description="Erects the fire on your camp at the hearth clearing: the "
-                    "bootstrap technology — cheap, immediate, warm, and it "
-                    "cooks.",
+        description="Erects another fire on your camp at the hearth clearing: "
+                    "PUBLIC like the commons fire -- four seats and its own "
+                    "fuel bank, for a crowded clearing. Anyone may warm or "
+                    "cook at it; you get the seat of honor, not the door. "
+                    "Catches at two hours of fuel -- the wood that made it.",
         inputs={"LABOR": D("1"), "WOOD": D("2")},
         outputs={}, duration_ticks=1, builds_facility="FIRE",
+        builds_facility_access="PLACE",
+        builds_facility_config={
+            "capacity": FIRE_SEATS, "fuel": D("2"),
+            "fuel_capacity": FIRE_FUEL_CAP, "fuel_burn_per_tick": FIRE_FUEL_BURN,
+        },
         requires_place_kind="HEARTH",
     )
     production.create_recipe(
-        session, "TEND_FIRE", name="Tend Fire",
-        description="Burns a log into a warmth stock: a tended fire covers "
-                    "you well into the night — bank warmth before dark, at "
-                    "the hearth.",
-        inputs={"LABOR": D("1"), "WOOD": D("1")},
-        outputs={"WARMTH": D("10")}, duration_ticks=1, requires_facility="FIRE",
+        session, "STOKE_FIRE", name="Stoke Fire",
+        description="Feed the fire: a split log buys two hours of light for "
+                    "everyone it warms. Free (no labor), instant, night-legal, "
+                    "at the hearth -- and refused when the fire is fully "
+                    "banked (six hours; more wood wants patience, or a second "
+                    "fire).",
+        inputs={"WOOD": D("1")}, outputs={}, duration_ticks=0,
+        requires_facility="FIRE", facility_fuel_output=STOKE_FUEL,
+        requires_place_kind="HEARTH",
+    )
+    production.create_recipe(
+        session, "WARM_BY_FIRE", name="Warm by the Fire",
+        description="Take a seat at a lit fire: an hour's seated warmth, +6 "
+                    "(a body holds at most six -- two cold hours' grace once "
+                    "you stand up). No labor, night-legal, at the hearth; a "
+                    "fire seats four at once, warming hour by hour. This is "
+                    "how nights are survived: not banked, SAT.",
+        inputs={}, outputs={"WARMTH": WARM_BY_FIRE_WARMTH}, duration_ticks=1,
+        requires_facility="FIRE", requires_facility_lit=True,
         requires_place_kind="HEARTH",
     )
     production.create_recipe(
         session, "COOK_MEAT", name="Cook Meat",
-        description="Fire-cooked meat: no disease, keeps a little better.",
+        description="Fire-cooked meat: no disease, keeps a little better. "
+                    "Needs a LIT fire -- coals do not cook.",
         inputs={"LABOR": D("1"), "MEAT": D("2")},
         outputs={"COOKED_MEAT": D("2")}, duration_ticks=1,
-        requires_facility="FIRE",
+        requires_facility="FIRE", requires_facility_lit=True,
     )
     # The smokehouse: preservation as a craft. Smoking is deliberately
     # SLOW (5 ticks vs cooking's 1) and costs a log -- you pay time and
@@ -835,12 +916,12 @@ def _create_recipes(session: Session) -> None:
     # beside rotting larders; now the ladder has a preservation rung.
     production.create_recipe(
         session, "SMOKE_MEAT", name="Smoke Meat",
-        description="Slow-smoke raw meat over your fire: a log and a long "
+        description="Slow-smoke raw meat over a lit fire: a log and a long "
                     "wait turn hunts into jerky — the only food that never "
                     "rots. Time is the price of permanence.",
         inputs={"LABOR": D("1"), "MEAT": D("2"), "WOOD": D("1")},
         outputs={"JERKY": D("2")}, duration_ticks=5,
-        requires_facility="FIRE",
+        requires_facility="FIRE", requires_facility_lit=True,
     )
     # --- Eating: meals as decisions (run 19) --------------------------------
     # Conscious eating: the FOOD need drinks only SATIETY, and only EAT
@@ -1027,15 +1108,17 @@ def _create_needs(session: Session) -> None:
     # EXPOSURE. The clock (run 18): 1/hour by day, 3/hour at night --
     # shelter+clothes still cover the day exactly (1.0 + 0.5 drips vs 1
     # draw is surplus), but no capital covers a 3-draw night alone:
-    # every night wants either the fire tended at dusk or the warmth
-    # stock banked against it. Night is the expensive half of the day.
+    # every night wants a SEAT at a fed fire (the rework: warmth caps
+    # at 6 and WARM_BY_FIRE fills it; banking it is no longer a
+    # strategy). Night is the expensive half of the day.
     needs.create_need(
         session, "WARMTH", WARMTH_PER_TICK, ["WARMTH"],
         name="Warmth",
-        description="Drawn from the WARMTH stock made by fires, shelter and "
-                    "clothes: 1 per hour of day, 3 per hour of night. Miss "
-                    "it and exposure accrues -- nights bite three times as "
-                    "hard, and only a tended fire covers them.",
+        description="Drawn from the WARMTH made by fires (a seat, +6/hour, "
+                    "holding at most 6), shelter and clothes: 1 per hour of "
+                    "day, 3 per hour of night. Miss it and exposure accrues -- "
+                    "nights bite three times as hard, and only sitting by a "
+                    "fed fire covers them.",
         entity_type=EntityType.INDIVIDUAL, priority=1,
         condition_symbol="EXPOSURE", condition_quantity=Decimal("1"),
         night_quantity_per_tick=WARMTH_PER_NIGHT_TICK,

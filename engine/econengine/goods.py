@@ -50,6 +50,7 @@ def create_good(
     modifies_pattern: str | None = None,
     modifies_factor: Decimal | None = None,
     incapacitates_at: Decimal | None = None,
+    max_holding: Decimal | None = None,
 ) -> Good:
     existing = get_good(session, symbol)
     if existing is not None:
@@ -62,6 +63,16 @@ def create_good(
         raise ValueError("decay_per_tick must be between 0 and 1")
     if auto_issue_quantity < 0:
         raise ValueError("auto_issue_quantity must be >= 0")
+    if max_holding is not None:
+        max_holding = Decimal(max_holding).quantize(_QUANTUM)
+        if max_holding <= 0:
+            raise ValueError("max_holding must be positive when set")
+        if max_holding < auto_issue_quantity:
+            # the top-up writes holdings directly; a cap below the target
+            # would be two engine rules fighting -- a content bug, loud here
+            raise ValueError(
+                "max_holding must cover auto_issue_quantity "
+                f"({auto_issue_quantity}), or the ration fights the cap")
     if (modifies_pattern is None) != (modifies_factor is None):
         raise ValueError("modifies_pattern and modifies_factor go together")
     if modifies_factor is not None:
@@ -84,6 +95,7 @@ def create_good(
         modifies_pattern=modifies_pattern.upper() if modifies_pattern else None,
         modifies_factor=modifies_factor,
         incapacitates_at=incapacitates_at,
+        max_holding=max_holding,
     )
     session.add(good)
     session.flush()

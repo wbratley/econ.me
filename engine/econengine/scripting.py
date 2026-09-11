@@ -203,6 +203,7 @@ def synthetic_queries() -> dict:
         "children": lambda entity_id: [],
         "route": lambda from_key, to_key, modes=None: None,
         "distance_ticks": lambda from_key, to_key, modes=None: None,
+        "public_facilities": lambda place_key=None: [],
     }
 
 
@@ -440,8 +441,8 @@ QUERY_MEMBERS = (
     "balance", "total_supply", "market_price", "best_bid", "best_ask",
     "holding", "unreserved", "has_unlock", "holders", "age", "lifespan",
     "population", "parents", "children", "route", "distance_ticks",
-    "world_setting", "fiscal_policy", "constitution", "active_script",
-    "script_history", "proposal", "proposals", "tally",
+    "public_facilities", "world_setting", "fiscal_policy", "constitution",
+    "active_script", "script_history", "proposal", "proposals", "tally",
 )
 
 # ctx paths that hold a STRING (or nil), keyed for the message wording.
@@ -1305,6 +1306,37 @@ def build_queries(session: Session, tick_number: int | None = None,
             return None
         return edges_mod.distance_ticks(session, origin, dest, modes)
 
+    def public_facilities(place_key=None):
+        """The commons register (P1): every PLACE-access facility, optionally
+        filtered to one place -- public facts, like the map itself (a fire
+        is visible from far off; WHO owns the parcel under it is not the
+        point of a commons). Each row: facility_type, place (key or None
+        for parcels off the map), parcel_id, fuel and fuel_capacity as
+        exact decimal strings. world.lit_fires() is the readable front."""
+        from .models import Facility as FacilityModel, Parcel as ParcelModel
+        rows = session.execute(
+            select(FacilityModel)
+            .where(FacilityModel.access == "PLACE")
+            .order_by(FacilityModel.created_at, FacilityModel.id)
+        ).scalars().all()
+        out = []
+        for facility in rows:
+            parcel = session.get(ParcelModel, facility.parcel_id)
+            place = parcel.place.key if parcel is not None and parcel.place is not None else None
+            if place_key is not None and place != str(place_key).upper():
+                continue
+            out.append({
+                "facility_type": facility.facility_type,
+                "place": place,
+                "parcel_id": facility.parcel_id,
+                "fuel": str(facility.fuel),
+                "fuel_capacity": (
+                    str(facility.fuel_capacity)
+                    if facility.fuel_capacity is not None else None
+                ),
+            })
+        return out
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -1322,6 +1354,7 @@ def build_queries(session: Session, tick_number: int | None = None,
         "children": children,
         "route": route,
         "distance_ticks": distance_ticks,
+        "public_facilities": public_facilities,
         "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,

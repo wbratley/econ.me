@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey, JSON, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -43,6 +43,32 @@ class Recipe(Base):
     # construction: completion erects a facility of this type on the bound
     # parcel — the output is a facility rather than goods
     builds_facility: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # commons columns (P1, the fire rework). facility_fuel_output: completion
+    # credits this much fuel to the BOUND facility (stoking a fire); requires
+    # requires_facility, refused at start when the facility is already at its
+    # fuel_capacity -- banking burnwood is capped, like every input check.
+    facility_fuel_output: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
+    # use-gate on the burning stock: when true, the bound parcel must host a
+    # LIT facility of the required type (fuel > 0) at start -- you cannot
+    # warm yourself at, or cook on, a fire that has gone out. Checked once
+    # at start, like every other gate; what happens mid-run (the fire dying
+    # under a five-hour smoke) is the process's affair.
+    requires_facility_lit: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # construction access: a builds_facility recipe may erect its facility
+    # PLACE-access (public on build -- a fire anyone may warm at) instead of
+    # the OWNER default. NULL/"OWNER" = private, all of history's behavior.
+    builds_facility_access: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="OWNER", server_default="OWNER"
+    )
+    # birth parameters for the built facility (P1): the commons knobs
+    # (capacity / fuel / fuel_capacity / fuel_burn_per_tick) as a JSON
+    # dict -- a fire built by MAKE_FIRE must burn like the standing one.
+    # access is NOT settable here (builds_facility_access owns it).
+    builds_facility_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

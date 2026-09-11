@@ -146,6 +146,16 @@ def adjust_holding(session: Session, entity: Entity, symbol: str, delta: Decimal
         holding = Holding(entity_id=entity.id, symbol=symbol, quantity=Decimal("0"))
         session.add(holding)
     new_quantity = holding.quantity + delta
+    # The banking cap (P1): positive credits clip at the good's max_holding
+    # -- excess is simply not creditable (you cannot get warmer than warm),
+    # never an error, so a recipe's output can't explode mid-flight. Debits
+    # and uncapped goods are untouched.
+    if delta > 0:
+        from . import goods as goods_mod
+        good = goods_mod.get_good(session, symbol)
+        if good is not None and good.max_holding is not None \
+                and new_quantity > good.max_holding:
+            new_quantity = good.max_holding
     if new_quantity < 0:
         raise InsufficientHoldingsError(
             f"entity {entity.id} holds {holding.quantity} {symbol}, cannot adjust by {delta}"
