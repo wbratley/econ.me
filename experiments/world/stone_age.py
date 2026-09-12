@@ -128,13 +128,33 @@ holdings (scales_with: outputs x min(cap, floor(held)) at
 completion; the honest catalog says so). Numbers are provisional --
 cam rebalances with run data.
 
+WATER (P3, the thirst clock): every individual draws 0.25 water an
+hour -- six a day -- and the tap is the river: DRINK is free, instant
+and night-legal at the bank, and FILL_SKIN tops a waterskin (1 PELT
+to make, the post stocks one) with eight carried hours. Cupped hands
+carry four (WATER, max_holding 4); a skin eight (SKINWATER, seeps a
+little). Meals part-hydrate -- berries and apples wet (0.6), jerky
+nearly dry (0.2) -- so the day-1 berry-grazer rides under the thirst
+equilibrium while the run-36 shape (a fed jerky-and-egg larder that
+never walks to the river) dries out and dies on day 3: THIRST targets
+the rich, which is the point of the relief/pressure alternation. The
+river road runs past the thicket (2h -- the gather commute drinks),
+and FISH and DRINK share a walk. The beasts drink too -- wolves run
+the post road to the bank, boars the thicket road; the river is the
+one place every body in the world must visit. No engine surfaces new
+in P3: multi-output meals, place-gated recipes, condition goods and
+need satisfiers all existed; water is pure content. Numbers
+provisional -- the census tunes the tap.
+
 Goods: MEAT, BERRIES, APPLES, WOOD, YARN, FLINT (gathered/hunted),
 COOKED_MEAT,
 JERKY (smoked or bought), EGGS and CHICKEN (the larder: capital
-that lays), SPEAR, BAG, BOW, TRAP, CLOTHES, BED, TORCH /
+that lays), WATER, SKINWATER and WATERSKIN (P3: the cup, the skin,
+and the craft that turns a pelt into capacity), SPEAR, BAG, BOW, TRAP,
+CLOTHES, BED, TORCH /
 LIT_TORCH (the night kit), plus the flows
 WARMTH/SATIETY and the
-conditions HUNGER/EXPOSURE/DISEASE. Money is COIN — found, not endowed:
+conditions HUNGER/EXPOSURE/DISEASE/THIRST. Money is COIN — found, not endowed:
 seats start with walking money, the bagged gather mints the rest, and
 food, materials, tools and spare LABOR all trade on COIN markets (no
 barter: the engine clears coin-denominated order books per tick). The
@@ -249,10 +269,35 @@ EMBER_TICKS = 2
 #   DISEASE:  a raw-meat diet grants 0.25/tick expected -> equilibrium 5,
 #             dies at 2.5. One raw meal is a scare (+1, fades in ~14
 #             ticks); raw as a staple is a slow death. Cooking is cheap.
+#   THIRST:   grant 0.5/tick, decay 0.05 -> equilibrium 10, dies at 7.5.
+#             Carried water delays the climb, the climb kills: cup 4 +
+#             skin 8 (~2 dry days net of meal credits) then ~a day's
+#             climb -- a fed larder that never walks to the river dies
+#             on day 3 (P3: thirst targets the RICH -- jerky eats dry).
+#             Meals part-hydrate, so the berry-grazer rides under the
+#             threshold (equilibrium ~5 on a wet diet: day 1 is never a
+#             death march, and the gatherer's road passes the river).
 FOOD_PER_TICK = Decimal("0.5")
 WARMTH_PER_TICK = Decimal("1")
 WARMTH_PER_NIGHT_TICK = Decimal("3")
 EAT_RAW_DISEASE_WEIGHT = Decimal("25")   # out of 100 per raw meal
+
+# --- Water (P3, ROADMAP.md) -----------------------------------------------
+# Thirst is the larder's counterweight: preservation is DRY, and the
+# world's best diets (jerky, eggs -- run 36's survivor) hydrate least.
+# The tap is the river (free, two hours out -- the FISH walk doubles as
+# the water walk); the waterskin turns a dead wolf into portable
+# capacity (1 PELT -> 8 carried hours). The cup everyone carries free
+# (4) plus a skin (8) is ~2 dry days -- the river is a rhythm, not a
+# treadmill: drink when you fish, fill on the gather road home (the
+# river road runs past the thicket).
+WATER_PER_TICK = Decimal("0.25")
+THIRST_GRANT = Decimal("0.5")
+WATER_CUP = Decimal("4")
+WATERSKIN_CAP = Decimal("8")
+WATERSKIN_DECAY = Decimal("0.02")
+WATER_SEAT_BUFFER = Decimal("4")
+WATER_BEAST_BUFFER = Decimal("2")
 
 DEFAULT_TICKS = 40
 
@@ -308,6 +353,19 @@ EAT_RAW (~1h, one-in-four disease). A full larder feeds nobody until
 someone runs the recipe: starving beside one is a choice, and the
 clock will make it for you if you let it -- two meals a day is the
 natural cadence.
+WATER IS THE SECOND STOMACH: the body draws 0.25 an hour (six a day)
+from carried water -- the cup everyone is born with holds four
+(DRINK at the river fills it, free and instant, night-legal), and a
+WATERSKIN (made from a single PELT, or bought at the post) carries
+eight more. Meals part-hydrate -- a berry or apple meal carries a
+drink's worth (0.6), cooked a little more, but jerky eats dry (0.2)
+-- so the wet diet of day 1 never kills, while a rich dry larder
+(jerky, eggs) dries you out: THIRST's equilibrium rides above its
+death threshold, cup and skin buy about two dry days, and a third
+day without the river is the last. The river is two hours out and
+its road runs past the thicket: drink when you fish, fill on the
+gather road home. The skin seeps a little (0.02/hour) -- carried
+water is a rhythm, not a bank.
 
 THE NIGHT HAS TEETH: wolves are creatures -- entities with stats,
 health (HITS) and hunger, the same physics as you. They hunt in the
@@ -348,7 +406,9 @@ where each one kills.
 THE WORLD HAS PLACES, AND THEY ARE HOURS APART. You wake at the
 Hearth clearing (the fire-ground: safe nights, fires made and tended
 there). The Berry thicket is one hour's walk (berries, wood, yarn);
-the river two (FISH: meat without wolves); the Flint scrape two
+the river two (FISH: meat without wolves; DRINK: the world's tap) --
+and its road runs past the thicket, so the gather commute drinks;
+the Flint scrape two
 (certain flint); the Deep forest two by the valley road, three by
 the deep wood (the hunts -- and the wolves' range); the Trading post
 ONE, down the valley (every market trades there, and only there).
@@ -399,6 +459,10 @@ same.
    and jerky), cooked within a day;
    JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
    hunger kills the careless before any tool matters.)
+2a. THE RIVER IS THE TAP: keep the cup full and fill a skin when one
+   is had -- the dry larder (jerky, eggs) kills on the third day
+   without it, and the river road passes the thicket. One PELT makes
+   a WATERSKIN: a dead wolf is eight carried hours.
 3. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
 4. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
    or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
@@ -450,9 +514,11 @@ and nerve; the bow hunts the forest by DAY and never meets a tusk.
 THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT, BERRIES, APPLES,
 EGGS and PELTS, and it
 sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
-salted meat that never rots, so the shop always has food) -- and it
+salted meat that never rots, so the shop always has food) -- it
 sells HENS (ask ~4: the larder's seed capital; a hen returns her
-price in four eggs sold back). The trader
+price in four eggs sold back), and ONE WATERSKIN (ask ~6: a pelt's
+worth of carried river -- the price anchor for thirsty houses with
+coin and no wolf). The trader
 is a man who has done this a while, and it shows: his hearth never
 dies, he never speaks after dark, and what comes at him in the night
 he answers armed (he hits like a wolf and guards like one tooled up
@@ -506,11 +572,16 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # post is where pastoral capital enters the world. Sell-buys
              # round-trip the flock (a house's surplus hen is a house's
              # coin), but the world's hens start here.
-             "CHICKEN": Decimal("2")}   # the salted shelf: JERKY never
+             "CHICKEN": Decimal("2"),   # the salted shelf: JERKY never
                                     # rots, so late-arriving coin always
                                     # has something to buy (run 4: OSS
                                     # died holding 17 COIN beside an
                                     # empty, rotted larder)
+             # The water kit's anchor (P3): one waterskin on the shelf
+             # -- the price a thirsty house with coin reads. Water
+             # itself is never sold: the river is free, and the SKIN
+             # is what coin buys.
+             "WATERSKIN": Decimal("1")}
 
 
 def spawn_trading_post(session: Session) -> Entity:
@@ -621,6 +692,10 @@ def _create_map(session: Session) -> None:
     for a, b, cost in (
         ("HEARTH", "THICKET", 1),
         ("HEARTH", "RIVER", 2),
+        # The river road runs past the thicket (P3): the gather commute
+        # drinks -- and the boar, which never walks to the fire-ground,
+        # still reaches the tap. Two hours, the valley's other road.
+        ("THICKET", "RIVER", 2),
         ("HEARTH", "FLINT", 2),
         ("HEARTH", "FOREST", 3),
         ("THICKET", "FOREST", 2),
@@ -783,6 +858,32 @@ def _create_goods(session: Session) -> None:
                                   "two flames.",
                       decay_per_tick=TORCH_DECAY,
                       max_holding=TORCH_CARRY)
+    # The water kit (P3): the cup, the skin, the craft. WATER is the
+    # cupped-hands carry (free, four hours -- everyone is born holding
+    # a full one); SKINWATER rides only in a waterskin (eight hours,
+    # seeping 2% -- carried water is a rhythm, not a bank); the
+    # WATERSKIN is a pelt sewn shut -- a dead wolf becomes capacity.
+    # Neither is marketable: the tap is free, and free goods make no
+    # market (the post anchors the SKIN's price instead).
+    goods.create_good(session, "WATER", name="Water",
+                      description="Carried water, cupped: four hours' worth "
+                                  "in any body's hands (DRINK at the river "
+                                  "fills it, free). The WATER need draws "
+                                  "it 0.25 an hour -- six a day.",
+                      max_holding=WATER_CUP)
+    goods.create_good(session, "SKINWATER", name="Skinful of Water",
+                      description="Water that rides a waterskin: eight "
+                                  "carried hours (FILL_SKIN at the river "
+                                  "-- the skin must be held), seeping a "
+                                  "little as it travels.",
+                      decay_per_tick=WATERSKIN_DECAY,
+                      max_holding=WATERSKIN_CAP)
+    goods.create_good(session, "WATERSKIN", name="Waterskin",
+                      description="A pelt sewn shut: the craft that turns "
+                                  "one wolf into eight carried hours of "
+                                  "river. Held, never consumed -- fill it "
+                                  "at the bank (FILL_SKIN). One on the "
+                                  "post's shelf, priced for the thirsty.")
     # Flows. WARMTH fades (0.2/tick) and now CAPS at 6 (the fire rework:
     # a body holds about two cold hours -- banking warmth against the night
     # is not a strategy; a SEAT at a lit fire is). SATIETY is the stomach:
@@ -830,6 +931,19 @@ def _create_goods(session: Session) -> None:
                     "at this threshold.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
+    )
+    # THIRST (P3): the dry-larder killer. Meals part-hydrate (berries
+    # and apples wet, jerky nearly dry), so the pressure lands on the
+    # rich -- a fed house that never walks to the river. See the
+    # equilibrium notes at the constants.
+    goods.create_good(
+        session, "THIRST", name="Thirst",
+        description="The memory of dry days. A wet diet rides below the "
+                    "threshold; a dry larder (jerky, eggs) rides above it "
+                    "-- the river is the only cure, and cup and skin buy "
+                    "about two days.",
+        decay_per_tick=Decimal("0.05"),
+        incapacitates_at=Decimal("7.5"),
     )
     # Wolves (run 20): creatures, not pressure. A wolf is an ENTITY --
     # stats, health, needs, a hunting program -- and combat happens
@@ -919,7 +1033,7 @@ def _create_combat(session: Session) -> None:
             "template": {
                 "entity_type": "individual",
                 "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-                "holdings": {"MEAT": 1, "PELT": 1},
+                "holdings": {"MEAT": 1, "PELT": 1, "WATER": 2},
                 "script_setting": "wolf",
                 "account": {"COIN": 0},
                 # The den (S4): wolves wake in the deep forest, and the
@@ -940,7 +1054,7 @@ def _create_combat(session: Session) -> None:
                 "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
                 # Born carrying its own carcass: the estate seizure on a
                 # kill is the point -- high meat, big pelt.
-                "holdings": {"MEAT": 6, "PELT": 2},
+                "holdings": {"MEAT": 6, "PELT": 2, "WATER": 2},
                 "script_setting": "boar",
                 "account": {"COIN": 0},
                 # The thicket's edge, an hour out: the boar is the larder's
@@ -1113,6 +1227,29 @@ def _create_recipes(session: Session) -> None:
             {"weight": D("25"), "outputs": {"MEAT": D("3")}, "label": "big"},
         ],
     )
+    # The tap (P3): water is free at the bank, and the walk is shared
+    # -- the FISH errand doubles as the drink. DRINK fills the cup
+    # (four hours in anyone's hands); FILL_SKIN tops a waterskin (the
+    # skin must be held -- one pelt, eight carried hours). Both free,
+    # instant, night-legal (thirst does not keep daylight hours -- but
+    # the road home still wants light or a flame, as ever).
+    production.create_recipe(
+        session, "DRINK", name="Drink",
+        description="Cup your hands and drink your fill at the river: "
+                    "the world's tap, free and instant. Fills the carried cup "
+                    "(four hours' worth; the body holds no more).",
+        inputs={}, outputs={"WATER": WATER_CUP}, duration_ticks=0,
+        requires_place_kind="RIVER",
+    )
+    production.create_recipe(
+        session, "FILL_SKIN", name="Fill Skin",
+        description="Fill the waterskin at the river: eight carried hours "
+                    "-- a pelt's worth of river that walks home with you. "
+                    "Needs the skin in hand; fills it to the seam.",
+        inputs={}, outputs={"SKINWATER": WATERSKIN_CAP}, duration_ticks=0,
+        good_requirements={"WATERSKIN": D("1")},
+        requires_place_kind="RIVER",
+    )
 
     # --- The fire chain: a commons, not a pantry (P1, the fire rework) -----
     # The fire-ground's standing fire is PUBLIC (four seats, six hours of
@@ -1234,36 +1371,46 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "EAT_BERRIES", name="Eat Berries",
         description="A belly of berries: thin food, eaten as gathered -- "
-                    "they spoil within hours anyway. ~3 hours fed.",
-        inputs={"BERRIES": D("1.5")}, outputs={"SATIETY": D("2")},
+                    "they spoil within hours anyway. ~3 hours fed, and "
+                    "wet: a berry meal carries its own drink (0.6 water).",
+        inputs={"BERRIES": D("1.5")},
+        outputs={"SATIETY": D("2"), "WATER": D("0.6")},
         duration_ticks=0,
     )
     production.create_recipe(
         session, "EAT_APPLES", name="Eat Apples",
         description="The larder staple: keeps a day and a half, feeds like "
-                    "a meal. ~5 hours fed per sitting.",
-        inputs={"APPLES": D("1.5")}, outputs={"SATIETY": D("2.8")},
+                    "a meal. ~5 hours fed per sitting -- and the wettest "
+                    "food that keeps (0.6 water).",
+        inputs={"APPLES": D("1.5")},
+        outputs={"SATIETY": D("2.8"), "WATER": D("0.6")},
         duration_ticks=0,
     )
     production.create_recipe(
         session, "EAT_COOKED", name="Eat Cooked Meat",
-        description="Fire-cooked, safe, satisfying: ~4 hours fed per meal.",
-        inputs={"COOKED_MEAT": D("1")}, outputs={"SATIETY": D("2.4")},
+        description="Fire-cooked, safe, satisfying: ~4 hours fed per meal "
+                    "-- and the juices go down wet (0.8 water).",
+        inputs={"COOKED_MEAT": D("1")},
+        outputs={"SATIETY": D("2.4"), "WATER": D("0.8")},
         duration_ticks=0,
     )
     production.create_recipe(
         session, "EAT_EGGS", name="Eat Eggs",
         description="A hen's wage: keeps near a week, feeds like a cooked "
-                    "meal. ~4 hours fed.",
-        inputs={"EGGS": D("1")}, outputs={"SATIETY": D("2.4")},
+                    "meal. ~4 hours fed -- drier than the fire's cooking "
+                    "(0.5 water).",
+        inputs={"EGGS": D("1")},
+        outputs={"SATIETY": D("2.4"), "WATER": D("0.5")},
         duration_ticks=0,
     )
     production.create_recipe(
         session, "EAT_JERKY", name="Eat Jerky",
         description="The densest meal in the world: one strip ~ 5½ hours "
                     "fed, and the strip itself never rots. Preservation "
-                    "you can taste.",
-        inputs={"JERKY": D("1")}, outputs={"SATIETY": D("3.6")},
+                    "you can taste -- and taste the cost of: salted dry "
+                    "(0.2 water; the deep pantry is a dry one).",
+        inputs={"JERKY": D("1")},
+        outputs={"SATIETY": D("3.6"), "WATER": D("0.2")},
         duration_ticks=0,
     )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
@@ -1273,12 +1420,15 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "EAT_RAW", name="Eat Raw Meat",
         description="Desperation does not wait: free, instant, ~1 hour fed -- "
-                    "and a one-in-four chance of disease.",
+                    "and a one-in-four chance of disease. Wet, at least "
+                    "(0.4 water): the blood goes down too.",
         inputs={"MEAT": D("1")}, outputs={}, duration_ticks=0,
         branches=[
-            {"weight": D("75"), "outputs": {"SATIETY": D("0.6")}, "label": "fine"},
+            {"weight": D("75"),
+             "outputs": {"SATIETY": D("0.6"), "WATER": D("0.4")}, "label": "fine"},
             {"weight": EAT_RAW_DISEASE_WEIGHT,
-             "outputs": {"SATIETY": D("0.6"), "DISEASE": D("1")}, "label": "sick"},
+             "outputs": {"SATIETY": D("0.6"), "WATER": D("0.4"), "DISEASE": D("1")},
+             "label": "sick"},
         ],
     )
     # The wolf's table (run 26's census: every pack starved at its den).
@@ -1296,9 +1446,11 @@ def _create_recipes(session: Session) -> None:
         session, "EAT_CARRION", name="Eat Carrion",
         description="A predator's gut: raw flesh is a wolf's proper diet "
                     "-- wrung dry, denser than any human meal keeps, and "
-                    "never sickening. Born, not learned (the CARNIVORE "
-                    "stomach only).",
-        inputs={"MEAT": D("1")}, outputs={"SATIETY": D("3.6")},
+                    "never sickening. Wet through: the blood is half the "
+                    "meal (0.9 water -- a kill drinks its killer). Born, "
+                    "not learned (the CARNIVORE stomach only).",
+        inputs={"MEAT": D("1")},
+        outputs={"SATIETY": D("3.6"), "WATER": D("0.9")},
         duration_ticks=0,
         requires=["CARNIVORE"],
     )
@@ -1416,6 +1568,18 @@ def _create_recipes(session: Session) -> None:
                                       "WOOD": D("1")},
         outputs={"BAG": D("1")}, duration_ticks=1,
     )
+    # The water kit's craft (P3): one pelt sewn shut. A wolf's carcass
+    # is MEAT 3 + PELT 1 -- the pelt is the CARRYING of eight hours of
+    # river. The post stocks one at the anchor price for houses with
+    # coin and no wolf of their own.
+    production.create_recipe(
+        session, "MAKE_WATERSKIN", name="Make Waterskin",
+        description="A pelt sewn shut and greased: eight carried hours of "
+                    "river. One wolf's hide is a season of dry larders -- "
+                    "held, never consumed, filled at the bank.",
+        inputs={"LABOR": D("1"), "PELT": D("1")},
+        outputs={"WATERSKIN": D("1")}, duration_ticks=2,
+    )
     production.create_recipe(
         session, "MAKE_TRAP", name="Make Trap",
         description="Hunting ammunition: consumed by the traps hunt.",
@@ -1476,6 +1640,25 @@ def _create_needs(session: Session) -> None:
         condition_symbol="EXPOSURE", condition_quantity=Decimal("1"),
         night_quantity_per_tick=WARMTH_PER_NIGHT_TICK,
     )
+    # WATER (P3): the thirst clock. 0.25/hour, six a day, drawn from
+    # carried water -- the skin empties first (SKINWATER sorts before
+    # WATER), the cup is the reserve. Meals part-hydrate, so the
+    # pressure lands on the DRY larder (the rich, post-relief); the
+    # river is free and the walk is shared with FISH. Night draws the
+    # same -- thirst does not care about the dark.
+    needs.create_need(
+        session, "WATER", WATER_PER_TICK, ["WATER", "SKINWATER"],
+        name="Water",
+        description="The second stomach: 0.25 an hour (six a day) drawn "
+                    "from carried water -- skin first, cup in reserve. "
+                    "DRINK at the river fills the cup (four hours); a "
+                    "WATERSKIN carries eight more, filled at the bank. "
+                    "Meals part-hydrate (berries and apples wet, jerky "
+                    "dry) -- miss the draw and thirst accrues toward a "
+                    "third-day death.",
+        entity_type=EntityType.INDIVIDUAL, priority=2,
+        condition_symbol="THIRST", condition_quantity=THIRST_GRANT,
+    )
 
 
 def _create_markets(session: Session) -> None:
@@ -1491,13 +1674,13 @@ def _create_markets(session: Session) -> None:
         "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "AXE": "Stone Axe",
         "BAG": "Bag", "BOW": "Bow", "CHICKEN": "Hen",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
-        "PELT": "Pelt",
+        "PELT": "Pelt", "WATERSKIN": "Waterskin",
     }
     for symbol in ("LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
                    "EGGS", "WOOD",
                    "YARN", "FLINT", "SPEAR", "AXE", "BAG", "BOW", "CHICKEN",
                    "TRAP", "CLOTHES", "BED",
-                   "PELT"):
+                   "PELT", "WATERSKIN"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")
 
@@ -1516,6 +1699,7 @@ def make_house(session: Session, name: str = "House") -> Entity:
     services.create_account(session, house, COIN, initial_balance=SEAT_COIN)
     markets.adjust_holding(session, house, "BERRIES", BERRY_BUFFER)
     markets.adjust_holding(session, house, "WARMTH", WARMTH_BUFFER)
+    markets.adjust_holding(session, house, "WATER", WATER_SEAT_BUFFER)
     markets.adjust_holding(session, house, "HITS", HOUSE_HITS)
     combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
     combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
@@ -1543,7 +1727,7 @@ def make_wolf(session: Session, name: str) -> Entity:
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-        "holdings": {"MEAT": 1, "PELT": 1},
+        "holdings": {"MEAT": 1, "PELT": 1, "WATER": WATER_BEAST_BUFFER},
         "script_setting": "wolf",
         "account": {"COIN": 0},
         "place": "FOREST",

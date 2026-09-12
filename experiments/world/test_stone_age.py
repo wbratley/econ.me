@@ -176,7 +176,7 @@ def test_content_and_coin_markets(session):
         "LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
         "EGGS", "CHICKEN", "WOOD", "YARN",
         "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
-        "BED", "PELT"}
+        "BED", "PELT", "WATERSKIN"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -963,12 +963,14 @@ def test_post_jerky_never_rots_and_feeds(session):
 # THE MAP (S4): places, roads, gates, and the post's seat
 # ===========================================================================
 
-def test_the_map_six_places_eight_roads(session):
+def test_the_map_six_places_nine_roads(session):
     """docs/spatial.md S4's stone-age map, as content rows: the hearth
     (start), thicket 1h, river and flint scrape 2h, deep forest 3h,
     post 1h down the valley (run 26's census: at four hours the post
     was a trip houses died taking -- two starved at its counter) --
-    the forest and river roads stay the long ways round."""
+    the forest and river roads stay the long ways round. P3 adds the
+    river road past the thicket: the gather commute drinks, and the
+    boar reaches the tap without the fire-ground."""
     from econengine import edges, places as places_mod
     create_content(session)
     keys = {p.key: p for p in places_mod.list_places(session)}
@@ -986,11 +988,15 @@ def test_the_map_six_places_eight_roads(session):
         ("FOREST", "POST"): 1,
         ("RIVER", "POST"): 2,
         ("HEARTH", "POST"): 1,
+        ("THICKET", "RIVER"): 2,
     }
     hearth, post = keys["HEARTH"], keys["POST"]
     assert edges.distance_ticks(session, hearth, post) == 1
     # the valley road shortens the forest to 2h through the post
     assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 2
+    # P3: the thicket is 2h from the river -- the gather road drinks
+    assert edges.distance_ticks(
+        session, keys["THICKET"], keys["RIVER"]) == 2
     # the walk itself is a recipe, priced by the road not the template
     walk = production.get_recipe(session, "TRAVEL_WALK")
     assert walk is not None and walk.duration_ticks == 1
@@ -1551,3 +1557,224 @@ def test_the_starter_eats_the_apples_it_finds(session):
     assert Decimal("0") < _hold(session, seat.id, "BERRIES") < Decimal("1")
     assert _hold(session, seat.id, "APPLES") > Decimal("1.8")
     assert _hold(session, seat.id, "SATIETY") > Decimal("1")
+
+
+# ===========================================================================
+# WATER (P3): the thirst clock, the tap, the skin
+# ===========================================================================
+
+def test_drink_is_free_at_the_river(session):
+    """The tap (P3): DRINK is free (no LABOR), instant (duration 0, no
+    process_completed -- the credit is a fact of the tick) and river-
+    bound: the refusal names where you stand. It fills the carried cup
+    to the seam (4), whatever was in it."""
+    create_content(session)
+    _no_wolves(session)
+    worker = _biz(session, "Drinker")       # INDIVIDUAL-free: no need draw
+    _at(session, worker, "RIVER")
+    assert production.get_recipe(session, "DRINK").duration_ticks == 0
+    assert not production.get_recipe(session, "DRINK").inputs  # free
+    assert _act(session, worker, "DRINK")
+    assert _hold(session, worker.id, "WATER") == Decimal("4")
+    # a full cup does not overflow (clip, never refuse)
+    assert _act(session, worker, "DRINK")
+    assert _hold(session, worker.id, "WATER") == Decimal("4")
+    # the bank is the tap: standing at the hearth, the refusal names it
+    _at(session, worker, "HEARTH")
+    with pytest.raises(ValueError, match="RIVER"):
+        production.start_process(session, worker, "DRINK")
+
+
+def test_the_skin_is_a_dead_wolf_and_carries_a_day(session):
+    """The water kit's craft (P3): one PELT sewn shut is a WATERSKIN
+    (2 hours' work), and FILL_SKIN tops it at the bank -- the skin must
+    be held, and it carries eight hours where cupped hands carry four.
+    The WATER need draws the skin FIRST (symbol order), the cup is the
+    reserve."""
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Skinner")
+    _at(session, house, "HEARTH")
+    markets.adjust_holding(session, house, "PELT", Decimal("1"))
+    assert _act(session, house, "MAKE_WATERSKIN")
+    _run(session, 3)                        # 2 ticks + the completion tick
+    assert _hold(session, house.id, "WATERSKIN") == Decimal("1")
+    assert _hold(session, house.id, "PELT") == Decimal("0")
+    # fill at the bank: skin in hand, topped to the seam
+    _at(session, house, "RIVER")
+    assert _act(session, house, "FILL_SKIN")
+    assert _hold(session, house.id, "SKINWATER") == Decimal("8")
+    # no skin, no fill (the gate is a held good, like the pen's hens)
+    markets.adjust_holding(
+        session, house, "WATERSKIN",
+        -_hold(session, house.id, "WATERSKIN"))
+    from econengine.markets import InsufficientHoldingsError
+    with pytest.raises(InsufficientHoldingsError, match="WATERSKIN"):
+        production.start_process(session, house, "FILL_SKIN")
+    # the draw order: skin first, cup in reserve
+    markets.adjust_holding(session, house, "WATERSKIN", Decimal("1"))
+    markets.adjust_holding(session, house, "SKINWATER", Decimal("8"))
+    markets.adjust_holding(session, house, "WATER", Decimal("4"))
+    _run(session, 1)
+    assert _hold(session, house.id, "SKINWATER") < Decimal("8")
+    assert _hold(session, house.id, "WATER") == Decimal("4")
+
+
+def test_meals_part_hydrate(session):
+    """The wet-diet clause (P3): every meal carries some water -- berries
+    and apples wet (0.6), jerky nearly dry (0.2). Eating is drinking,
+    badly: the second stomach fills thinner than the first."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Wetmouth")
+    for sym in ("WATER", "SKINWATER"):
+        markets.adjust_holding(session, seat, sym, -_hold(session, seat.id, sym))
+    markets.adjust_holding(session, seat, "BERRIES", Decimal("2"))
+    assert _act(session, seat, "EAT_BERRIES")
+    assert _hold(session, seat.id, "WATER") == Decimal("0.6")
+    markets.adjust_holding(session, seat, "WATER",
+                           -_hold(session, seat.id, "WATER"))
+    markets.adjust_holding(session, seat, "JERKY", Decimal("1"))
+    assert _act(session, seat, "EAT_JERKY")
+    assert _hold(session, seat.id, "WATER") == Decimal("0.2")
+
+
+def _keep_fed_and_warm(session, house, stock=None):
+    """Test scaffolding, not a policy: keep every need but WATER met so
+    the thirst clock is the only clock under test. `stock` names the
+    diet's symbol and its floor -- the scaffold keeps the basket fed
+    (berries rot in hours; jerky never does), the THIRST arithmetic is
+    the subject."""
+    if stock is not None:
+        sym, floor, top = stock
+        if _hold(session, house.id, sym) < Decimal(str(floor)):
+            markets.adjust_holding(session, house, sym, Decimal(str(top)))
+    if _hold(session, house.id, "SATIETY") < Decimal("1.5"):
+        if _hold(session, house.id, "BERRIES") >= Decimal("1.5"):
+            _act(session, house, "EAT_BERRIES")
+        elif _hold(session, house.id, "JERKY") >= Decimal("1"):
+            _act(session, house, "EAT_JERKY")
+    if _hold(session, house.id, "WARMTH") < Decimal("3"):
+        markets.adjust_holding(session, house, "WARMTH", Decimal("6"))
+
+
+def test_the_wet_diet_rides_below_the_threshold(session):
+    """Day one is not a death march (P3's promise): a berry-grazer that
+    never walks to the river still rides UNDER the thirst threshold --
+    meal credits (0.6 x ~8 meals) cover four-fifths of the draw, so the
+    THIRST equilibrium sits at ~2, far from the 7.5 that kills. Thirst
+    is felt, not fatal, on a wet diet."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Grazer")
+    markets.adjust_holding(
+        session, seat, "WATER", -_hold(session, seat.id, "WATER"))
+    markets.adjust_holding(session, seat, "BERRIES", Decimal("40"))
+    markets.adjust_holding(session, seat, "JERKY", Decimal("5"))
+    for _ in range(72):                     # three days, no river
+        _keep_fed_and_warm(session, seat, ("BERRIES", 3, 10))
+        _run(session, 1)
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+    thirst = _hold(session, seat.id, "THIRST")
+    assert Decimal("0") < thirst < Decimal("7.5")   # felt, never fatal
+
+
+def test_thirst_kills_the_dry_larder_on_day_three(session):
+    """THIRST targets the rich (P3's point): a FED house on the dry
+    larder -- jerky three times a day, water credits a trickle -- dies
+    of thirst on the third day, while hunger stays fed. Preservation
+    is dry; the river is the price of the deep pantry."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Pantler")
+    markets.adjust_holding(
+        session, seat, "WATER", -_hold(session, seat.id, "WATER"))
+    markets.adjust_holding(session, seat, "JERKY", Decimal("40"))
+    markets.adjust_holding(session, seat, "BERRIES", Decimal("0"))
+    died_at = None
+    for _ in range(96):
+        _keep_fed_and_warm(session, seat, ("JERKY", 3, 10))
+        _run(session, 1)
+        if session.get(Entity, seat.id).status != EntityStatus.ACTIVE:
+            died_at = production.next_tick_number(session) - 1
+            break
+    assert died_at is not None and 48 <= died_at <= 80    # ~day three
+    kills = [e for e in _events(session, "entity_incapacitated")
+             if e.get("entity_id") == seat.id]
+    assert kills[-1]["condition"] == "THIRST"
+    assert _hold(session, seat.id, "HUNGER") < Decimal("15")   # fed, not starved
+
+
+def test_the_post_anchors_a_waterskin(session):
+    """The price anchor (P3): one waterskin on the post's shelf, asked
+    at 6.00 -- between \"sew it yourself\" (one pelt, bid 3.00) and the
+    egg trade it unlocks. The market exists; the shelf holds exactly
+    one; water itself is never sold (the tap is free)."""
+    create_content(session)
+    post = _post(session)
+    assert _hold(session, post.id, "WATERSKIN") == Decimal("1")
+    _run(session, 2)
+    sell = _open_orders(session, post.id, "WATERSKIN", OrderSide.SELL)
+    assert len(sell) == 1
+    assert Decimal(next(iter(sell)).limit_price) == Decimal("6.00")
+    # water itself is never sold: the tap is free, the SKIN is the stock
+    assert not any(m.symbol in ("WATER", "SKINWATER")
+                   for m in session.execute(select(Market)).scalars())
+
+
+def test_the_starter_drinks_at_the_river(session):
+    """The floor learns the tap (P3): a dry starter standing at the bank
+    drinks its fill before any gathering intent -- thirst is as urgent
+    as hunger at the floor, and the walk to the river is the cure."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Waterfloor")
+    _at(session, seat, "RIVER")
+    markets.adjust_holding(
+        session, seat, "WATER", -_hold(session, seat.id, "WATER"))
+    markets.adjust_holding(session, seat, "WATER", Decimal("0.5"))
+    markets.adjust_holding(session, seat, "SATIETY", Decimal("4"))
+    markets.adjust_holding(session, seat, "WOOD", Decimal("6"))
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=seat.id, timeout_ms=200, state={}))
+    session.commit()
+    _run(session, 1)
+    assert _hold(session, seat.id, "WATER") > Decimal("3")   # drank its fill
+
+
+def test_the_beasts_walk_to_water(session):
+    """The river is the one place every body visits (P3): a dry wolf
+    leaves the forest for the bank by the post road, and a dry boar
+    takes the thicket road -- without ever touching the fire-ground.
+    (Boars spawn from day 3; the test makes one by hand.)"""
+    create_content(session)
+    from econengine import spawns
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    boar = spawns.spawn_one(session, "Wild Boar Test", {
+        "entity_type": "individual",
+        "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
+        "holdings": {"MEAT": 6, "PELT": 2, "WATER": 0},
+        "script_setting": "boar",
+        "account": {"COIN": 0},
+        "place": "THICKET",
+        "technologies": ["CARNIVORE"],
+    })
+    session.commit()
+    # dawn first: the beasts' day blocks sleep at night (tick 1 is hour
+    # 01 -- run the dark hours out before drying the cups)
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        _run(session, 1)
+    markets.adjust_holding(
+        session, wolf, "WATER", -_hold(session, wolf.id, "WATER"))
+    _run(session, 3)   # the boundary tick may still read as night (the
+                       # script sees the PREVIOUS hour); a dry day walk lands
+    walks = {e["entity_id"]: e["to"] for e in _events(session, "travel")
+             if e.get("status") == "applied"
+             and e["entity_id"] in (wolf.id, boar.id)}
+    assert walks.get(wolf.id) == "RIVER"
+    assert walks.get(boar.id) == "RIVER"

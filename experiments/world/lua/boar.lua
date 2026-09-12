@@ -21,6 +21,7 @@
 local S = ctx.state
 
 local den = "THICKET"   -- the thicket's edge: the larder's guarded shelf
+local river = "RIVER"   -- the tap: the river road runs past the thicket
 
 local hunger  = std.holding_qty("HUNGER")
 local satiety = std.holding_qty("SATIETY")
@@ -28,6 +29,7 @@ local warmth  = std.holding_qty("WARMTH")
 local berries = std.holding_qty("BERRIES")
 local apples  = std.holding_qty("APPLES")
 local meat    = std.holding_qty("MEAT")
+local water   = std.holding_qty("WATER")
 
 -- The feud: answer tooth for tusk, and remember who while they stand
 -- on this ground. A bounced attack (the foe dead, fled, or day-broke)
@@ -64,11 +66,18 @@ if satiety < 6 then
 end
 
 -- The graze: grub the thicket by day (the same loot table the houses
--- work -- one roll an hour; whatever turns up, roots and all). Never
--- travels: the boar IS the thicket's hazard, all day and all night.
-if not std.is_night() and hunger > 1
-   and not std.running_recipe("GATHER")
-   and ctx.entity.place == den then
+-- work -- one roll an hour; whatever turns up, roots and all). The
+-- boar's one errand is water (P3): the river road runs past the
+-- thicket, two hours -- it drinks where the valley drinks, and it
+-- never needs the fire-ground to do it. It is still not a predator:
+-- the walk is a walk, the browse is the business.
+if water < 1 and not std.is_night() and ctx.entity.place ~= river then
+  ctx.action.travel(river)
+elseif ctx.entity.place == river and water < 2 then
+  ctx.action.start_process("DRINK")
+elseif not std.is_night() and hunger > 1
+    and not std.running_recipe("GATHER")
+    and ctx.entity.place == den then
   ctx.action.start_process("GATHER")
 end
 

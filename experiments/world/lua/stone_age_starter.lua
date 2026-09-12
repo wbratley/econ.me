@@ -35,6 +35,7 @@
 local place  = ctx.entity.place   -- where I stand (a place key, or nil)
 local home   = "HEARTH"           -- the fire-ground: safe nights, the fire
 local woods  = "THICKET"          -- the subsistence walk: food and wood
+local river  = "RIVER"            -- the world's tap: free water at the bank
 
 local warmth = std.holding_qty("WARMTH")
 local wood   = std.holding_qty("WOOD")
@@ -44,6 +45,8 @@ local apples = std.holding_qty("APPLES")
 local cooked = std.holding_qty("COOKED_MEAT")
 local jerky  = std.holding_qty("JERKY")
 local food   = berries + apples + cooked + jerky
+local water  = std.holding_qty("WATER") + std.holding_qty("SKINWATER")
+local skin   = std.holding_qty("WATERSKIN")
 
 -- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
 --    Meals are labor-free, instant, night-legal and place-free -- but
@@ -64,6 +67,23 @@ if satiety < 1.5 then
   elseif meat >= 1 then
     ctx.action.start_process("EAT_RAW")
   end
+end
+
+-- 0a. Drink (P3): the second stomach draws 0.25/hour and meals only
+--     part-hydrate -- the cup runs dry, and the river is the tap.
+--     DRINK is free, instant and night-legal AT the bank; the walk is
+--     a daylight matter (the floor carries no torch). While standing
+--     there, top the skin first (it seeps, so "enough" is the bar:
+--     the draw keeps any vessel just under full -- a body that waits
+--     for a full cup stands in the river all day). Thirst kills on
+--     the third dry day -- the floor treats an empty cup as urgent as
+--     an empty stomach.
+if place == river and skin >= 1 and std.holding_qty("SKINWATER") < 5 then
+  ctx.action.start_process("FILL_SKIN")
+elseif place == river and water < 2 then
+  ctx.action.start_process("DRINK")
+elseif water < 1 and not std.is_night() then
+  ctx.action.travel(river)
 end
 
 -- 1. The fire is common ground: a standing fire at the clearing seats
