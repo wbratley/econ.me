@@ -15,8 +15,10 @@ The itinerary lives on a TravelRoute row (auditable, frozen at
 departure): hops are chained one at a time on arrival, the entity's
 location moves only through places.move_entity, and every transition
 is an event — travel_departed per hop, travel_arrived per arrival
-(with remaining_hops), travel_stranded when a journey stops short
-(cancellation, a failed per-tick input mid-road, or a next hop whose
+(with remaining_hops), travel_halted when the dark road holds a
+journey for want of a flame (P2: the relight window), travel_stranded
+when a journey stops short (cancellation, a failed per-tick input
+mid-road, a flame that never came, or a next hop whose
 requirements can no longer be met — stranding is a real state, the
 pack's business).
 """
@@ -24,9 +26,11 @@ pack's business).
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import clock
 from . import edges as edges_mod
 from . import places as places_mod
 from . import production
+from . import statuses
 from .models import (
     Entity, Process, ProcessStatus, SpatialEdge, TravelRoute, TravelRouteStatus,
 )
@@ -37,6 +41,53 @@ from .models import (
 #: arrival, not goods, so it may declare no outputs (create_recipe
 #: allows this for the namespace).
 TRAVEL_RECIPE_PREFIX = "TRAVEL_"
+
+#: The night gate's rules (P2): {"night_travel_requires": [condition …],
+#: "relight_ticks": N}. Darkness is ambient — the clock's, not any
+#: recipe's — and the register's conditions relieve it. A hop that
+#: departs at night needs every named condition on the traveller; a
+#: chained hop that cannot (the torch burned out mid-journey) halts the
+#: route WAITING_LIGHT for the relight window, then strands. Dawn needs
+#: nothing — day travel is unchanged.
+TRAVEL_RULES_KEY = "travel.rules"
+
+
+class _NightGateError(ValueError):
+    """The dark road refused this hop: a named condition is dark. Caught
+    by complete_travel to WAIT (ember window) instead of stranding."""
+
+
+def get_travel_rules(session: Session) -> dict:
+    from .models import WorldSetting
+    row = session.get(WorldSetting, TRAVEL_RULES_KEY)
+    return dict(row.value) if row is not None else {}
+
+
+def set_travel_rules(session: Session, rules: dict) -> None:
+    from .models import WorldSetting
+    row = session.get(WorldSetting, TRAVEL_RULES_KEY)
+    if row is None:
+        session.add(WorldSetting(key=TRAVEL_RULES_KEY, value=rules))
+    else:
+        row.value = rules
+
+
+def _night_gate(session: Session, entity: Entity, tick_number: int) -> bool:
+    """Returns True (and marks the caller's event loud) when this hop is
+    a torchlit night departure. Raises _NightGateError when night has
+    come and a required condition is dark. Day, or a world without
+    travel rules, passes silently — yesterday's behavior."""
+    rules = get_travel_rules(session)
+    required = rules.get("night_travel_requires") or []
+    if not required or not clock.is_night(tick_number):
+        return False
+    active = statuses.active_conditions(session, entity, tick_number)
+    missing = [name for name in required if name not in active]
+    if missing:
+        raise _NightGateError(
+            f"the dark road refuses you -- night travel needs "
+            f"{', '.join(required)} ({', '.join(missing)} is dark)")
+    return True
 
 
 def travel_recipe(session: Session, mode: str):
@@ -108,6 +159,10 @@ def start_route(
     for hop_mode in sorted({h["mode"] for h in hops}):
         _check_travel_recipe(session, hop_mode)
 
+    # hop 1 pays the night gate before the itinerary exists -- a refused
+    # departure must not leave a route row behind
+    _night_gate(session, entity, production.next_tick_number(session))
+
     allowed = edges_mod.normalize_modes(modes)
     route_row = TravelRoute(
         entity_id=entity.id,
@@ -133,6 +188,11 @@ def start_route(
         "remaining_hops": len(hops) - 1,
         "process_id": process.id,
     }
+    if departed.get("loud"):
+        # a torchlit night departure is loud (P2): the marker rides the
+        # applied event too, so the register (and every listening pack)
+        # reads it from the tick's record either way
+        facts["loud"] = True
     return route_row, process, facts
 
 
@@ -161,6 +221,8 @@ def _start_hop(
             f"no road from where you stand -- the itinerary's next hop "
             f"does not touch {places_mod.label(entity.place)}")
     recipe = _check_travel_recipe(session, edge.mode)
+    # torchlit night departures are loud (P2): the gate also answers it
+    lit_departure = _night_gate(session, entity, production.next_tick_number(session))
     process = production.start_process(session, entity, recipe.code)
     # the road, not the template, sets the hop's duration
     process.completes_tick = process.started_tick + edge.cost_ticks
@@ -180,6 +242,10 @@ def _start_hop(
         "cost_ticks": edge.cost_ticks,
         "remaining_hops": len(route_row.hops) - route_row.next_index - 1,
     }
+    if lit_departure:
+        # the torch IS the light: a night departure under flame is a loud
+        # fact, marked for the register (and every listening pack)
+        departed["loud"] = True
     return process, departed
 
 
@@ -200,6 +266,42 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
         .order_by(TravelRoute.created_at, TravelRoute.id)
     ).scalars().all()
     events: list[dict] = []
+
+    # The relight window (P2): a route halted by the dark road retries its
+    # next hop every pass -- a struck flame or dawn resumes the journey,
+    # a window elapsed strands it where it stands.
+    waiting = session.execute(
+        select(TravelRoute)
+        .where(TravelRoute.status == TravelRouteStatus.WAITING_LIGHT)
+        .order_by(TravelRoute.created_at, TravelRoute.id)
+    ).scalars().all()
+    relight_ticks = int(get_travel_rules(session).get("relight_ticks", 0))
+    for route_row in waiting:
+        entity = session.get(Entity, route_row.entity_id)
+        if entity is None:
+            continue
+        try:
+            _, departed = _start_hop(session, route_row, entity)
+            route_row.status = TravelRouteStatus.ACTIVE
+            route_row.waiting_since_tick = None
+            events.append(departed)
+        except _NightGateError:
+            halted_at = route_row.waiting_since_tick or tick_number
+            if tick_number - halted_at > relight_ticks:
+                route_row.status = TravelRouteStatus.STRANDED
+                route_row.current_process_id = None
+                route_row.waiting_since_tick = None
+                events.append(_stranded(
+                    route_row, entity,
+                    f"no flame came within {relight_ticks} ticks of the halt "
+                    f"-- the dark road kept its refusal"))
+        except ValueError as exc:
+            route_row.status = TravelRouteStatus.STRANDED
+            route_row.current_process_id = None
+            route_row.waiting_since_tick = None
+            events.append(_stranded(route_row, entity, str(exc)))
+    if waiting:
+        session.flush()
     for route_row in active_routes:
         process = (
             session.get(Process, route_row.current_process_id)
@@ -243,6 +345,20 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
             try:
                 _, departed = _start_hop(session, route_row, entity)
                 events.append(departed)
+            except _NightGateError as exc:
+                # the next hop wants a flame the traveller lacks: halt, hold
+                # the itinerary open for the relight window (the ember may
+                # still strike, dawn may come), strand only if neither does
+                route_row.status = TravelRouteStatus.WAITING_LIGHT
+                route_row.waiting_since_tick = tick_number
+                route_row.current_process_id = None
+                events.append({
+                    "type": "travel_halted",
+                    "entity_id": entity.id,
+                    "route_id": route_row.id,
+                    "place": (entity.place.key if entity.place is not None else None),
+                    "reason": str(exc),
+                })
             except ValueError as exc:
                 # the itinerary stopped short: requirements, inputs, or
                 # capability no longer meet the next hop. A real state.

@@ -464,6 +464,23 @@ so built facilities arrive public and burning. Symmetrically, a good
 may cap holdings (`max_holding`): positive credits clip at the cap,
 never refusing — warmth is a seat by the fire, not a warehouse good.
 
+A **conditions register** (statuses.py, the P2 torch substrate) names
+per-tick entity states as pack-declared *derivations* the engine
+evaluates: holding floors ("LIT": a burning torch above X), lit-windows
+("EMBER": LIT now, or lit within N ticks — the dying brand's grace;
+`Entity.last_lit_tick` is stamped post-decay each tick the flame
+holds), and loud-windows ("LOUD": applied says and torchlit night
+departures, graded by count — pull-query beacons over the tick's own
+event record, not witness delivery). Readers all speak condition *names*:
+`ctx.entity.conditions` on every behaviour context,
+`ctx.query.conditions(entity_id)` / `ctx.query.carriers(condition)`, the
+ambient night-travel gate (`travel.rules` `night_travel_requires`),
+deterrence floors, and recipe gates (`Recipe.requires_conditions`).
+Held condition-goods (the needs-incapacity family) project into the
+same list, so "an entity's conditions" is one read; future derivations
+(a FATIGUE from need state, an injury from combat rows) extend the
+register without touching any reader.
+
 A **Deposit** is a natural resource dotted onto the map: a parcel/region
 carries deposit rows (IRON, TIMBER, fertile soil as a FIELD quality tier)
 with a remaining quantity and optionally a regeneration rate. Extraction

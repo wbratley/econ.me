@@ -6,7 +6,9 @@ stat, it is a held good the rules price. The rules themselves are the
 pack's COMBAT_RULES world setting:
 
     {"night_only": true,            # refused by daylight, a clear error
-     "deterrence": {"WARMTH": 1},   # holdings that turn attackers away
+     "deterrence": {"WARMTH": 1},   # holdings (or register conditions --
+                                    #  LIT: a carried flame) that turn
+                                    #  attackers away
      "weapons": {"SPEAR": 3},       # attack bonus per unit held
      "armor": {"CLOTHES": 1},       # defense bonus per unit held
      "loot": {"*": 1, "MEAT": 3},  # "*": the estate, to CARRYing victors
@@ -126,9 +128,25 @@ def effective_defense(session: Session, entity_id: str) -> Decimal:
 # ---------------------------------------------------------------------------
 # Resolution
 
-def _deterred(session: Session, rules: dict, entity_id: str) -> bool:
-    for symbol, floor in (rules.get("deterrence") or {}).items():
-        if _holding_qty(session, entity_id, symbol) >= Decimal(floor):
+def _deterred(session: Session, rules: dict, entity_id: str,
+              tick_number: int | None = None) -> bool:
+    """A key in the deterrence map turns an attacker away when it is a
+    REGISTER CONDITION the defender bears (LIT: a carried flame, checked
+    while it burns — P2) or, as before, a holding at/above its floor
+    (WARMTH: a lit hearth). Condition keys win when a world declares
+    the name; without a tick the condition path is unread (goods only,
+    yesterday's behavior)."""
+    from . import statuses
+    from .models import Entity
+    active: set[str] = set()
+    if tick_number is not None:
+        entity = session.get(Entity, entity_id)
+        if entity is not None:
+            active = set(statuses.active_conditions(session, entity, tick_number))
+    for key, floor in (rules.get("deterrence") or {}).items():
+        if key in active:
+            return True
+        if _holding_qty(session, entity_id, key) >= Decimal(floor):
             return True
     return False
 
@@ -293,7 +311,7 @@ def resolve_attack(session: Session, attacker_id: str,
         _QUANTUM, rounding=ROUND_HALF_UP))
     event["defense"] = str(effective_defense(session, defender_id).quantize(
         _QUANTUM, rounding=ROUND_HALF_UP))
-    if _deterred(session, rules, defender_id):
+    if _deterred(session, rules, defender_id, tick_number=tick_number):
         # The hearth turns the pack at the door: a loud miss, not a
         # refusal — the world heard the attempt.
         return {**event, "hit": False, "deterred": True, "damage": "0"}

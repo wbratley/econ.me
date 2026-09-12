@@ -240,6 +240,16 @@ existing uses.
   pack's business.
 - Processes marked `is_travel` with `edge_id` — skipped by
   production-side statistics, visible to census.
+- The **night gate** is ambient (P2, torches): `travel.rules`
+  (`night_travel_requires: ["LIT", …]`) refuses hop STARTS the clock
+  calls night, naming the missing conditions — travel recipes stay
+  pure data (the pack's TRAVEL_WALK needs no night input; darkness is
+  a state of the world, not a cost of the road). A torchlit night
+  departure is marked `loud` (the conditions register's beacon read,
+  `world.who_is_loud()`); a route whose flame dies mid-road waits
+  `relight_ticks` for the gate to reopen (a chained CHAIN_TORCH, or
+  dawn), then **strands** the traveller at the last place — the same
+  real state cancellation uses.
 - Lua: `world.route(from_key, to_key, modes?)` (read-only itinerary:
   hops, modes, total ticks), `world.distance_ticks(a, b, modes?)`,
   `entity.place` in the observation, `travel` in the intent surface.

@@ -77,6 +77,18 @@ function world.public_facilities(place)
   return ctx.query.public_facilities(place)
 end
 
+-- The conditions register (P2): who bears a named condition RIGHT NOW.
+-- world.who_is_loud() is the beacon read over LOUD — torchlit night
+-- walkers and speakers, graded by act count ({entity_id, strength}).
+-- A lit brand in the dark is a fact anyone may notice: wolves find you
+-- by it, houses read it to know the roads are walked.
+function world.who_is_loud()
+  return ctx.query.carriers("LOUD")
+end
+function world.conditions_of(entity_id)
+  return ctx.query.conditions(entity_id)
+end
+
 -- Roads (docs/spatial.md S3): the published itinerary. ----
 -- world.route(from, to, modes) returns {hops={{from,to,mode,cost_ticks},...},
 -- total_ticks} for the cheapest road, or nil when there is none -- the

@@ -68,7 +68,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import clock, conditions, goods, markets, needs, parcels, places, production, rng, tech
+from . import clock, conditions, goods, markets, needs, parcels, places, production, rng, statuses, tech
 from . import threats, travel, witness
 from .lua_engine import Intent, LuaEngine
 from .models import (
@@ -263,6 +263,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     # pressure in the same tick it lands (net drift = pressure − decay).
     events.extend(threats.apply_pressure(session, number, events))
     events.extend(goods.apply_decay(session, tick_number=number))
+    # the register's one write (P2): post-decay truth — a torch burned to
+    # the floor this tick does not re-stamp, and the ember window starts
+    statuses.stamp_lit(session, tick_number=number)
     events.extend(conditions.run_incapacity(session, tick_number=number))
 
     tick = Tick(
@@ -340,6 +343,9 @@ def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_e
             # where I stand, by key (S3): nil = unplaced. ctx.place carries
             # the full facts; this is the short read.
             "place": entity.place.key if entity.place is not None else None,
+            # the conditions register (P2): every active condition, every
+            # tick — your state modifies your behaviour
+            "conditions": statuses.active_conditions(session, entity, tick_number),
         },
         "accounts": [
             {"id": a.id, "currency": a.currency, "balance": str(a.balance)}

@@ -52,11 +52,14 @@ carrion (EAT_CARRION: the born CARNIVORE trait -- a kill wrung dry,
 jerky-dense, never sickening), and keep warm by PACE. The packs RANGE (run
 26's census: denned wolves whose houses slept out of reach starved
 in two days -- the map made sit-and-wait a death sentence): by day
-they run the same game the houses hunt, by night a hungry pack walks
--- three hours of road to the fire-ground where the people sleep,
-home again by dawn. Players are not their only food; they are the
+they run the same game the houses hunt, and in the last daylight a
+hungry pack walks -- three hours of road to the fire-ground where
+the people sleep, walked while the light lasts (wolves carry no
+torch: the dark road is not theirs), home again by daybreak. Players
+are not their only food; they are the
 rich exception. Combat (combat.py) is entity-vs-entity under the
-pack's COMBAT_RULES: daylight refuses, a lit hearth DETERS (a loud
+pack's COMBAT_RULES: daylight refuses, a lit hearth -- or a burning
+torch -- DETERS (a loud
 miss), hit% = clamp(50 + 5*(ATK-DEF), 5, 95) on the commit-reveal RNG,
 damage = max(1, ATK-DEF) (+1 crit), HITS drain, zero = the ordinary
 incapacity/estate machinery, victor seizes {PELT 1, MEAT 3}. Houses
@@ -78,13 +81,35 @@ trading post 1h, down the valley -- an easy walk (the forest and
 river roads still run there, the long ways round). Presence gates bind work to
 places; EVERY market trades at the post and only there; travel is
 the TRAVEL_WALK recipe, one Process per hop (an hour a hop, priced
-by the road, night-legal, labor-free), and a traveller stands at a
+by the road, labor-free; the DARK road wants LIT -- see TORCHES),
+and a traveller stands at a
 hop's origin until arrival -- the road exposes you place by place,
 and co-location gates both the bite and the prowl. The starter
 script walks: hand-to-mouth now has a commute.
 
+TORCHES (P2, the night kit): darkness got its teeth back. The
+conditions register (statuses.py; the pack declares LIT / EMBER /
+LOUD under the `conditions.rules` world setting) names per-tick,
+queryable states that gates and scripts alike read by name: LIT = a
+burning torch (a lit brand above a quarter-brand); EMBER = its
+memory (LIT now, or lit within the last two ticks -- the window a
+dying brand may still strike its successor); LOUD = torchlit night
+departures and speech, graded by count (world.who_is_loud() --
+wolves aim at it). The night gate is ambient (travel.rules:
+night travel refuses the flameless; a route whose flame dies
+mid-road waits two ticks for a relight, then strands), deterrence
+accepts LIT beside WARMTH, and the kit is three recipes: MAKE_TORCH
+(1 WOOD + 1 YARN, daylight), LIGHT_TORCH (at any lit fire, free --
+the commons strikes brands), CHAIN_TORCH (off your own flame or its
+ember, anywhere). Decay is proportional (half the flame an hour): a
+fresh brand burns ~2h, a full carry of two ~3h -- the dark road is
+an inventory and a cadence, not a fee. Wolves never carry torches:
+their raid walks at dusk, holds when caught out, and is home by
+daybreak; the starter travels by day only.
+
 Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
-JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, plus the flows
+JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, TORCH /
+LIT_TORCH (the night kit), plus the flows
 WARMTH/SATIETY and the
 conditions HUNGER/EXPOSURE/DISEASE. Money is COIN — found, not endowed:
 seats start with walking money, the bagged gather mints the rest, and
@@ -112,7 +137,7 @@ from sqlalchemy.orm import Session
 
 from econengine import (
     combat, edges, goods, markets, needs, parcels, places, production,
-    scripting, services, spawns, tech,
+    scripting, services, spawns, statuses, tech, travel,
 )
 from experiments.world import manifest
 from econengine.models import (
@@ -170,6 +195,22 @@ FIRE_FUEL_CAP = Decimal("6")
 FIRE_FUEL_BURN = Decimal("1")
 STOKE_FUEL = Decimal("2")
 WARM_BY_FIRE_WARMTH = Decimal("6")
+
+# --- Torches: the night kit (P2, ROADMAP.md) ------------------------------
+# Darkness is ambient: night travel refuses you without LIT (a burning
+# torch above the floor), travel-recipe gates stay untouched. A brand
+# burns down HALF ITS FLAME an hour (decay is proportional), and the
+# register calls LIT while a quarter-brand or more burns -- so a fresh
+# brand lights two hours, a full carry of two burns about three, and
+# the road's craft is to re-strike inside each ember window. Brands
+# light from any lit fire (LIGHT_TORCH -- the commons strikes them) or
+# off your own flame/its dying ember (CHAIN_TORCH wants EMBER: the
+# 2-tick window after a burnout). Torchlit night departures are LOUD
+# -- every listening pack hears where you walk.
+TORCH_DECAY = Decimal("0.5")
+TORCH_CARRY = Decimal("2")
+LIT_TORCH_FLOOR = Decimal("0.25")
+EMBER_TICKS = 2
 
 # --- Needs and their teeth --------------------------------------------------
 # Both needs bill every tick. Each condition's death threshold sits BELOW
@@ -280,11 +321,24 @@ the deep wood (the hunts -- and the wolves' range); the Trading post
 ONE, down the valley (every market trades there, and only there).
 Roads run both ways; the deep wood and the river road are the long
 ways.
-WALKING is the TRAVEL_WALK recipe: an hour per hop, labor-free,
-night-legal -- and you stand where a hop started until it ends, so a
-road exposes you place by place. ctx.entity.place says where you
-stand; world.route(from, to) prices any walk before you take it;
+WALKING is the TRAVEL_WALK recipe: an hour per hop, labor-free --
+and you stand where a hop started until it ends, so a road exposes
+you place by place. ctx.entity.place says where you stand;
+world.route(from, to) prices any walk before you take it;
 ctx.action.travel(to) sets out (nothing else may move you).
+THE DARK ROAD WANTS A FLAME: by night, travel refuses you unless a
+TORCH burns in your hand (LIT: a lit torch above a quarter-brand).
+MAKE_TORCH (1 WOOD + 1 YARN, daylight) crafts a brand;
+LIGHT_TORCH strikes it at any LIT fire (free, instant); CHAIN_TORCH
+strikes a fresh one off your own flame -- or off its dying EMBER,
+within two ticks of the burnout (anywhere, free, instant). A fresh
+brand burns about two hours (it loses half its flame an hour; a
+carry is two). Mind the arithmetic: a long dark road is a torch
+inventory and the wit to re-strike inside each ember window. And
+know what a torch buys: light is LOUD -- every pack in the dark
+hears a torchlit walker (as it hears speech). A journey that stalls
+in the dark (the flame dies mid-road) waits for a relight -- yours,
+or dawn's; after two dark ticks it strands where it stands.
 WORK IS WHERE YOU ARE: gathering and chopping want the thicket,
 hunting wants the forest, fire-making, stoking and warming want the
 hearth, flint-digging wants the scrape, fishing wants the river. The
@@ -301,6 +355,12 @@ same.
    hours) and take your seat by dark (WARM_BY_FIRE). MAKE_FIRE (2 WOOD)
    adds four public seats when the clearing is crowded. Do not sleep
    fireless.
+1a. TORCHES are the night road: the same commons fire that warms you
+   lights your brands (LIGHT_TORCH, free) -- MAKE them by daylight (1
+   WOOD + 1 YARN), CHAIN them off your own flame (or its two-tick
+   ember) when the road runs long. A burning torch turns a wolf at
+   the door, too -- and tells every pack where you walk: a torchlit
+   night journey is a loud fact.
 2. EAT what spoils first: berries within hours, cooked within a day;
    JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
    hunger kills the careless before any tool matters.)
@@ -496,8 +556,9 @@ def _create_map(session: Session) -> None:
         edges.create_edge(session, a, b, "walk", cost)
     # The walk itself: an hour a hop against the road's true length.
     # No LABOR (the day's ration is for work; walking spends the day),
-    # no daylight gate (roads run at night -- that is when they are
-    # dangerous), no outputs (arrival is the product).
+    # no recipe-level daylight gate -- night is the AMBIENT gate's
+    # business (travel.rules: the dark road wants a burning torch),
+    # no outputs (arrival is the product).
     production.create_recipe(
         session, "TRAVEL_WALK", name="Walk",
         description="One hour afoot along a road: an hour per hop of the "
@@ -597,6 +658,26 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "BED", name="Bed",
                       description="Craftable comfort, mechanically idle — "
                                   "the expansion hook.")
+    # The night kit (P2): a brand is capital you burn. TORCH is inert in
+    # the pack; LIT_TORCH is the flame -- decays 0.5/tick (two hours a
+    # brand), carries clip at 2, and while one burns above the floor the
+    # register says LIT: the dark road opens, wolves turn at your door,
+    # and your night departures are loud facts.
+    goods.create_good(session, "TORCH", name="Torch",
+                      description="A pitch-wrapped brand: inert in the pack, "
+                                  "two hours of carried light once lit. "
+                                  "Light it at any lit fire, or chain a "
+                                  "fresh one off your own flame.")
+    goods.create_good(session, "LIT_TORCH", name="Lit Torch",
+                      description="A burning brand in the hand: the dark road "
+                                  "opens, a wolf at the door thinks twice — "
+                                  "and every pack in the dark hears you walk. "
+                                  "Burns down half its flame an hour — a "
+                                  "fresh brand lights two hours, a full "
+                                  "carry of two about three. A body carries "
+                                  "two flames.",
+                      decay_per_tick=TORCH_DECAY,
+                      max_holding=TORCH_CARRY)
     # Flows. WARMTH fades (0.2/tick) and now CAPS at 6 (the fire rework:
     # a body holds about two cold hours -- banking warmth against the night
     # is not a strategy; a SEAT at a lit fire is). SATIETY is the stomach:
@@ -683,13 +764,33 @@ def _create_combat(session: Session) -> None:
     eat."""
     combat.set_rules(session, {
         "night_only": True,
-        "deterrence": {"WARMTH": 1},
+        # WARMTH: the lit hearth at the door. LIT: a carried flame —
+        # the register condition (a burning torch turns a wolf while it
+        # burns; the brand you are WALKING on is spent before the check).
+        "deterrence": {"WARMTH": 1, "LIT": 1},
         "weapons": {"SPEAR": 3, "AXE": 2},
         "armor": {"CLOTHES": 1},
         "loot": {"*": 1, "MEAT": 3},
         "carry_stat": "CARRY",
         "bite_loot": {"MEAT": 1},
         "base_hit": 50, "per_point": 5,
+    })
+    # The conditions register (P2): named, per-tick, queryable states —
+    # every reader (the night gate, deterrence, ctx.entity.conditions,
+    # world.who_is_loud()) speaks these names. LIT = a burning torch at
+    # the floor; EMBER = its memory (two ticks to re-strike); LOUD =
+    # torchlit night departures and speech, graded by act count.
+    statuses.set_rules(session, {
+        "LIT": {"holding": {"LIT_TORCH": str(LIT_TORCH_FLOOR)}},
+        "EMBER": {"lit_within_ticks": EMBER_TICKS, "after": "LIT"},
+        "LOUD": {"loud_events_within_ticks": 1},
+    })
+    # The dark road (P2): night travel refuses you without LIT, halts a
+    # journey whose flame dies mid-road for EMBER_TICKS, strands it if no
+    # flame comes. Dawn needs nothing — day travel is unchanged.
+    travel.set_travel_rules(session, {
+        "night_travel_requires": ["LIT"],
+        "relight_ticks": EMBER_TICKS,
     })
     spawns.set_script_source(
         session, "wolf", _gate_pack_script("wolf_pack.lua"))
@@ -899,6 +1000,41 @@ def _create_recipes(session: Session) -> None:
         inputs={}, outputs={"WARMTH": WARM_BY_FIRE_WARMTH}, duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
         requires_place_kind="HEARTH",
+    )
+    # --- The night kit: torches (P2) ----------------------------------
+    # MAKE (daylight labor -- the day's craft is the night's freedom),
+    # LIGHT (at any lit fire -- the commons strikes brands, free and
+    # instant), CHAIN (off your own flame, or its dying ember within two
+    # ticks of the burnout -- the register's EMBER window is the gate).
+    production.create_recipe(
+        session, "MAKE_TORCH", name="Make Torch",
+        description="Wrap a split log in yarn and pitch: one brand, two "
+                    "hours of carried light once lit. Daylight labor -- the "
+                    "day's craft is the night's road.",
+        inputs={"LABOR": D("1"), "WOOD": D("1"), "YARN": D("1")},
+        outputs={"TORCH": D("1")}, duration_ticks=2,
+        requires_daylight=True,
+    )
+    production.create_recipe(
+        session, "LIGHT_TORCH", name="Light Torch",
+        description="Strike a brand at any LIT fire -- the commons lights "
+                    "them free. Instant, night-legal, labor-free: a torch "
+                    "becomes a lit torch, two hours of carried light.",
+        inputs={"TORCH": D("1")}, outputs={"LIT_TORCH": D("1")},
+        duration_ticks=0,
+        requires_facility="FIRE", requires_facility_lit=True,
+        requires_place_kind="HEARTH",
+    )
+    production.create_recipe(
+        session, "CHAIN_TORCH", name="Chain Torch",
+        description="Strike a fresh brand off your own flame -- or its "
+                    "dying ember, within two ticks of the burnout. The road's "
+                    "way to carry light without a fire: light the next "
+                    "before the last is cold. Instant, night-legal, "
+                    "labor-free, anywhere.",
+        inputs={"TORCH": D("1")}, outputs={"LIT_TORCH": D("1")},
+        duration_ticks=0,
+        requires_conditions=["EMBER"],
     )
     production.create_recipe(
         session, "COOK_MEAT", name="Cook Meat",

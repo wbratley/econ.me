@@ -40,6 +40,7 @@ from .lua_engine import (
 )
 from . import capabilities as _capabilities
 from . import clock as _clock
+from . import statuses as _statuses
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
 from .models.entity import EntityType
 
@@ -204,6 +205,8 @@ def synthetic_queries() -> dict:
         "route": lambda from_key, to_key, modes=None: None,
         "distance_ticks": lambda from_key, to_key, modes=None: None,
         "public_facilities": lambda place_key=None: [],
+        "conditions": lambda entity_id: None,
+        "carriers": lambda condition: [],
     }
 
 
@@ -441,7 +444,8 @@ QUERY_MEMBERS = (
     "balance", "total_supply", "market_price", "best_bid", "best_ask",
     "holding", "unreserved", "has_unlock", "holders", "age", "lifespan",
     "population", "parents", "children", "route", "distance_ticks",
-    "public_facilities", "world_setting", "fiscal_policy", "constitution",
+    "public_facilities", "conditions", "carriers", "world_setting",
+    "fiscal_policy", "constitution",
     "active_script", "script_history", "proposal", "proposals", "tally",
 )
 
@@ -1337,6 +1341,24 @@ def build_queries(session: Session, tick_number: int | None = None,
             })
         return out
 
+    def conditions(entity_id):
+        """The conditions register (P2): every active condition on an
+        entity, derived flags then held condition-goods, names as strings.
+        ctx.entity.conditions carries your own; this reads anyone's (the
+        beacon doctrine: queryable facts, not deliveries)."""
+        from .models import Entity as EntityModel
+        target = session.get(EntityModel, str(entity_id))
+        if target is None:
+            return None
+        return _statuses.active_conditions(session, target, tick)
+
+    def carriers(condition):
+        """Who bears a register condition, graded: [{entity_id, strength}].
+        Loud-family conditions carry act counts from the last N ticks
+        (this tick's torchlit walkers are next tick's readings); every
+        other condition carries strength 1 per active bearer."""
+        return _statuses.carriers(session, str(condition), tick)
+
     return {
         "balance": balance,
         "total_supply": total_supply,
@@ -1355,6 +1377,8 @@ def build_queries(session: Session, tick_number: int | None = None,
         "route": route,
         "distance_ticks": distance_ticks,
         "public_facilities": public_facilities,
+        "conditions": conditions,
+        "carriers": carriers,
         "world_setting": world_setting,
         "fiscal_policy": fiscal_policy,
         "constitution": constitution,
@@ -1874,6 +1898,10 @@ def resolve_intent(session: Session, intent: Intent,
             event["params"] = {**intent.params, "text": text}
             if said is not None:
                 said.add(intent.entity_id)
+            # Speech is loud by definition (P2's register): the marker the
+            # conditions register reads back. Applied says only — a refused
+            # utterance never happened, and never echoes.
+            event["loud"] = True
 
         else:
             return rejected(f"unknown intent type {intent.intent_type!r}")
