@@ -243,6 +243,29 @@ estate machinery (CARRY). Engine surfaces new in P5: `spawns.rules`
 takes a LIST of programs, and recipes scale with holdings
 (`scales_with` — the catalog renders the scaled row honestly).
 
+**Water** (P3 — the thirst clock; the larder's counterweight, shipped
+after P5 per the user's reorder): every individual draws 0.25 water an
+hour (six a day) from carried stock — the **cup** everyone carries
+free (WATER, max 4, filled by DRINK at the river: free, instant,
+night-legal) and the **waterskin** (SKINWATER, max 8, seeping 2% —
+FILL_SKIN at the bank needs the skin; MAKE_WATERSKIN is one PELT and
+an hour's sewing, so a dead wolf is eight carried hours; the post
+stocks one skin at ask 6.00, the anchor price). Meals part-hydrate —
+table: berries/apples 0.6, cooked 0.8, eggs 0.5, raw 0.4, carrion
+0.9 (the blood), jerky 0.2 (**dry — the point**) — so a berry-grazer
+rides under the THIRST threshold (grant 0.5, decay 0.05, equilibrium
+10 against a wet diet's ~2) while run-36's winning shape, a fed
+jerky-and-egg larder that never walks to the river, dries out and
+dies on day three: **thirst targets the rich**. Cup + skin ≈ two dry
+days net of meal credits — the river is a rhythm, not a treadmill,
+and its road now runs past the thicket (THICKET–RIVER 2h: the gather
+commute drinks, and the boar — which never touches the fire-ground —
+reaches the tap on its own road). The beasts drink too: wolves run
+the post road to the bank, boars the thicket road; their programs
+walk to water by day. Water is never marketable — the tap is free,
+the SKIN is what coin buys. Zero engine surfaces: multi-output meals,
+place-gated recipes, condition goods and need satisfiers all existed.
+
 The balance contract is three policy tests, not numbers in a comment:
 `test_neglect_kills` (a seat that gathers nothing dies in 18–40),
 `test_shelter_alone_is_misery_not_death` (chronic cold, alive), and

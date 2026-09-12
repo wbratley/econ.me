@@ -44,6 +44,7 @@ local hunger  = std.holding_qty("HUNGER")
 local satiety = std.holding_qty("SATIETY")
 local meat    = std.holding_qty("MEAT")
 local warmth  = std.holding_qty("WARMTH")
+local water   = std.holding_qty("WATER")
 
 -- Ears: tonight's says -- and every torchlit walker -- name tonight's
 -- prey (P2: LOUD is the register's read, world.who_is_loud(); a brand
@@ -101,9 +102,19 @@ else
   -- day: the pack works its range. The game is in the forest and the
   -- dens are there; a fed wolf still walks home -- the fire-ground
   -- by day is a bad bed, and the range keeps being a range by being
-  -- walked. In the last daylight a hungry pack walks OUT: dusk is
-  -- when the raid road is still open (it closes at dark).
-  if std.hour() >= dusk and std.hour() + walk_ahead < 20
+  -- walked. The river first when the cup runs dry (P3: thirst is why
+  -- anything walks to water -- the post road runs to the bank, three
+  -- hours; the pack drinks where the world drinks). DRINK tops to the
+  -- seam, then the pack moves on: the draw keeps the cup just under
+  -- full, so "enough" is the bar, not "full" -- a pack that waits
+  -- for a full cup starves standing in the river. In the last
+  -- daylight a hungry pack walks OUT: dusk is when the raid road is
+  -- still open (it closes at dark).
+  if water < 1 and ctx.entity.place ~= "RIVER" then
+    ctx.action.travel("RIVER")
+  elseif ctx.entity.place == "RIVER" and water < 2 then
+    ctx.action.start_process("DRINK")
+  elseif std.hour() >= dusk and std.hour() + walk_ahead < 20
      and hunger > 3 and ctx.entity.place ~= prowl then
     ctx.action.travel(prowl)
   elseif ctx.entity.place ~= home then

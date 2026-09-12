@@ -1,7 +1,9 @@
 -- trading_post.lua  (BEHAVIOUR) -- the market maker of the stone age.
 --
--- The post SELLS safe food (BERRIES, COOKED_MEAT, JERKY) and the
--- larder's seed capital (CHICKEN -- P5), and BUYS raw goods (MEAT,
+-- The post SELLS safe food (BERRIES, COOKED_MEAT, JERKY), the
+-- larder's seed capital (CHICKEN -- P5), and the water kit's anchor
+-- (WATERSKIN -- P3: one skin, priced at a pelt and a half of coin --
+-- the price a thirsty house reads), and BUYS raw goods (MEAT,
 -- WOOD, YARN, FLINT, BERRIES, APPLES, EGGS, PELT) for COIN. Three runs
 -- showed why it must exist: houses with coin and hunger found no
 -- seller, hunters with meat found no buyer, and "the price is
@@ -57,8 +59,12 @@ if not S.ask then
   -- against its own wage (P5): a hen lays ~1 egg/day the post buys at
   -- 1.20, so 4.00 asks four days of laying -- capital that returns
   -- itself, quoted so a house can see the arithmetic before it pays.
+  -- WATERSKIN (P3): one PELT makes one by hand, the post's PELT bid
+  -- is 3.00 and the egg trade pays 1.20 -- 6.00 stands between "sew
+  -- it yourself" and "coin is quicker", the anchor thirsty houses
+  -- read. One on the shelf; when it is gone, it is gone.
   S.ask = { BERRIES = 1.25, COOKED_MEAT = 1.50, JERKY = 2.00,
-            CHICKEN = 4.00 }
+            CHICKEN = 4.00, WATERSKIN = 6.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
             YARN = 2.00, FLINT = 2.00, PELT = 3.00,
             APPLES = 0.80, EGGS = 1.20 }
@@ -97,7 +103,8 @@ end
 
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward
 --    trade.
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
+                       "WATERSKIN" }) do
   if (S.quiet["sell_" .. sym] or 0) >= 3 then
     S.ask[sym] = math.max(S.ask[sym] * 0.95, ASK_FLOOR)
     S.quiet["sell_" .. sym] = 0
@@ -118,7 +125,8 @@ for _, a in ipairs(ctx.accounts) do
 end
 
 local want = {}
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
+                       "WATERSKIN" }) do
   local qty = math.floor(std.holding_qty(sym))
   if qty > 0 then
     want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),
@@ -212,7 +220,8 @@ end
 --    does not draw maps to his firelight.
 if ctx.tick % 10 == 0 and not std.is_night() then
   local sells, buys = {}, {}
-  for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
+  for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
+                         "WATERSKIN" }) do
     if want["sell_" .. sym] then
       sells[#sells + 1] = sym .. " " .. r2(S.ask[sym])
     end
@@ -226,7 +235,6 @@ if ctx.tick % 10 == 0 and not std.is_night() then
   if #sells + #buys > 0 then
     ctx.action.say("POST: selling " .. table.concat(sells, ", ")
       .. " | buying " .. table.concat(buys, ", ")
-      .. ". Sell me your surplus for coin; my shelf is food when "
-      .. "your gathering fails.")
+      .. ". Sell me your surplus for coin -- the shelf feeds the lean days.")
   end
 end

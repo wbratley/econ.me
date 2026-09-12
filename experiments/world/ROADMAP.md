@@ -4,7 +4,9 @@ Written 2026-09-06 after run 33 (breaker A/B closed, drain cap shipped as PR
 #174) and the fire-notes review. Status: P1 SHIPPED (pure commons), P2
 SHIPPED (torches + conditions register), P5 SHIPPED (the larder —
 reordered ahead of P3/P4 by the user: runs 26–35 ALL died on the income
-wall, so relief came first), P3 (water) next. One phase = one
+wall, so relief came first), P3 SHIPPED (water — the thirst clock;
+run 36 validated P5 first: a deepseek seat survived d40 on the full
+larder playbook), P4 (sleep) next. One phase = one
 PR = one run; every phase re-asserts
 the three balance policies (do-nothing dies <2 rounds; starter survives
 indefinitely; tooled policies accumulate surplus).
@@ -92,13 +94,36 @@ otherwise (travel-recipe input gate). Held torch = +deterrence (a lit
 brand) but visible/loud at night — travelling lit tells every listening
 pack where you are.
 
-## P3 — Water (MIXED)
+## P3 — Water (MIXED) — SHIPPED
 
-WATER need + THIRST condition (lethal ~day 3: faster than hunger, slower
-than today's exposure). DRINK free at the river (FISH synergy). Meals
-partially hydrate (~20% berries) so day 1 isn't a death march. WATERSKIN
-from a PELT — a dead wolf becomes capital; post stocks one as the price
-anchor. Waterskin = portable drink capacity.
+Shipped after P5 (the user's reorder; see the decisions log). Shape
+as landed (numbers PROVISIONAL — the census tunes the tap):
+
+- WATER need 0.25/h (6/day, night unchanged), satisfiers
+  [SKINWATER, WATER] — the skin drains first, the cup is the reserve.
+  THIRST: grant 0.5/tick, decay 0.05, equilibrium 10, threshold 7.5.
+- The tap: DRINK free/instant/night-legal at the river (cup 4);
+  FILL_SKIN at the bank tops a skin (8, seeps 0.02/h). MAKE_WATERSKIN
+  = 1 PELT + 1 LABOR, 2h — a dead wolf becomes capacity. The post
+  stocks one skin at ask 6.00 (the anchor; quiet-drift can discount
+  it, like any shelf good).
+- Meals part-hydrate: berries/apples 0.6, cooked 0.8, eggs 0.5, raw
+  0.4, carrion 0.9, jerky 0.2 (dry — the design's teeth). A wet diet
+  equilibrates ~2 THIRST (felt, never fatal — day 1 is not a death
+  march, per the clause); a FED dry larder (jerky/eggs) dies on day
+  three — thirst targets the rich, the larder's counterweight.
+- Cup 4 + skin 8 ≈ two dry days net of meal credits: the river is a
+  rhythm. New road THICKET–RIVER (2h): the gather commute drinks and
+  the boar reaches the tap without the fire-ground. Wolves drink via
+  the post road (3h each way — more wolf traffic through the grinder;
+  watch at census).
+- Beasts: born with a 2-water cup; wolves' carrion carries 0.9 water
+  a meal; boars graze wet apples. Their programs walk to water by
+  day (water < 1 → RIVER, drink at < 2, leave — "enough", not
+  "full": the draw keeps any vessel under the seam, and a body that
+  waits for a full cup stands in the river all day).
+- Water is never marketable (the tap is free — no free-good arbitrage;
+  the SKIN is what coin buys). Zero engine surfaces.
 
 ## P4 — Sleep (PRESSURE; the night becomes a budget)
 
@@ -218,3 +243,27 @@ user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
 - PELT renamed to "Pelt" (P5): boars wear a double pelt too; the post's
   3.00 bid now stands behind real orders (it was a reference price
   only before).
+- River road past the thicket (P3): THICKET–RIVER 2h added — the
+  gather commute drinks on the way home, and the boar (which never
+  walks to the fire-ground) reaches the tap on its own road. Wolves
+  keep the post road to the bank (3h): more wolf traffic through the
+  grinder, watched at census.
+- Water is never marketable (P3): the tap is free — a SKINWATER sell
+  order would be coin minted from the river. The post anchors the
+  SKIN (one on the shelf, ask 6.00, quiet-drift applies like any
+  shelf good).
+- "Enough, not full" drink thresholds (P3, learned in test): the need
+  draw keeps any vessel just under its seam, so a `water < cap`
+  condition drinks forever — a body that waits for a full cup stands
+  in the river all day (the first wolf test starved standing in the
+  shallows). Programs drink at `water < 2` and move on.
+- THIRST arithmetic (P3): grant 0.5/decay 0.05 -> equilibrium 10,
+  threshold 7.5 — the death is delivered by the BUFFER (cup 4 + skin
+  8 ≈ two dry days), not the climb rate, because a climb fast enough
+  to beat a 25%-hydrated diet would also beat day one. Thirst targets
+  the rich: wet diets equilibrate ~2 (felt, never fatal — the
+  day-one clause), the dry larder dies on day three.
+- Beasts drink (P3): wolves are watered mostly by their kills
+  (carrion 0.9), boars by the orchard (apples 0.6) — both still run
+  dry and walk to the bank by day. Creatures, not pressure: they
+  share the physics and the roads.
