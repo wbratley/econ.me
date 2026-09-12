@@ -19,6 +19,12 @@
 -- Players are not the pack's only food -- the forest feeds it -- they
 -- are the rich exception a hungry night goes looking for.
 --
+-- The departure gate is a FINISH-in-light gate (P5, run 35's lesson:
+-- the wolves died stranded mid-road -- the pack that leaves at 18 on
+-- a two-hour road is halted by dusk and never comes home): a raid
+-- walks only while hour + road < 20 -- arrival with the last light,
+-- never a dark road. Late and hungry, the pack waits for tomorrow.
+--
 -- The program never fights fire: a lit hearth turns a pack at the door
 -- (combat rules do that). It attacks what it can find up close, eats
 -- what it caught, and stays warm by moving.
@@ -97,7 +103,8 @@ else
   -- by day is a bad bed, and the range keeps being a range by being
   -- walked. In the last daylight a hungry pack walks OUT: dusk is
   -- when the raid road is still open (it closes at dark).
-  if std.hour() >= dusk and hunger > 3 and ctx.entity.place ~= prowl then
+  if std.hour() >= dusk and std.hour() + walk_ahead < 20
+     and hunger > 3 and ctx.entity.place ~= prowl then
     ctx.action.travel(prowl)
   elseif ctx.entity.place ~= home then
     ctx.action.travel(home)

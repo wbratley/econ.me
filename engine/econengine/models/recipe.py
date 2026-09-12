@@ -75,6 +75,12 @@ class Recipe(Base):
     # This is how conditions activate or refuse actions: CHAIN_TORCH
     # wants EMBER (a flame, or the ember of one just dead).
     requires_conditions: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # pastoral capital (P5): {SYMBOL: "cap"} -- outputs are credited once
+    # per unit of SYMBOL held (between 1 and cap). The livestock is a
+    # good_requirement (present, reserved, never consumed); the harvest
+    # is priced by the herd at completion. One entry max -- one herd,
+    # one harvest. NULL = fixed outputs (all of history).
+    scales_with: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

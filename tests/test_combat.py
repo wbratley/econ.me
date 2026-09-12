@@ -6,7 +6,7 @@ packs vs the starter floor) lives in experiments/world/test_stone_age.
 """
 import pytest
 from decimal import Decimal
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from econengine import combat, goods, markets, spawns
@@ -261,6 +261,46 @@ def test_a_batch_of_spawns_numbers_consecutively(session):
     session.commit()
     born = spawns.apply_on_round(session, 1)
     assert [b["name"] for b in born] == ["Beast I", "Beast II", "Beast III"]
+
+
+def test_multiple_spawn_programs_run_their_own_cadences(session):
+    """P5 (the larder): spawns.rules takes a LIST of programs, and each
+    keeps its own clock, cap and template -- wolves and boars, two
+    rhythms, one register. A dict is still one program (the whole suite
+    above exercises it)."""
+    goods.create_good(session, "HITS")
+    spawns.set_script_source(session, "beast", "-- prowl")
+    spawns.set_script_source(session, "hog", "-- graze")
+    spawns.set_rules(session, [
+        {"from_round": 5, "every_rounds": 5, "up_to": 2, "max_alive": 3,
+         "name_prefix": "Beast",
+         "template": {"entity_type": "individual",
+                      "stats": {"ATTACK": 2}, "holdings": {"HITS": 5},
+                      "script_setting": "beast"}},
+        {"from_round": 3, "every_rounds": 3, "up_to": 1, "max_alive": 2,
+         "name_prefix": "Hog",
+         "template": {"entity_type": "individual",
+                      "stats": {"ATTACK": 4}, "holdings": {"HITS": 12},
+                      "script_setting": "hog"}},
+    ])
+    session.commit()
+    assert spawns.apply_on_round(session, 2) == []
+    # round 3: only the hog program is due
+    born3 = spawns.apply_on_round(session, 3)
+    assert [b["name"] for b in born3] == ["Hog I"]
+    # round 5: the beast wakes; the hog's next cadence tick is 6
+    born5 = spawns.apply_on_round(session, 5)
+    assert [b["name"] for b in born5] == ["Beast I", "Beast II"]
+    # round 6: the hog tops up toward its own cap
+    born6 = spawns.apply_on_round(session, 6)
+    assert [b["name"] for b in born6] == ["Hog II"]
+    # caps are per-program: round 10 beasts sit at max_alive 3 -- wait,
+    # 2 born + cap 3 = one more
+    born10 = spawns.apply_on_round(session, 10)
+    assert [b["name"] for b in born10] == ["Beast III"]
+    hog = session.execute(
+        select(Entity).where(Entity.name == "Hog I")).scalar_one()
+    assert combat.get_stats(session, hog.id) == {"ATTACK": Decimal("4")}
 
 
 def test_a_kill_in_a_tick_emits_the_death_event(session):

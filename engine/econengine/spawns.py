@@ -43,9 +43,17 @@ def set_rules(session: Session, rules: dict) -> None:
         row.value = rules
 
 
-def get_rules(session: Session) -> dict | None:
+def get_rules(session: Session) -> dict | list | None:
+    """The declared spawn program(s): a dict (one program, the original
+    shape) or a list (P5: the pack and the boars). Copied on read --
+    callers may mutate without leaking into the world setting."""
     row = session.get(WorldSetting, SPAWN_RULES_KEY)
-    return dict(row.value) if row is not None else None
+    if row is None:
+        return None
+    value = row.value
+    if isinstance(value, list):
+        return [dict(program) for program in value]
+    return dict(value)
 
 
 def set_script_source(session: Session, key: str, source: str) -> None:
@@ -139,12 +147,7 @@ def spawn_one(session: Session, name: str, template: dict) -> Entity:
     return entity
 
 
-def apply_on_round(session: Session, round_no: int) -> list[dict]:
-    """The clock's call after round ``round_no`` committed: spawn what
-    the rules call for. Returns one spawn record per creature born."""
-    rules = get_rules(session)
-    if not rules:
-        return []
+def _apply_program(session: Session, rules: dict, round_no: int) -> list[dict]:
     if round_no < int(rules.get("from_round", 1)):
         return []
     if (round_no - int(rules.get("from_round", 1))) \
@@ -168,6 +171,26 @@ def apply_on_round(session: Session, round_no: int) -> list[dict]:
                      "place": (creature.place.key if creature.place else None)})
     if born:
         session.flush()
+    return born
+
+
+def apply_on_round(session: Session, round_no: int) -> list[dict]:
+    """The clock's call after round ``round_no`` committed: spawn what
+    the rules call for. Returns one spawn record per creature born.
+
+    The rules may be ONE program (a dict, the original shape: a world
+    with a single menace) or a LIST of programs (P5: the pack and the
+    boars are separate programs with separate cadences, lairs and
+    templates -- the world declares its fauna, the engine runs each
+    program by its own clock).
+    """
+    rules = get_rules(session)
+    if not rules:
+        return []
+    programs = rules if isinstance(rules, list) else [rules]
+    born: list[dict] = []
+    for program in programs:
+        born.extend(_apply_program(session, program, round_no))
     return born
 
 

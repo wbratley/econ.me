@@ -2,7 +2,9 @@
 
 Written 2026-09-06 after run 33 (breaker A/B closed, drain cap shipped as PR
 #174) and the fire-notes review. Status: P1 SHIPPED (pure commons), P2
-SHIPPED (torches + conditions register), P3 (water) next. One phase = one
+SHIPPED (torches + conditions register), P5 SHIPPED (the larder —
+reordered ahead of P3/P4 by the user: runs 26–35 ALL died on the income
+wall, so relief came first), P3 (water) next. One phase = one
 PR = one run; every phase re-asserts
 the three balance policies (do-nothing dies <2 rounds; starter survives
 indefinitely; tooled policies accumulate surplus).
@@ -107,7 +109,40 @@ on a sleeper INTERRUPTS it (wolves counter sleep). The existing idle BED
 becomes real: shelter+bed = faster full recovery. Can't sleep, keep the
 fire, and stand watch at once — three roles, one night.
 
-## P5 — The larder (RELIEF; attacks the income wall)
+## P5 — The larder (RELIEF; attacks the income wall) — SHIPPED
+
+Shipped as the `larder` PR (reordered ahead of P3/P4 by the user
+2026-09-12: ten straight runs died on the income wall — the census
+verdict on run 35 sealed it). Shape (numbers PROVISIONAL — rebalance
+with run data, the point of the run):
+
+- APPLES: orchard branch on BOTH gather tables (bare 25% x3, bag 30%
+  x6); keeps a day and a half (decay 0.08); EAT_APPLES 1½ -> 2.8
+  satiety (~5h fed). Bare food income ~3.5 satiety-equivalent/hour
+  (+47%), bag ~7.1 — the wall breaks on income, and the shelf makes
+  surplus bankable.
+- CHICKENS & EGGS: CHICKEN live good (durable, max_holding 4 — the
+  pen's worth); post SELLS hens (2 on the shelf, ask 4.00) and BUYS
+  eggs (1.20) and apples (0.80). MAKE_PEN (1 LABOR + 3 WOOD, 2h,
+  camp); COLLECT_EGGS (1 LABOR, needs the pen) scales with the flock
+  — 1 EGG per hen held at completion, cap 4, one hour serves the
+  whole flock. First income that arrives while you sleep; a hen
+  returns her price in four eggs. Engine surfaces: recipe
+  `scales_with` knob (outputs x min(cap, floor(held)) at completion,
+  honest in the catalog) and spawns.rules as a LIST of programs.
+- WILD BOARS: second spawn program (from day 3, every 3rd day, up to
+  2 alive) at the THICKET — dangerous PREY, not predator: ATK 4 /
+  DEF 2 / 12 HITS, born carrying its carcass (6 MEAT + 2 PELT -> ~9
+  meat for the kill), retaliates and remembers its foe (boar.lua);
+  never walks to the fire-ground. Night-only combat makes it a
+  torchlit errand with real death risk.
+- BOW: flint+2 wood+yarn, 3h; HUNT_BOW is the best day table (EV 3.45
+  vs spear 2.85) with nothing hunting back; +3 ATK in any fight.
+- Fold-ins: wolf dusk departure is now a FINISH-in-light gate
+  (hour + road < 20 — run 35's packs died stranded mid-road);
+  starter eats apples; post quotes hens/eggs/apples/pelts for real.
+
+Original sketch (kept for the record):
 
 - APPLES: orchard/thicket branch; keeps mid-shelf (between berries and
   jerky).
@@ -128,7 +163,9 @@ cap. A whole run's story of its own.
 
 Runs 26–33 died on the INCOME wall, so every pressure phase ships its
 relief in the same PR, and ordering alternates relief/pressure:
-P1 relief -> P2 mixed -> P3 mixed -> P4 pressure -> P5 relief.
+P1 relief -> P2 mixed -> P3 mixed -> P4 pressure -> P5 relief. The
+user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
+(one variable per run: the larder IS the variable).
 
 ## Decisions log
 
@@ -164,3 +201,20 @@ P1 relief -> P2 mixed -> P3 mixed -> P4 pressure -> P5 relief.
 - Run 34 (drain-cap validation): superseded by default — the cap is ON in
   main and rides whichever run goes next (P1 + P2 = run 35 by content
   count, numbered whatever it lands as).
+- P5 reorder (user, 2026-09-12): larder BEFORE water/sleep — "every run
+  dies on the income wall; relief first". P3/P4 wait their turn; the
+  alternation doctrine survives with a user amendment on record.
+- P5 numbers provisional (user, 2026-09-12): "compact and go, cam can
+  always rebalance later once we have more data" — the numbers above
+  are first guesses; run 36's census is the tuning pass.
+- scales_with semantics (P5, engine): factor = min(cap,
+  floor(held at COMPLETION)) — no start-snapshot; selling hens
+  mid-process shrinks the day's laying (honest); refuse at 0 held
+  (good_requirements gates the start); the catalog renders the scaled
+  row honestly (per-hen output, cap).
+- Boar placement (P5): THICKET, not FOREST — the boar hunt never crosses
+  wolf range ("better odds without wolf exposure" honored); wolves keep
+  the forest and the raids, boars keep the thicket.
+- PELT renamed to "Pelt" (P5): boars wear a double pelt too; the post's
+  3.00 bid now stands behind real orders (it was a reference price
+  only before).

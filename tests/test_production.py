@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 
 from econengine.markets import InsufficientHoldingsError, adjust_holding, get_holding
 from econengine.models import (
-    Base, EntityType, ProcessStatus, Transaction, TransactionType,
+    Base, EntityType, Process, ProcessStatus, Transaction, TransactionType,
 )
 from econengine.production import (
     cancel_process,
     complete_processes,
     create_recipe,
+    credited_outputs,
     get_recipe,
     next_tick_number,
     start_process,
@@ -447,3 +448,100 @@ def test_holding_cap_clips_positive_credits(session):
     with pytest.raises(ValueError, match="fights the cap"):
         create_good(session, "RATION", auto_issue_quantity=Decimal("2"),
                     max_holding=Decimal("1"))
+
+
+# --- scales_with (P5, pastoral capital) -------------------------------------
+
+@pytest.fixture
+def herd(session):
+    """A henkeeper with a flock and a scaled laying recipe: 1 EGG per
+    HEN held at completion, capped at 3 -- the pastoral shape."""
+    from econengine.goods import create_good
+    create_good(session, "HEN")
+    create_good(session, "EGG", decay_per_tick=Decimal("0.05"))
+    keeper = create_entity(session, "Keeper", EntityType.INDIVIDUAL)
+    adjust_holding(session, keeper, "HEN", Decimal("4"))
+    recipe = create_recipe(
+        session, "LAY", inputs={"EGG_LABOR": Decimal("1")},
+        outputs={"EGG": Decimal("1")}, duration_ticks=1,
+        good_requirements={"HEN": Decimal("1")},
+        scales_with={"HEN": 3},
+    )
+    # the labor input needs the good to exist and be held
+    from econengine.goods import create_good as _cg
+    _cg(session, "EGG_LABOR")
+    adjust_holding(session, keeper, "EGG_LABOR", Decimal("5"))
+    return session, keeper, recipe
+
+
+def test_scales_with_validation_rejects_drift(session):
+    # exactly one symbol
+    with pytest.raises(ValueError, match="exactly one symbol"):
+        create_recipe(session, "X1", inputs={}, outputs={"Y": Decimal("1")},
+                      duration_ticks=1, good_requirements={"A": Decimal("1")},
+                      scales_with={"A": 2, "B": 2})
+    # cap >= 1
+    with pytest.raises(ValueError, match="cap"):
+        create_recipe(session, "X2", inputs={}, outputs={"Y": Decimal("1")},
+                      duration_ticks=1, good_requirements={"A": Decimal("1")},
+                      scales_with={"A": 0})
+    # the symbol must also be a good requirement (refuse-at-zero comes
+    # from that gate, not a second mechanism)
+    with pytest.raises(ValueError, match="good_requirement"):
+        create_recipe(session, "X3", inputs={}, outputs={"Y": Decimal("1")},
+                      duration_ticks=1, scales_with={"A": 2})
+
+
+def test_scaled_output_credits_one_per_hen_held(herd):
+    session, keeper, recipe = herd
+    process = start_process(session, keeper, "LAY")
+    complete_processes(session, tick_number=2)
+    # 4 held, cap 3: the flock serves three eggs
+    assert get_holding(session, keeper.id, "EGG").quantity == Decimal("3")
+    assert process.scale_factor == Decimal("3")
+    assert credited_outputs(process) == {"EGG": "3.0000"}
+
+
+def test_scaled_output_below_the_cap_is_the_flock(herd):
+    session, keeper, recipe = herd
+    adjust_holding(session, keeper, "HEN", Decimal("-3"))  # one hen left
+    start_process(session, keeper, "LAY")
+    complete_processes(session, tick_number=2)
+    assert get_holding(session, keeper.id, "EGG").quantity == Decimal("1")
+
+
+def test_scaled_recipe_refuses_a_sold_out_flock(herd):
+    session, keeper, recipe = herd
+    adjust_holding(session, keeper, "HEN", Decimal("-4"))
+    with pytest.raises(InsufficientHoldingsError, match="HEN"):
+        start_process(session, keeper, "LAY")
+
+
+def test_selling_the_herd_mid_process_shrinks_the_harvest(herd):
+    """The factor reads holdings at COMPLETION, not a start snapshot:
+    hens sold while the harvest runs are gone when it lands -- the
+    honest pastoral economy (no phantom eggs from a dispersed flock)."""
+    session, keeper, recipe = herd
+    process = start_process(session, keeper, "LAY")
+    adjust_holding(session, keeper, "HEN", Decimal("-3"))  # sold 3 of 4
+    complete_processes(session, tick_number=2)
+    # factor 1 is the trivial default: stored as NULL, read as 1
+    assert process.scale_factor is None
+    assert get_holding(session, keeper.id, "EGG").quantity == Decimal("1")
+    assert credited_outputs(process) == {"EGG": "1.0000"}
+
+
+def test_unscaled_recipes_stamp_no_factor(herd):
+    """Unscaled completions leave scale_factor NULL and credit the row
+    verbatim -- NULL reads as 1 everywhere (credited_outputs, events)."""
+    session, keeper, recipe = herd
+    start_process(session, keeper, "LAY")
+    complete_processes(session, tick_number=2)
+    plain = create_recipe(
+        session, "TAKE", inputs={}, outputs={"EGG": Decimal("1")},
+        duration_ticks=0)
+    adjust_holding(session, keeper, "EGG", Decimal("-3"))  # empty the basket
+    process = start_process(session, keeper, "TAKE")
+    assert process.scale_factor is None
+    assert credited_outputs(process) == {"EGG": "1.0000"}
+    assert get_holding(session, keeper.id, "EGG").quantity == Decimal("1")

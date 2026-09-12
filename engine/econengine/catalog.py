@@ -87,6 +87,8 @@ def good_effect(good: Good, needs_by_condition: dict[str, list[Need]]) -> str | 
             parts.append("daylight only (hours 06..19; night issues nothing)")
     if good.incapacitates_at is not None:
         parts.append(f"incapacitates at {_num(good.incapacitates_at)}")
+    if good.max_holding is not None:
+        parts.append(f"a body holds at most {_num(good.max_holding)}")
     return "; ".join(parts) or None
 
 
@@ -152,6 +154,12 @@ def recipe_effects(recipe: Recipe) -> list[str]:
             lines.append(f"requires the {req.technology.code} technology ({scope}-scoped)")
     for r in recipe.good_requirements:
         lines.append(f"holds ≥ {_num(r.quantity)} {r.symbol} to run (reserved, not consumed)")
+    if recipe.scales_with:
+        for sym, cap in recipe.scales_with.items():
+            lines.append(
+                f"outputs × min({_num(cap)}, {sym} held) at completion "
+                f"(the row scales with the {sym} you hold when it finishes)"
+            )
     return lines
 
 
