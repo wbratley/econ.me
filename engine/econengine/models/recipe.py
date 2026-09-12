@@ -69,6 +69,12 @@ class Recipe(Base):
     # dict -- a fire built by MAKE_FIRE must burn like the standing one.
     # access is NOT settable here (builds_facility_access owns it).
     builds_facility_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # condition register gate (P2): names of register conditions (see
+    # statuses.py) that must be ACTIVE on the crafter at start -- all of
+    # them, checked like any other gate. NULL = ungated (all of history).
+    # This is how conditions activate or refuse actions: CHAIN_TORCH
+    # wants EMBER (a flame, or the ember of one just dead).
+    requires_conditions: Mapped[list | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

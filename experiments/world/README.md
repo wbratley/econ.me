@@ -192,7 +192,20 @@ refuses), so frozen-to-warm is one seated hour and there is no banking
 warmth against the winter any more; `world.lit_fires(place)` is the
 beacon read for scripts (and wolves). Shelter + clothes cover every
 mild day for free; nights still draw 3 an hour, so dusk wants a seat
-at a lit fire and a log in the bank. MEAT rots
+at a lit fire and a log in the bank.
+**Torches are the night road** (P2): the same commons fire that warms
+you lights your brands. A brand is a carried burning state — MAKE_TORCH
+(1 WOOD + 1 YARN, daylight), LIGHT_TORCH at any lit fire (free,
+instant), CHAIN_TORCH off your own flame or its dying ember (a two-
+tick window, anywhere). It burns down half its flame an hour (a fresh
+brand ~2h, a carry of two ~3h, clip-capped at two), and while it burns
+the **conditions register** says LIT: the dark road opens (night travel
+refuses the flameless; a route whose flame dies mid-road waits two
+ticks for a relight, then strands), a wolf at your door thinks twice
+(deterrence reads LIT beside WARMTH) — and every pack in the dark hears
+you walk (torchlit departures are LOUD, like speech: `world.who_is_loud()`
+is the graded read wolves aim at). Wolves carry no torches: their raid
+walks at dusk and is home by daybreak. MEAT rots
 (0.30/hour) and eating it raw is a 25%-per-meal DISEASE lottery —
 cooking is the commons fire away. Capital goods are the escape: SPEAR /
 BAG / TRAP improve the hunt and the gather, CLOTHES / SHELTER / BED

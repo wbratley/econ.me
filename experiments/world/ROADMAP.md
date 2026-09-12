@@ -2,7 +2,8 @@
 
 Written 2026-09-06 after run 33 (breaker A/B closed, drain cap shipped as PR
 #174) and the fire-notes review. Status: P1 SHIPPED (pure commons), P2
-(torches) next. One phase = one PR = one run; every phase re-asserts
+SHIPPED (torches + conditions register), P3 (water) next. One phase = one
+PR = one run; every phase re-asserts
 the three balance policies (do-nothing dies <2 rounds; starter survives
 indefinitely; tooled policies accumulate surplus).
 
@@ -66,12 +67,28 @@ of the commons (free-riders, fire dies at 02:00)? Either is a good run.
 Rough math: a night is ~3 fuel for ONE shared fire vs 4 houses x ~3 wood
 banked each today — the sharing dividend funds traps/spears/trade.
 
-## P2 — Night kit: torches (MIXED)
+## P2 — Night kit: torches (MIXED) — SHIPPED
 
-TORCH (1 WOOD + 1 YARN, craft ~2). Night travel consumes 1 torch per hop —
-the dark road refuses you otherwise (travel-recipe input gate). Held torch
-= +deterrence (a lit brand) but visible/loud at night — travelling lit
-tells every listening pack where you are.
+Shipped shape (drifted from the sketch below, deliberately — see the
+decisions log): the torch is a CARRIED BURNING STATE, not a per-hop
+recipe cost; the night gate is AMBIENT (travel.rules), not a travel-
+recipe input; and the new substrate is the conditions register
+(statuses.py): the pack declares LIT / EMBER / LOUD under
+`conditions.rules`, every reader (gate, deterrence, ctx.entity.conditions,
+world.who_is_loud()) speaks those names. Kit: MAKE_TORCH (1 WOOD +
+1 YARN, daylight) / LIGHT_TORCH (any lit fire, free) / CHAIN_TORCH (own
+flame or its two-tick ember, anywhere). Decay proportional (half the
+flame an hour; fresh brand ~2h, carry of two ~3h, carry cap 2). Torchlit
+night departures + speech are LOUD (graded; wolves aim at it); a flame
+dying mid-road halts the route for a relight window (2 ticks), then
+strands. Wolves carry no torches: dusk raid walk, hold when caught out,
+home by daybreak. Starter travels by day only.
+
+Original sketch (kept for the record): TORCH (1 WOOD + 1 YARN, craft
+~2). Night travel consumes 1 torch per hop — the dark road refuses you
+otherwise (travel-recipe input gate). Held torch = +deterrence (a lit
+brand) but visible/loud at night — travelling lit tells every listening
+pack where you are.
 
 ## P3 — Water (MIXED)
 
@@ -127,6 +144,23 @@ P1 relief -> P2 mixed -> P3 mixed -> P4 pressure -> P5 relief.
   anyone sits, fire capacity 4, COOK/SMOKE ride the same fire (day cook,
   night warm — capacity is seats, so day and night never contend).
 - Sleep impairment: stat penalties (lean, decide at P4).
+- Torch shape (P2, user 2026-09-10): a carried burning state, NOT a
+  recipe cost — "more like just another condition, but an ambient one".
+  Hence the conditions register (statuses.py) as the read layer: named
+  derivations (holding floors / lit-window / loud-window), pack-declared,
+  engine-derived; future derivations (P4 FATIGUE from need state, injury
+  rows) extend it without touching readers.
+- Loud doctrine (P2): pull-query, not witness delivery — `loud: true`
+  markers on applied says + torchlit night departures; readers scan
+  (world.who_is_loud() / carriers("LOUD")); the witness frozenset stays
+  untouched. v1 is world-wide broadcast; distance rules are a later seam.
+- Ember semantics (P2, engine): stamped post-decay every tick LIT holds;
+  EMBER = LIT now OR lit within 2 ticks (a burning brand strikes its own
+  successor — no waiting for a tick boundary); strictly no deterrence
+  through the window (LIT only); relight window 2 ticks then strand.
+- LIT floor arithmetic (P2): decay is PROPORTIONAL — floor 0.25 of a
+  brand with rate 0.5/h gives ~2 lit hours a fresh brand, ~3 for a full
+  carry of two; the carry cap clips at 2 (clip-never-refuse).
 - Run 34 (drain-cap validation): superseded by default — the cap is ON in
-  main and rides whichever run goes next (P1 = run 35 by content count,
-  numbered whatever it lands as).
+  main and rides whichever run goes next (P1 + P2 = run 35 by content
+  count, numbered whatever it lands as).

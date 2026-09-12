@@ -100,6 +100,7 @@ def create_recipe(
     facility_fuel_output: Decimal | None = None,
     requires_facility_lit: bool = False,
     requires_daylight: bool = False,
+    requires_conditions: list | None = None,
     requires_place_kind: str | None = None,
     requires_place_key: str | None = None,
 ) -> Recipe:
@@ -206,6 +207,7 @@ def create_recipe(
         facility_fuel_output=facility_fuel_output,
         requires_facility_lit=requires_facility_lit,
         requires_daylight=requires_daylight,
+        requires_conditions=[str(c) for c in requires_conditions] if requires_conditions else None,
         requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
         inputs=rows(RecipeInput, inputs),
@@ -284,6 +286,19 @@ def start_process(
                 f"too dark for {recipe.code} (hour {hour:02d}, night — "
                 f"daylight is hours {clock.DAY_START_HOUR:02d}.."
                 f"{clock.DAY_END_HOUR - 1:02d})"
+            )
+    if recipe.requires_conditions:
+        # the register's start-gate (P2): every named condition must be
+        # ACTIVE on the crafter -- how conditions activate or refuse
+        # actions (CHAIN_TORCH wants EMBER: a flame, or the ember of one)
+        from . import statuses
+        tick = next_tick_number(session)
+        active = statuses.active_conditions(session, entity, tick)
+        missing = [c for c in recipe.requires_conditions if c not in active]
+        if missing:
+            raise ValueError(
+                f"{recipe.code} wants {', '.join(recipe.requires_conditions)} "
+                f"({', '.join(missing)} is dark on you)"
             )
     if recipe.requires_place_kind or recipe.requires_place_key:
         # The S2 presence gate (docs/spatial.md §6): where the entity

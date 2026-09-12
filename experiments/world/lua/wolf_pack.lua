@@ -13,10 +13,11 @@
 -- The pack RANGES (run 26's census: denned wolves whose houses slept
 -- out of reach starved -- the map made sit-and-wait a death sentence).
 -- By day it works the forest game (HUNT, the same table the houses
--- hunt); by night, a hungry pack walks: three hours of road to the
--- fire-ground where the people sleep, and home again by dawn. Players
--- are not the pack's only food -- the forest feeds it -- they are the
--- rich exception a hungry night goes looking for.
+-- hunt); in the last daylight a hungry pack walks the hours of road
+-- to the fire-ground where the people sleep, and is home by morning
+-- -- wolves carry no torch, so the raid walks in light, not dark.
+-- Players are not the pack's only food -- the forest feeds it -- they
+-- are the rich exception a hungry night goes looking for.
 --
 -- The program never fights fire: a lit hearth turns a pack at the door
 -- (combat rules do that). It attacks what it can find up close, eats
@@ -26,13 +27,21 @@ local S = ctx.state
 
 local home  = "FOREST"   -- the range: dens and the day's game
 local prowl = "HEARTH"   -- the raid: where the people sleep
+-- The raid road's length in hours (nil-safe: no road, a local pace).
+-- Wolves carry no flame (P2: the dark road wants LIT, and the pack
+-- owns none) -- so the raid WALK happens in the last daylight: out
+-- at dusk, in with the last light, home by morning.
+local walk_ahead = world.distance_ticks(home, prowl) or 2
+local dusk       = 20 - walk_ahead - 1   -- depart so arrival keeps the light
 
 local hunger  = std.holding_qty("HUNGER")
 local satiety = std.holding_qty("SATIETY")
 local meat    = std.holding_qty("MEAT")
 local warmth  = std.holding_qty("WARMTH")
 
--- Ears: tonight's says name tonight's prey. Remember the loudest;
+-- Ears: tonight's says -- and every torchlit walker -- name tonight's
+-- prey (P2: LOUD is the register's read, world.who_is_loud(); a brand
+-- in the dark is heard like a shout). Remember the loudest;
 -- the memory fades at dawn. A target that cannot be fought (the
 -- refused attacks in the feed) is dropped -- a corpse is not prey.
 if std.is_night() then
@@ -46,6 +55,12 @@ if std.is_night() then
        and e.status == "rejected" then
       S.prey = nil
       S.night_says = {}
+    end
+  end
+  for _, w in ipairs(world.who_is_loud()) do
+    if w.entity_id ~= ctx.entity.id then
+      S.night_says[w.entity_id] = (S.night_says[w.entity_id] or 0)
+                                    + (w.strength or 1)
     end
   end
   local best, best_n = nil, -1
@@ -62,10 +77,11 @@ end
 
 -- The hunt: by dark, the loud (a starving pack prowls blind -- the
 -- bite is up close now, and the map made sure of it); by day, the
--- same game the houses hunt. Hunger moves the pack between them: the
--- raid walk is hours of night road, so the walk IS the prowl -- a
--- refused bite and a journey may share the tick (the road takes
--- hours; a bounced intent costs nothing).
+-- same game the houses hunt. The pack does not walk by night (the
+-- dark road refuses the flameless): caught out after dark it HOLDS
+-- where it stands and bites what comes near. The raid walk is a
+-- dusk matter -- see walk_ahead above; a bounced intent costs
+-- nothing.
 if std.is_night() then
   if hunger > 3 then
     if S.prey then
@@ -73,16 +89,17 @@ if std.is_night() then
     elseif hunger > 8 then
       ctx.action.attack(nil)
     end
-    if ctx.entity.place ~= prowl then
-      ctx.action.travel(prowl)
-    end
   end
+  -- caught out after dark: hold. The road home is a day matter.
 else
   -- day: the pack works its range. The game is in the forest and the
   -- dens are there; a fed wolf still walks home -- the fire-ground
   -- by day is a bad bed, and the range keeps being a range by being
-  -- walked.
-  if ctx.entity.place ~= home then
+  -- walked. In the last daylight a hungry pack walks OUT: dusk is
+  -- when the raid road is still open (it closes at dark).
+  if std.hour() >= dusk and hunger > 3 and ctx.entity.place ~= prowl then
+    ctx.action.travel(prowl)
+  elseif ctx.entity.place ~= home then
     ctx.action.travel(home)
   elseif hunger > 2 and not std.running_recipe("HUNT") then
     ctx.action.start_process("HUNT")

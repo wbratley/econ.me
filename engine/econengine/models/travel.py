@@ -10,6 +10,7 @@ class TravelRouteStatus(enum.Enum):
     ACTIVE = "active"      # a hop is in flight (or about to be chained)
     ARRIVED = "arrived"    # the final hop completed; the entity stands at destination
     STRANDED = "stranded"  # stopped short: cancelled, failed, or the next hop refused
+    WAITING_LIGHT = "waiting_light"  # P2: the next hop wants a flame the traveller lacks -- ember window open
 
 
 class TravelRoute(Base):
@@ -48,6 +49,10 @@ class TravelRoute(Base):
     current_process_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("processes.id"), nullable=True
     )
+    # WAITING_LIGHT bookkeeping (P2): the tick the next hop was first
+    # refused for want of a flame. NULL = not waiting. The route resumes
+    # on a relight or dawn, strands after travel.rules' relight window.
+    waiting_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

@@ -46,6 +46,10 @@ class Entity(Base):
     # tick any more than it can change its body). NULL means the entity
     # predates age-tracking; ``ctx.query.age()`` reads nil for it.
     birth_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The register's memory (P2): the last tick this entity satisfied a
+    # light-holding condition (a burning torch). NULL = never lit. The
+    # ember window derivation reads it; nothing else may write it.
+    last_lit_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Provenance -- the parents of this entity (Step 6c, docs/actors.md).
     # A generic list of entity ids stamped once by ``spawn_entity`` and
     # never mutated: lineage must be authoritative for inheritance

@@ -1222,27 +1222,29 @@ def test_wolves_live_off_the_land(session):
 
 
 def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
-    """The range (run 26's census): a denned wolf that cannot reach prey
-    no longer waits to starve -- by night a hungry pack travels toward
-    the hearth (the raid walk), and by day it works its way home to the
-    forest (the game). The applied travel intents carry the itinerary."""
+    """The range (run 26's census, P2's dusk): a denned wolf that cannot
+    reach prey no longer waits to starve -- in the LAST daylight a
+    hungry pack travels toward the hearth (the raid walk, arrived with
+    the light: wolves carry no torch, so the dark road is not theirs to
+    walk), and by day it works its way home to the forest (the game).
+    The applied travel intents carry the itinerary."""
     from econengine import clock
     create_content(session)
     wolf = next(e for e in session.execute(select(Entity)).scalars()
                 if e.name.startswith("Wolf Pack"))
     assert wolf.place.key == "FOREST"
-    # hungry and dark: the raid walk begins (no prey named, no bite yet)
+    # hungry (an empty stomach keeps granting HUNGER): the raid walk
+    # begins at dusk -- three hours of road, walked while the light lasts
     markets.adjust_holding(session, wolf, "HUNGER", Decimal("4"))
     markets.adjust_holding(session, wolf, "SATIETY", Decimal("0"))
-    while not clock.is_night(production.next_tick_number(session)):
+    while clock.hour_of(production.next_tick_number(session)) < 16:
         run_tick(session); session.commit()
-    run_tick(session); session.commit()
-    # through the night and past dawn: home again by day
-    for _ in range(14):
+    # dusk falls: out to the hearth, a night of prowling, home by day
+    for _ in range(24):
         run_tick(session); session.commit()
     walks = [e["to"] for e in _events(session, "travel")
              if e["entity_id"] == wolf.id and e["status"] == "applied"]
-    assert "HEARTH" in walks               # the night raid walk
+    assert "HEARTH" in walks               # the dusk raid walk
     assert "FOREST" in walks                # and home again by day
 
 
@@ -1264,3 +1266,80 @@ def test_starter_floor_survives_the_wolves(session):
     session.commit()
     _run(session, 48)                               # two full days
     assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+
+
+def test_the_torch_chain_make_light_and_chain_off_the_ember(session):
+    """P2, the night kit: a brand is made by daylight labor (1 WOOD +
+    1 YARN), lit at the commons fire, chained off your own flame, and
+    -- once -- off the dying ember of the last (the register's two-tick
+    window after a burnout; after that the dark is the dark)."""
+    create_content(session)
+    seat = _seat(session, "Torchbearer")
+    assert seat.place.key == "HEARTH"
+    _run(session, 6)                                # hour 06: daylight
+    # make: the day's craft is the night's road (daylight-gated)
+    markets.adjust_holding(session, seat, "LABOR", Decimal("1"))
+    markets.adjust_holding(session, seat, "WOOD", Decimal("2"))
+    markets.adjust_holding(session, seat, "YARN", Decimal("1"))
+    production.start_process(session, seat, "MAKE_TORCH")
+    _run(session, 3)
+    assert _hold(session, seat.id, "TORCH") == Decimal("1")
+    assert _hold(session, seat.id, "LIT_TORCH") == Decimal("0")
+    # light: the commons fire (stoked -- it has been burning since tick 1)
+    production.start_process(session, seat, "STOKE_FIRE")
+    production.start_process(session, seat, "LIGHT_TORCH")
+    assert _hold(session, seat.id, "TORCH") == Decimal("0")
+    assert _hold(session, seat.id, "LIT_TORCH") == Decimal("1")
+    # chain off your own flame: anywhere, instant
+    markets.adjust_holding(session, seat, "TORCH", Decimal("1"))
+    production.start_process(session, seat, "CHAIN_TORCH")
+    assert _hold(session, seat.id, "LIT_TORCH") >= Decimal("1.5")  # the cap: 2
+    # the flame burns out mid-road: the ember still strikes, once
+    _run(session, 1)                                # stamps the last lit tick
+    markets.adjust_holding(
+        session, seat, "LIT_TORCH", -_hold(session, seat.id, "LIT_TORCH"))
+    assert _hold(session, seat.id, "LIT_TORCH") == Decimal("0")
+    markets.adjust_holding(session, seat, "TORCH", Decimal("1"))
+    production.start_process(session, seat, "CHAIN_TORCH")
+    assert _hold(session, seat.id, "LIT_TORCH") == Decimal("1")
+    # ...but the window shuts: no LIT, no EMBER, no chaining
+    markets.adjust_holding(
+        session, seat, "LIT_TORCH", -_hold(session, seat.id, "LIT_TORCH"))
+    _run(session, 3)                                # past the two-tick grace
+    markets.adjust_holding(session, seat, "TORCH", Decimal("1"))
+    with pytest.raises(ValueError, match="EMBER"):
+        production.start_process(session, seat, "CHAIN_TORCH")
+
+
+def test_the_dark_road_wants_a_flame(session):
+    """P2, the ambient night gate: a bare-handed house cannot start the
+    road at night (a readable refusal naming LIT), and a burning torch
+    both opens the road and marks the departure loud -- every pack in
+    the dark hears the walker."""
+    from econengine.lua_engine import Intent
+    from econengine.scripting import resolve_intent
+
+    def _walk(to):
+        return resolve_intent(session, Intent(
+            entity_id=seat.id, intent_type="travel", params={"to": to},
+            resource_ids=[],
+        ))
+
+    create_content(session)
+    seat = _seat(session, "Walker")
+    _run(session, 20)                               # tick 20: dark falls
+    ev = _walk("THICKET")
+    assert ev["status"] == "rejected"
+    assert "LIT" in ev["reason"]
+    # a burning brand opens the road -- loudly
+    markets.adjust_holding(session, seat, "LIT_TORCH", Decimal("1"))
+    ev = _walk("THICKET")
+    assert ev["status"] == "applied"
+    assert ev.get("loud") is True
+    # and by daylight neither gate nor noise: a quiet road
+    _run(session, 10)                               # into the next day
+    markets.adjust_holding(
+        session, seat, "LIT_TORCH", -_hold(session, seat.id, "LIT_TORCH"))
+    ev = _walk("HEARTH")
+    assert ev["status"] == "applied"
+    assert ev.get("loud") is None

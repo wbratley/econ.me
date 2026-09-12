@@ -75,7 +75,11 @@ local low_fuel = #fires == 0
 for _, f in ipairs(fires) do
   if tonumber(f.fuel) <= 2 then low_fuel = true end
 end
-if low_fuel and wood >= 1 then
+-- P2: the dark road wants a burning torch, and the starter carries
+-- none -- so every walk is a DAYLIGHT act (a refused walk is a wasted
+-- tick; by dark you are either home or you hold where you stand).
+local can_walk = not std.is_night()
+if low_fuel and wood >= 1 and (place == home or can_walk) then
   if place ~= home then
     ctx.action.travel(home)
   else
@@ -87,7 +91,8 @@ end
 --     takes a seat while it burns (a dark fire warms no one -- feed it
 --     first). Night draws 3 warmth an hour; a body holds six.
 if (std.is_night() or warmth < 4) and #fires > 0
-   and not std.running_recipe("WARM_BY_FIRE") then
+   and not std.running_recipe("WARM_BY_FIRE")
+   and (place == home or can_walk) then
   if place ~= home then
     ctx.action.travel(home)
   else
@@ -96,12 +101,14 @@ if (std.is_night() or warmth < 4) and #fires > 0
 end
 
 -- 1b. Wolves are creatures that RANGE: by day the packs work the
---     forest game, by night a hungry one walks -- the fire-ground is
---     where the people sleep, so the dark's one law is simple: be
---     home, firelit. A lit hearth turns a pack at the door. What bit
---     you gets answered -- unarmed if it must (fists are one hit in
---     two; a spear in the rack is worth three). The floor never says
---     at night: speech carries to things that listen.
+--     forest game, and in the last daylight a hungry one walks the
+--     road to the fire-ground -- the people's clearing is where it
+--     prowls till dawn, so the dark's one law is simple: be home,
+--     firelit. A lit hearth -- or a burning torch -- turns a pack at
+--     the door. What bit you gets answered -- unarmed if it must
+--     (fists are one hit in two; a spear in the rack is worth three).
+--     The floor never says at night: speech carries to things that
+--     listen.
 local hits = std.holding_qty("HITS")
 if hits < 20 and std.is_night() then
   for _, e in ipairs(ctx.events or {}) do
@@ -137,7 +144,6 @@ if not std.is_night() then
     ctx.action.travel(home)
   end
 else
-  if place ~= home then
-    ctx.action.travel(home)
-  end
+  -- caught out after dark: HOLD (the dark road wants a torch, and
+  -- the floor carries none). The walk home is the first act of day.
 end

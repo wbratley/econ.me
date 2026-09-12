@@ -52,6 +52,7 @@ forms and they are NOT the same shape:
 | Field | Shape | Use |
 |---|---|---|
 | `ctx.entity.place` | key string (`"HEARTH"`) or `nil` | compare: `ctx.entity.place == "HEARTH"` |
+| `ctx.entity.conditions` | array of condition-name strings (`{"LIT", "EMBER"}`) | the conditions register's read of YOU, this tick — derived flags plus held condition-goods; gates and `carriers()` speak the same names |
 | `ctx.place` | facts table (`{key=, name=, kind=, region_id=, description=}`) or `nil` | read about where you stand |
 | `ctx.places` | array of facts tables (every place on the map) | browse the map |
 
@@ -174,6 +175,8 @@ to your own entity). Prefer the `std.*` wrappers for the common ones.
 | `route` | `(from_key, to_key, modes?)` | `{hops={{from,to,mode,cost_ticks}…}, total_ticks}` or nil |
 | `distance_ticks` | `(from_key, to_key, modes?)` | number or nil |
 | `public_facilities` | `(place_key?)` | array of PLACE-access facility rows (`facility_type`, `place`, `parcel_id`, `fuel`, `fuel_capacity`) — the commons register; stone_age's `world.lit_fires(place)` is the readable front |
+| `conditions` | `(entity_id)` | array of condition names the entity bears RIGHT NOW (the conditions register: derived flags like LIT/EMBER/LOUD plus held condition-goods) — same list as `ctx.entity.conditions` |
+| `carriers` | `(condition)` | array of `{entity_id, strength}` — who bears the named condition, graded (loud-family conditions carry act counts; others strength 1), deterministic by entity id |
 | `world_setting` | `(key)` | value or nil |
 | `fiscal_policy` | `()` | table or nil |
 | `constitution` | `()` | table or nil |
@@ -272,7 +275,10 @@ facts table), `world.route(from, to, modes?)`,
 `world.distance_ticks(from, to, modes?)`,
 `world.lit_fires(place?)` (P1: the burning public fires — rows as
 `public_facilities` — a beacon read from anywhere),
-`world.public_facilities(place?)`.
+`world.public_facilities(place?)`,
+`world.who_is_loud()` (P2: `carriers("LOUD")` — torchlit night walkers
+and speakers, graded by act count),
+`world.conditions_of(entity_id)`.
 The content pack's `pack`
 namespace is world opinion (concession rules, ask schedules) — read
 its source via `get_script_libraries`.
@@ -291,7 +297,8 @@ you). Common types and their payload keys:
 | `place_order` / `order_cancelled` | `params`, `order_id`, `status`, `reason` | |
 | `trade` | `market`, `side`, `price`, `quantity`, `cost`, `order_id`, `trade_id` | ONE event per side — a match prints twice |
 | `travel` | `params.to`, `status`, `reason` | `reason: "already at Berry thicket"` = you asked to go where you are |
-| `travel_departed` / `travel_arrived` | route facts | |
+| `travel_departed` / `travel_arrived` | route facts (`travel_departed` carries `loud: true` when a torchlit night hop sets out) | |
+| `travel_halted` / `travel_stranded` | `route_id`, `place`, `reason` | a route whose flame died mid-road: waiting for a relight (the two-tick window), then stranded where it stood |
 | `combat` | `entity_id` (attacker), `target_id`, `attack`, `defense`, `hit`, `damage`, `target_hits`, `killed`, `loot` | |
 | `entity_incapacitated` | `condition`, `quantity`, `threshold`, estate settlement | death; the estate record nests under `death` in the world feed |
 | `decay` | goods lost | per-tick rotting |
