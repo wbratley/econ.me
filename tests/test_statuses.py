@@ -288,3 +288,24 @@ def test_ember_counts_a_brand_burning_right_now(session):
     assert statuses.active_conditions(session, who, 1) == ["LIT", "EMBER"]
     _hold(session, who, "LIT_TORCH", -1)
     assert statuses.active_conditions(session, who, 1) == []
+
+
+def test_the_lua_query_seam_answers_conditions_and_carriers(session):
+    """Run 35's wolf crash: build_queries' conditions/carriers closures
+    referenced a name that did not exist in scope, NameError'd inside
+    _wrap_query, and world.who_is_loud() came back nil -- ipairs(nil)
+    killed every wolf script every night tick (244 script_errors, zero
+    wolf attacks, packs starved stranded). This is the seam: the query
+    DICT, exactly as the Lua ctx builds it, must answer by name."""
+    from econengine.scripting import build_queries
+
+    _rules(session)
+    who = _entity(session)
+    _hold(session, who, "LIT_TORCH", 1)
+    _persis_events(session, 4, [
+        {"type": "say", "entity_id": who.id, "text": "hello",
+         "status": "applied", "loud": True},
+    ])
+    q = build_queries(session, tick_number=5)
+    assert q["conditions"](who.id) == ["LIT", "EMBER", "LOUD"]
+    assert q["carriers"]("LOUD") == [{"entity_id": who.id, "strength": 1}]
