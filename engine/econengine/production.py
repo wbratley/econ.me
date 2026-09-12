@@ -57,7 +57,7 @@ checked at start like the tech gates; a parcel with bound running processes
 cannot change hands, so the binding stays valid through completion.
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -103,11 +103,19 @@ def create_recipe(
     requires_conditions: list | None = None,
     requires_place_kind: str | None = None,
     requires_place_key: str | None = None,
+    scales_with: dict | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
     order. A branch's outputs may be empty (total loss). Mutually exclusive
-    with plain outputs."""
+    with plain outputs.
+
+    scales_with (P5, pastoral capital) is {SYMBOL: cap}: outputs are
+    credited once per unit of SYMBOL held at completion, between 1 and
+    cap -- the harvest is priced by the herd. The symbol MUST also be a
+    good_requirement (present and reserved, never consumed), so a
+    landless collection is refused with the honest "requires 1 SYMBOL"
+    error before any labor burns. One entry max: one herd, one harvest."""
     existing = get_recipe(session, code)
     if existing is not None:
         raise ValueError(
@@ -195,6 +203,28 @@ def create_recipe(
             key: str(Decimal(value)) for key, value in builds_facility_config.items()
         }
 
+    # Pastoral scaling (P5): {SYMBOL: cap}, exactly one herd per recipe,
+    # and the herd must be a good_requirement -- present, reserved, never
+    # consumed -- so the refusal at zero held is the honest gate. JSON
+    # cannot carry Decimal: store the cap as a string, like every other
+    # numeric JSON knob.
+    if scales_with is not None:
+        if len(scales_with) != 1:
+            raise ValueError(
+                "scales_with declares exactly one symbol -- one herd, one harvest")
+        symbol, cap = next(iter(scales_with.items()))
+        symbol = str(symbol).upper()
+        cap = int(cap)
+        if cap < 1:
+            raise ValueError("scales_with cap must be >= 1")
+        required = Decimal(str((good_requirements or {}).get(symbol, 0)))
+        if required < 1:
+            raise ValueError(
+                f"scales_with symbol {symbol} must also be a good_requirement "
+                f"(hold >= 1 {symbol}) -- the herd is present, reserved, "
+                f"never consumed")
+        scales_with = {symbol: str(cap)}
+
     recipe = Recipe(
         code=code.upper(),
         name=name,
@@ -210,6 +240,7 @@ def create_recipe(
         requires_conditions=[str(c) for c in requires_conditions] if requires_conditions else None,
         requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
+        scales_with=scales_with,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
@@ -639,14 +670,18 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
 
 def credited_outputs(process: Process) -> dict:
     """The outputs a completion actually credited, symbol → str(quantity)
-    — the branch's when stochastic, else the plain set. The shared read
-    for process_completed events and travel arrivals (``carried``)."""
+    — the branch's when stochastic, else the plain set; each output scaled
+    by the factor the herd priced it at (processes.scale_factor, P5). The
+    shared read for process_completed events and travel arrivals
+    (``carried``)."""
     recipe = process.recipe
     if recipe.branches:
         outputs = recipe.branches[process.outcome_branch].outputs
     else:
         outputs = recipe.outputs
-    return {o.symbol: str(o.quantity) for o in outputs}
+    factor = process.scale_factor if process.scale_factor is not None else Decimal("1")
+    return {o.symbol: str((o.quantity * factor).quantize(_QUANTUM))
+            for o in outputs}
 
 
 def _completed_event(process: Process, granted: list) -> dict:
@@ -676,7 +711,8 @@ def _completed_event(process: Process, granted: list) -> dict:
     return event
 
 
-def _credit_output(session: Session, entity: Entity, item, reference: str) -> None:
+def _credit_output(session: Session, entity: Entity, item, reference: str,
+                   factor: Decimal = Decimal("1")) -> None:
     """Credit one recipe output. Goods adjust holdings; a symbol the
     world banks in (some Account is denominated in it) is money — the
     output credits the entity's account instead, creating it at zero if
@@ -691,13 +727,31 @@ def _credit_output(session: Session, entity: Entity, item, reference: str) -> No
         select(Account.id).where(Account.currency == item.symbol).limit(1)
     ).scalar_one_or_none()
     if banked is None:
-        adjust_holding(session, entity, item.symbol, item.quantity)
+        adjust_holding(session, entity, item.symbol,
+                       (item.quantity * factor).quantize(_QUANTUM))
         return
     account = next(
         (a for a in entity.accounts if a.currency == item.symbol), None)
     if account is None:
         account = services.create_account(session, entity, item.symbol)
-    services.deposit(session, account, item.quantity, reference)
+    services.deposit(session, account,
+                     (item.quantity * factor).quantize(_QUANTUM), reference)
+
+
+def _scale_factor(session: Session, process: Process) -> Decimal:
+    """The pastoral factor (P5): min(cap, floor(units of the scaling
+    symbol held at completion)). Reserved holdings count -- the herd is
+    present while its harvest runs. Called at completion only; the
+    applied factor is stored on the process row so credited_outputs
+    reports a fact, not a recomputation."""
+    recipe = process.recipe
+    if not recipe.scales_with:
+        return Decimal("1")
+    symbol, cap = next(iter(recipe.scales_with.items()))
+    holding = get_holding(session, process.entity_id, str(symbol))
+    held = holding.quantity if holding is not None else Decimal("0")
+    herd = held.quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    return max(Decimal("0"), min(Decimal(cap), herd))
 
 
 def _complete(session: Session, process: Process, seed: str) -> list:
@@ -713,8 +767,15 @@ def _complete(session: Session, process: Process, seed: str) -> list:
             process.outcome_roll, [b.weight for b in recipe.branches]
         )
         outputs = recipe.branches[process.outcome_branch].outputs
+    # the herd prices the harvest: scaled recipes credit each output once
+    # per unit held (floored at the cap) -- a fact of the completion, so
+    # it is stamped on the row the same tick it is applied
+    factor = _scale_factor(session, process)
+    if factor != 1:
+        process.scale_factor = factor
     for item in outputs:
-        _credit_output(session, process.entity, item, f"mint {recipe.code}")
+        _credit_output(session, process.entity, item, f"mint {recipe.code}",
+                       factor=factor)
     if recipe.builds_facility:
         parcels.add_facility(
             session, process.parcel, recipe.builds_facility,

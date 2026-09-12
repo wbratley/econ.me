@@ -105,10 +105,33 @@ ember, anywhere). Decay is proportional (half the flame an hour): a
 fresh brand burns ~2h, a full carry of two ~3h -- the dark road is
 an inventory and a cadence, not a fee. Wolves never carry torches:
 their raid walks at dusk, holds when caught out, and is home by
-daybreak; the starter travels by day only.
+daybreak (the departure gate is a FINISH-in-light gate: hour + road
+< 20, never a dark road -- run 35's packs died stranded mid-road);
+the starter travels by day only.
 
-Goods: MEAT, BERRIES, WOOD, YARN, FLINT (gathered/hunted), COOKED_MEAT,
-JERKY (smoked or bought), SPEAR, BAG, TRAP, CLOTHES, BED, TORCH /
+THE LARDER (P5, the relief of the income wall): ten runs of census
+said the famine was never storage -- every house starved with empty
+holdings. The wall breaks on the INCOME side, three rungs at once:
+the ORCHARD (apples on both gather tables: bare-handed food income
+rises ~47%, and a day-and-a-half shelf makes surplus worth
+banking); the PEN (hens are live capital: bought at the post, penned
+at camp, and COLLECT_EGGS scales with the flock -- one egg per hen,
+capped at four, one labor hour serves the whole flock; the first
+income that arrives while you sleep); and the BOW (the best day
+hunt, ranged, and +3 ATK in a fight). The fourth piece is the BOAR:
+dangerous prey at the thicket -- born carrying ~9 meat and a double
+pelt, tusk 4/hide 2, retaliates and remembers -- the guarded shelf
+of the larder, a torchlit night errand with real death risk. Engine
+surfaces new in P5: spawns.rules takes a LIST of programs (wolves
+and boars, separate cadences and lairs), and recipes scale with
+holdings (scales_with: outputs x min(cap, floor(held)) at
+completion; the honest catalog says so). Numbers are provisional --
+cam rebalances with run data.
+
+Goods: MEAT, BERRIES, APPLES, WOOD, YARN, FLINT (gathered/hunted),
+COOKED_MEAT,
+JERKY (smoked or bought), EGGS and CHICKEN (the larder: capital
+that lays), SPEAR, BAG, BOW, TRAP, CLOTHES, BED, TORCH /
 LIT_TORCH (the night kit), plus the flows
 WARMTH/SATIETY and the
 conditions HUNGER/EXPOSURE/DISEASE. Money is COIN — found, not endowed:
@@ -278,7 +301,9 @@ MEALS ARE DECISIONS: nothing is eaten for you. Meals are labor-free,
 instant and night-legal -- but they do not happen by themselves.
 The FOOD need drinks SATIETY at 0.5/hour plus a tenth of the stomach
 each hour (a day costs ~14), and only EAT recipes fill the stomach:
-EAT_BERRIES (1½ berries, ~3h), EAT_COOKED (~4h), EAT_JERKY (~5½h),
+EAT_BERRIES (1½ berries, ~3h), EAT_APPLES (1½ apples, ~5h -- they keep
+a day and a half), EAT_COOKED (~4h), EAT_EGGS (~4h, keeps near a
+week), EAT_JERKY (~5½h, never rots),
 EAT_RAW (~1h, one-in-four disease). A full larder feeds nobody until
 someone runs the recipe: starving beside one is a choice, and the
 clock will make it for you if you let it -- two meals a day is the
@@ -303,6 +328,14 @@ pelt and the meat it carried are yours. Combat is an action anyone may take: att
 you learn a wolf's id by hearing it hunt (combat is loud: every house
 hears every fight). The packs breed: from day 5, every fifth day, up
 to three more, never more than four alive.
+AND THE THICKET HAS A BOAR: dangerous prey, not a predator -- it never
+walks to where you sleep; it lives on the thicket you gather at, born
+carrying its own carcass (6 meat and a double pelt on the body, ~9
+meat for the kill -- the richest quarry in the world). Tusk 4 against
+hide 2: it hits 60% for 2 and it ANSWERS -- attack one and it fights
+back, remembering you while you share its ground. The bow's day hunt
+never meets a tusk; the spear duel is a coin toss that can kill you.
+Boars breed from day 3, every third day, never more than two alive.
 Speech is free by day. At night it has a price.
 
 A seated body is warm and a warm body (WARMTH >= 1) turns a wolf at
@@ -361,7 +394,9 @@ same.
    ember) when the road runs long. A burning torch turns a wolf at
    the door, too -- and tells every pack where you walk: a torchlit
    night journey is a loud fact.
-2. EAT what spoils first: berries within hours, cooked within a day;
+2. EAT what spoils first: berries within hours, APPLES within two
+   days (the gather's orchard branch -- the shelf between berries
+   and jerky), cooked within a day;
    JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
    hunger kills the careless before any tool matters.)
 3. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
@@ -371,18 +406,53 @@ same.
 4a. AXE (flint+wood+yarn, an afternoon): CHOP_WOOD = 3 certain logs an
    hour, six times the bare gather's wood -- the fire never wants again;
    and +2 ATK at the door, the half of a spear in a fist.
-5. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
+4b. BOW (flint+2 wood+yarn, an afternoon): the best DAY hunt (better
+   than the spear's table, nothing hunting you back) and +3 ATK in
+   any fight -- ranged capital that pays at the hunt and the door.
+5. HENS (see THE LARDER below): a pen and four hens is the best
+   food/labor in the world once the capital is paid -- income that
+   arrives while you sleep.
+6. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
-6. TRAPs: convert surplus WOOD+YARN into the best hunt table.
+7. TRAPs: convert surplus WOOD+YARN into the best hunt table.
 A tooled house gathers ~2.5 food per LABOR against a ~0.6/hour burn -- the
 surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
+== THE LARDER ==
+THE INCOME WALL, AND HOW IT BREAKS: every world so far starved its
+houses beside wealth -- the food a body FINDS (0.5/hour needed) cost
+more daylight than the day had. The ladder's new rungs answer on the
+income side. THE ORCHARD BRANCH: the gather tables now find APPLES
+(bare-handed ~3.5 satiety-equivalent/hour, a bag ~7) -- apples keep
+a day and a half, so the surplus is worth banking, and EAT_APPLES is
+a proper meal (~5 hours fed).
+HENS ARE CAPITAL THAT LAYS: the post SELLS hens (2 on the shelf to
+start, ask ~4 COIN). A body carries at most FOUR -- the pen's worth.
+MAKE_PEN (3 WOOD, 2 hours, at your camp) pens them, and COLLECT_EGGS
+(one LABOR hour, needs the pen) gathers the day's laying: ONE EGG
+PER HEN HELD, up to four -- the whole flock served by one hour. Eggs
+keep near a week, feed like a cooked meal (~4 hours), and the post
+buys them at ~1.20: a hen returns her price in four eggs -- two days
+fed. Four hens is ~9.6 satiety a day for one labor hour: the best
+food/labor in the world, paid for once. That is the compounding
+rung: the first wealth that works while you sleep. (The honest
+catch: eggs scale with the hens HELD at the hour of collection --
+sell hens mid-day and the day's laying shrinks with the flock.)
+THE BOAR IS THE GUARDED SHELF: see THE NIGHT HAS TEETH. Rich, at
+home on the thicket, and it answers a spear with 60% for 2 -- a
+night errand (combat refuses the day) that wants a torch, a spear,
+and nerve; the bow hunts the forest by DAY and never meets a tusk.
+
+
 == THE TRADING POST ==
-THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT and BERRIES, and it
+THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT, BERRIES, APPLES,
+EGGS and PELTS, and it
 sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
-salted meat that never rots, so the shop always has food). The trader
+salted meat that never rots, so the shop always has food) -- and it
+sells HENS (ask ~4: the larder's seed capital; a hen returns her
+price in four eggs sold back). The trader
 is a man who has done this a while, and it shows: his hearth never
 dies, he never speaks after dark, and what comes at him in the night
 he answers armed (he hits like a wolf and guards like one tooled up
@@ -431,7 +501,12 @@ POST_COIN = Decimal("30")       # a small purse: price discovery, not a
                                  # by selling to it, and the coin supply
                                  # stays what seats minted
 POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
-             "JERKY": Decimal("30")}   # the salted shelf: JERKY never
+             "JERKY": Decimal("30"),
+             # The larder's seed stock (P5): two hens on the shelf -- the
+             # post is where pastoral capital enters the world. Sell-buys
+             # round-trip the flock (a house's surplus hen is a house's
+             # coin), but the world's hens start here.
+             "CHICKEN": Decimal("2")}   # the salted shelf: JERKY never
                                     # rots, so late-arriving coin always
                                     # has something to buy (run 4: OSS
                                     # died holding 17 COIN beside an
@@ -613,6 +688,17 @@ def _create_goods(session: Session) -> None:
                       description="Foraged food; the staple of the early game "
                                   "and the market's most-traded good.",
                       decay_per_tick=Decimal("0.15"))
+    # The larder staple (P5): apples keep a day and a half where berries
+    # rot in a morning -- the orchard branch is the thicket's shelf,
+    # between the berry basket and the smokehouse. Runs 26-35 died on
+    # the income wall: every house starved with empty holdings, so the
+    # wall breaks on the INCOME side (a keeps-staple the hand can find).
+    goods.create_good(session, "APPLES", name="Apples",
+                      description="Orchard fruit: keeps a day and a half, "
+                                  "feeds like a meal -- the larder staple "
+                                  "between the berry basket and the "
+                                  "smokehouse.",
+                      decay_per_tick=Decimal("0.08"))
     goods.create_good(session, "COOKED_MEAT", name="Cooked Meat",
                       description="Fire-cooked meat: keeps a little better than "
                                   "raw and feeds you without disease risk.",
@@ -649,9 +735,28 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "BAG", name="Bag",
                       description="Held while gathering, never consumed: "
                                   "doubles the day's find.")
+    # Pastoral capital (P5): a hen is the first good that PAYS while you
+    # hold it. Durable, capped at four (the pen's worth -- a yard, not
+    # a ranch), never consumed: the flock is wealth that compounds, and
+    # the eggs it lays keep near a week.
+    goods.create_good(session, "CHICKEN", name="Hen",
+                      description="Live capital: pen her and she lays. Held, "
+                                  "never eaten -- a body keeps at most four "
+                                  "(the pen's worth). Sold at the post.",
+                      max_holding=Decimal("4"))
+    goods.create_good(session, "EGGS", name="Eggs",
+                      description="A hen's daily laying: keeps near a week, "
+                                  "feeds like a cooked meal. The first "
+                                  "income that arrives while you sleep.",
+                      decay_per_tick=Decimal("0.05"))
     goods.create_good(session, "TRAP", name="Trap",
                       description="One-shot hunting ammunition — consumed by "
                                   "the traps hunt, the best odds craft can buy.")
+    goods.create_good(session, "BOW", name="Bow",
+                      description="Ranged capital: flint-tipped, yarn-strung. "
+                                  "Held while hunting, never consumed — the "
+                                  "day hunt's best odds, and the opening shot "
+                                  "prices into any fight (+3 ATTACK).")
     goods.create_good(session, "CLOTHES", name="Clothes",
                       description="Worn warmth: with a shelter, covers the whole "
                                   "WARMTH need forever, free.")
@@ -739,9 +844,9 @@ def _create_goods(session: Session) -> None:
                     "same estate rule as any other. It does not grow back.",
     )
     goods.create_good(
-        session, "PELT", name="Wolf Pelt",
-        description="Seized from a killed wolf; the post pays for "
-                    "trophies.",
+        session, "PELT", name="Pelt",
+        description="Seized from a killed beast — wolf or boar; the post "
+                    "pays for trophies. A boar's is twice a wolf's.",
         decay_per_tick=Decimal("0.05"),
     )
 
@@ -761,14 +866,18 @@ def _create_combat(session: Session) -> None:
     is a carcass: MEAT 3 is torn from it by any victor; the "*"
     estate (everything the dead carried, purse included) moves only
     to a victor with the CARRY stat -- houses inherit, wolves just
-    eat."""
+    eat. Boars (P5): ATK 4 / DEF 2 / 12 HITS, born carrying their own
+    carcass (6 MEAT + 2 PELT), so a kill pays ~9 meat and a double
+    pelt -- the richest quarry in the world, and it fights back at
+    60% for 2 a landed tusk. The bow is the ranged answer: +3 ATK
+    like the spear, and the day hunt it opens never meets a tusk."""
     combat.set_rules(session, {
         "night_only": True,
         # WARMTH: the lit hearth at the door. LIT: a carried flame —
         # the register condition (a burning torch turns a wolf while it
         # burns; the brand you are WALKING on is spent before the check).
         "deterrence": {"WARMTH": 1, "LIT": 1},
-        "weapons": {"SPEAR": 3, "AXE": 2},
+        "weapons": {"SPEAR": 3, "AXE": 2, "BOW": 3},
         "armor": {"CLOTHES": 1},
         "loot": {"*": 1, "MEAT": 3},
         "carry_stat": "CARRY",
@@ -794,25 +903,55 @@ def _create_combat(session: Session) -> None:
     })
     spawns.set_script_source(
         session, "wolf", _gate_pack_script("wolf_pack.lua"))
-    spawns.set_rules(session, {
-        "from_round": 5, "every_rounds": 5, "up_to": 2, "max_alive": 3,
-        "name_prefix": "Wolf Pack",
-        "template": {
-            "entity_type": "individual",
-            "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-            "holdings": {"MEAT": 1, "PELT": 1},
-            "script_setting": "wolf",
-            "account": {"COIN": 0},
-            # The den (S4): wolves wake in the deep forest, and the
-            # program ranges -- by day the forest's game, by night the
-            # raid walk to the fire-ground (run 26's census: denned
-            # wolves whose houses slept out of reach starved).
-            "place": "FOREST",
-            # Born traits: the CARNIVORE stomach (EAT_CARRION) -- game
-            # meat feeds a pack without a house in reach.
-            "technologies": ["CARNIVORE"],
+    spawns.set_script_source(
+        session, "boar", _gate_pack_script("boar.lua"))
+    # Two programs (P5 -- spawns.rules takes a list; a dict is still one
+    # program): the pack and the boars, separate cadences and lairs.
+    # The wolves keep the deep forest and the night raids. The boars
+    # den at the thicket's edge -- an hour's walk -- and are RICH
+    # (born carrying their own carcass) but dangerous: they answer a
+    # hunter in the night, tusk for spear. The bow hunts the forest by
+    # DAY; the boar demands the dark, and the dark demands a torch.
+    spawns.set_rules(session, [
+        {
+            "from_round": 5, "every_rounds": 5, "up_to": 2, "max_alive": 3,
+            "name_prefix": "Wolf Pack",
+            "template": {
+                "entity_type": "individual",
+                "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
+                "holdings": {"MEAT": 1, "PELT": 1},
+                "script_setting": "wolf",
+                "account": {"COIN": 0},
+                # The den (S4): wolves wake in the deep forest, and the
+                # program ranges -- by day the forest's game, by night the
+                # raid walk to the fire-ground (run 26's census: denned
+                # wolves whose houses slept out of reach starved).
+                "place": "FOREST",
+                # Born traits: the CARNIVORE stomach (EAT_CARRION) -- game
+                # meat feeds a pack without a house in reach.
+                "technologies": ["CARNIVORE"],
+            },
         },
-    })
+        {
+            "from_round": 3, "every_rounds": 3, "up_to": 1, "max_alive": 2,
+            "name_prefix": "Wild Boar",
+            "template": {
+                "entity_type": "individual",
+                "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
+                # Born carrying its own carcass: the estate seizure on a
+                # kill is the point -- high meat, big pelt.
+                "holdings": {"MEAT": 6, "PELT": 2},
+                "script_setting": "boar",
+                "account": {"COIN": 0},
+                # The thicket's edge, an hour out: the boar is the larder's
+                # guarded shelf. Wolves keep the deep forest; the boar
+                # never walks to the fire-ground -- it is dangerous PREY,
+                # not a predator.
+                "place": "THICKET",
+                "technologies": ["CARNIVORE"],
+            },
+        },
+    ])
 
 
 def _create_recipes(session: Session) -> None:
@@ -833,16 +972,17 @@ def _create_recipes(session: Session) -> None:
 
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
-    # find): 45% 4 BERRIES, 25% 2 WOOD, 15% 1 YARN, 15% 1 FLINT... and on
-    # the doubled BAG table a ~5% branch of 1 COIN -- shiny stones, minted
-    # by the ground itself (production credits a banked symbol to the
-    # account, production._credit_output). The bare table finds none:
-    # scarcity first, then the supply grows with better tools.
-    # Expected food value 1.8 berries/hour (2.4 satiety at the
-    # 1½-berry meal) against a need of 0.5/hour -- bare subsistence
-    # spends ~1/5 of the 14 daylight hours on food. (Runs 26-28: the
-    # famine was an income wall, not a storage wall -- the hand that
-    # finds four keeps the ~2 meals/day a body needs.)
+    # find). The thicket carries the larder's shelf (P5): the berry bushes
+    # and, since the orchard branch, the apple boughs -- bare-handed finds
+    # ~3.5 satiety-equivalent/hour (berries 40% x4, apples 25% x3, wood
+    # 15% x2, yarn 10% x1, flint 10% x1) against a need of ~14/day: food
+    # now costs ~4 of the 14 daylight hours bare-handed, ~2 with a bag --
+    # the income wall (runs 26-35: every house starved) breaks on the
+    # INCOME side, and apples keep a day and a half so the surplus is
+    # worth banking. On the doubled BAG table a ~5% branch of 1 COIN --
+    # shiny stones, minted by the ground itself (production credits a
+    # banked symbol to the account, production._credit_output). The bare
+    # table finds none: scarcity first, then the supply grows with tools.
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
@@ -851,10 +991,11 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("45"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
-            {"weight": D("25"), "outputs": {"WOOD": D("2")}, "label": "wood"},
-            {"weight": D("15"), "outputs": {"YARN": D("1")}, "label": "yarn"},
-            {"weight": D("15"), "outputs": {"FLINT": D("1")}, "label": "flint"},
+            {"weight": D("40"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
+            {"weight": D("25"), "outputs": {"APPLES": D("3")}, "label": "apples"},
+            {"weight": D("15"), "outputs": {"WOOD": D("2")}, "label": "wood"},
+            {"weight": D("10"), "outputs": {"YARN": D("1")}, "label": "yarn"},
+            {"weight": D("10"), "outputs": {"FLINT": D("1")}, "label": "flint"},
         ],
     )
     production.create_recipe(
@@ -865,12 +1006,13 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("40"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
-            {"weight": D("22"), "outputs": {"WOOD": D("4")}, "label": "wood"},
-            {"weight": D("13"), "outputs": {"YARN": D("2")}, "label": "yarn"},
-            {"weight": D("13"), "outputs": {"FLINT": D("2")}, "label": "flint"},
+            {"weight": D("35"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
+            {"weight": D("30"), "outputs": {"APPLES": D("6")}, "label": "apples"},
+            {"weight": D("12"), "outputs": {"WOOD": D("4")}, "label": "wood"},
+            {"weight": D("8"), "outputs": {"YARN": D("2")}, "label": "yarn"},
+            {"weight": D("5"), "outputs": {"FLINT": D("2")}, "label": "flint"},
             {"weight": COIN_WEIGHT, "outputs": {COIN: D("1")}, "label": "shiny"},
-            {"weight": D("7"), "outputs": {}, "label": "nothing"},
+            {"weight": D("5"), "outputs": {}, "label": "nothing"},
         ],
     )
     production.create_recipe(
@@ -933,6 +1075,25 @@ def _create_recipes(session: Session) -> None:
             {"weight": D("15"), "outputs": {}, "label": "nothing"},
             {"weight": D("60"), "outputs": {"MEAT": D("4")}, "label": "small"},
             {"weight": D("25"), "outputs": {"MEAT": D("8")}, "label": "big"},
+        ],
+    )
+    # The bow (P5): ranged capital -- the best DAY hunt a lone crafter
+    # can buy, with nothing hunting back. Better than the spear's table
+    # at spear's price, and it prices into any fight besides (+3
+    # ATTACK, the opening shot). The boar at the thicket is the richer
+    # quarry but demands the night; the bow keeps a daylight living.
+    production.create_recipe(
+        session, "HUNT_BOW", name="Hunt with a Bow",
+        description="Ranged hunting: the best odds a lone crafter can buy, "
+                    "with nothing hunting you back. Held bow, never "
+                    "consumed. Daylight only, in the deep forest.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        good_requirements={"BOW": D("1")},
+        requires_daylight=True, requires_place_kind="FOREST",
+        branches=[
+            {"weight": D("15"), "outputs": {}, "label": "nothing"},
+            {"weight": D("55"), "outputs": {"MEAT": D("3")}, "label": "small"},
+            {"weight": D("30"), "outputs": {"MEAT": D("6")}, "label": "big"},
         ],
     )
     # The river: meat without wolves. Slower than a bad hunt but far
@@ -1078,9 +1239,23 @@ def _create_recipes(session: Session) -> None:
         duration_ticks=0,
     )
     production.create_recipe(
+        session, "EAT_APPLES", name="Eat Apples",
+        description="The larder staple: keeps a day and a half, feeds like "
+                    "a meal. ~5 hours fed per sitting.",
+        inputs={"APPLES": D("1.5")}, outputs={"SATIETY": D("2.8")},
+        duration_ticks=0,
+    )
+    production.create_recipe(
         session, "EAT_COOKED", name="Eat Cooked Meat",
         description="Fire-cooked, safe, satisfying: ~4 hours fed per meal.",
         inputs={"COOKED_MEAT": D("1")}, outputs={"SATIETY": D("2.4")},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "EAT_EGGS", name="Eat Eggs",
+        description="A hen's wage: keeps near a week, feeds like a cooked "
+                    "meal. ~4 hours fed.",
+        inputs={"EGGS": D("1")}, outputs={"SATIETY": D("2.4")},
         duration_ticks=0,
     )
     production.create_recipe(
@@ -1177,6 +1352,39 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"CLOTHES": D("1")},
     )
 
+    # --- The larder: pastoral capital (P5) ---------------------------------
+    # The pen and the flock: the first good that PAYS while you hold
+    # it. A hen is bought at the post (or haggled for), penned, and
+    # then the flock lays: COLLECT_EGGS credits one egg per hen held
+    # (capped at four -- the pen's worth, which is also the body's
+    # CHICKEN carry cap) for a single hour's labor -- the whole flock
+    # served at once. Eggs keep near a week and feed like a cooked
+    # meal; four hens under a pen is ~9.6 satiety a day for one labor
+    # hour, the best food/labor in the world once the capital is paid
+    # for (a hen returns her price in four eggs sold, or two days
+    # fed). Income that compounds: the ladder's first rung above
+    # craft. Runs 26-35 died on the income wall; this is the wall
+    # breaking.
+    production.create_recipe(
+        session, "MAKE_PEN", name="Build Pen",
+        description="A fenced yard for the flock: erects a pen on your "
+                            "camp. Buy hens at the post, pen them, and they "
+                            "lay -- capital that feeds you while you sleep.",
+        inputs={"LABOR": D("1"), "WOOD": D("3")},
+        outputs={}, duration_ticks=2, builds_facility="PEN",
+        requires_place_kind="HEARTH",
+    )
+    production.create_recipe(
+        session, "COLLECT_EGGS", name="Collect Eggs",
+        description="Gather the day's laying: one egg per hen in the pen, "
+                    "up to four, for a single hour's work -- the whole "
+                    "flock served at once. The hens are held, never harmed.",
+        inputs={"LABOR": D("1")}, outputs={"EGGS": D("1")}, duration_ticks=1,
+        good_requirements={"CHICKEN": D("1")},
+        requires_facility="PEN",
+        scales_with={"CHICKEN": 4},
+    )
+
     # --- Tools ---------------------------------------------------------------
     # SPEAR (held, never worn) and BAG (held) upgrade hunt and gather;
     # AXE (held) makes the wood certain and fights at +2 when the spear
@@ -1221,6 +1429,15 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "WOOD": D("2"),
                                       "YARN": D("3")},
         outputs={"BED": D("1")}, duration_ticks=2,
+    )
+    production.create_recipe(
+        session, "MAKE_BOW", name="Make Bow",
+        description="An afternoon of bending and binding: a flint-tipped, "
+                    "yarn-strung bow. Held, never consumed. Daylight only.",
+        inputs={"LABOR": D("1"), "FLINT": D("1"),
+                                        "WOOD": D("2"), "YARN": D("1")},
+        outputs={"BOW": D("1")}, duration_ticks=3,
+        requires_daylight=True,
     )
 
 
@@ -1267,15 +1484,19 @@ def _create_markets(session: Session) -> None:
     hour's walk is the price of coin, cheap enough to pay often and
     steep enough to plan around."""
     _NAMES = {
-        "LABOR": "Labor", "BERRIES": "Berries", "MEAT": "Raw Meat",
-        "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "WOOD": "Wood",
+        "LABOR": "Labor", "BERRIES": "Berries", "APPLES": "Apples",
+        "MEAT": "Raw Meat",
+        "COOKED_MEAT": "Cooked Meat", "JERKY": "Jerky", "EGGS": "Eggs",
+        "WOOD": "Wood",
         "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "AXE": "Stone Axe",
-        "BAG": "Bag",
+        "BAG": "Bag", "BOW": "Bow", "CHICKEN": "Hen",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
-        "PELT": "Wolf Pelt",
+        "PELT": "Pelt",
     }
-    for symbol in ("LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD",
-                   "YARN", "FLINT", "SPEAR", "AXE", "BAG", "TRAP", "CLOTHES", "BED",
+    for symbol in ("LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
+                   "EGGS", "WOOD",
+                   "YARN", "FLINT", "SPEAR", "AXE", "BAG", "BOW", "CHICKEN",
+                   "TRAP", "CLOTHES", "BED",
                    "PELT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")

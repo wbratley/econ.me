@@ -142,7 +142,9 @@ names the window). `std.hour()` / `std.is_night()` / `std.day()` are
 pure-info queries over `ctx.clock`. **Conscious eating (run 19)**:
 nothing is eaten for you — the FOOD need drinks only SATIETY, and only
 EAT recipes fill the stomach: EAT_BERRIES (1½ berries, ~3h),
-EAT_COOKED (~4h), EAT_JERKY (~5½h, densest), EAT_RAW (~1h, a
+EAT_APPLES (1½ apples, ~5h; they keep a day and a half), EAT_COOKED
+(~4h), EAT_EGGS (~4h; keeps near a week), EAT_JERKY (~5½h, densest),
+EAT_RAW (~1h, a
 25%-per-meal DISEASE lottery). Meals are labor-free, instant and
 night-legal; the stomach spills a tenth an hour, so a day costs ~14 —
 the treadmill arithmetic is unchanged, but a full larder now feeds
@@ -167,8 +169,15 @@ where it fell, what a person kills is inheritance. A wolf wears its
 pelt; killing one pays whoever has hands. Weapons are carried, not
 born: SPEAR +3 ATTACK, CLOTHES +1 DEFENSE; any entity may `attack()`
 anyone it can name, and every fight is a loud fact every house hears.
-Population renews at round boundaries (`spawns.py`): from round 5,
-every 5 rounds, up to 3 more packs, never more than 4 alive.
+Population renews at round boundaries (`spawns.py`, which takes a list
+of programs — the wolves and the boars run separate clocks): wolves
+from round 5, every 5 rounds, up to 3 more packs, never more than 4
+alive; boars from round 3, every 3 rounds, at most 2 alive, at the
+thicket. **The boar is dangerous prey, not a predator**: ATK 4 /
+DEF 2 / 12 HITS, born carrying its carcass (6 MEAT + 2 PELT — a kill
+pays ~9 meat and a double pelt through the estate machinery),
+retaliates against whoever attacks it and remembers them while
+co-located, never walks to the fire-ground.
 **The trader is a man, not a building**: killable flesh (20 HITS),
 armed and careful (ATTACK 4 / DEFENSE 4), firelit (the world keeps a
 standing hearth for him — deterrence), silent after dark, and he
@@ -205,7 +214,8 @@ ticks for a relight, then strands), a wolf at your door thinks twice
 (deterrence reads LIT beside WARMTH) — and every pack in the dark hears
 you walk (torchlit departures are LOUD, like speech: `world.who_is_loud()`
 is the graded read wolves aim at). Wolves carry no torches: their raid
-walks at dusk and is home by daybreak. MEAT rots
+walks at dusk (a finish-in-light gate: hour + road < 20, never a dark
+road) and is home by daybreak. MEAT rots
 (0.30/hour) and eating it raw is a 25%-per-meal DISEASE lottery —
 cooking is the commons fire away. Capital goods are the escape: SPEAR /
 BAG / TRAP improve the hunt and the gather, CLOTHES / SHELTER / BED
@@ -213,6 +223,25 @@ the warmth budget. All conditions follow the run-5 equilibrium lesson:
 grant/decay equilibrium sits **above** the incapacitation threshold
 (HUNGER 20 ≫ 15, EXPOSURE 30 ≫ 18, DISEASE 20 ≫ 2.5), so neglect
 reliably kills between ticks 18–40, and adaptation reliably saves.
+
+**The larder** (P5 — the income wall's relief; ten straight runs died
+starving beside wealth, so the wall breaks on income): the gather
+tables carry an **orchard branch** (APPLES keep a day and a half where
+berries rot in a morning; bare food income ~3.5 satiety-equivalent an
+hour, ~7 bagged), **hens are capital that lays** (the post sells two
+at 4.00; MAKE_PEN on the camp, then COLLECT_EGGS serves the whole
+flock for one labor hour — an egg per hen held at completion, capped
+at four, which is also the body's CHICKEN carry cap; eggs keep near a
+week and the post buys them at 1.20), the **bow** (flint + 2 wood +
+yarn) is the best day-hunt table with nothing hunting you back and
++3 ATTACK in any fight, and the **boar** — a second spawn program
+(from day 3, every third day, at most two alive) dens at the thicket:
+dangerous prey, born carrying ~9 meat and a double pelt, tusk 4
+against hide 2, retaliates and remembers its foe while co-located,
+and never walks to the fire-ground. A kill pays through the ordinary
+estate machinery (CARRY). Engine surfaces new in P5: `spawns.rules`
+takes a LIST of programs, and recipes scale with holdings
+(`scales_with` — the catalog renders the scaled row honestly).
 
 The balance contract is three policy tests, not numbers in a comment:
 `test_neglect_kills` (a seat that gathers nothing dies in 18–40),
@@ -238,9 +267,12 @@ entity (no needs, no LABOR: it can neither starve nor freeze) with a
 small COIN purse (30), a finite larder of safe food (60 BERRIES, 20
 COOKED_MEAT — it rots like anyone's — plus 30 JERKY, salted meat
 that never rots: the shelf that is never bare, so late-arriving coin
-always has something to buy), and `lua/trading_post.lua`, a
+always has something to buy — and, since P5, two HENS at ask 4.00:
+the larder's seed capital), and `lua/trading_post.lua`, a
 market-maker behaviour. It sells the whole larder at an ask and bids
-4 units for MEAT/WOOD/YARN/FLINT/BERRIES, never crossing its own
+4 units for MEAT/WOOD/YARN/FLINT/BERRIES (and, P5, APPLES 0.80,
+EGGS 1.20, PELT 3.00 — a hen returns her price in four eggs sold),
+never crossing its own
 spread, and stopping at 20 held of any good. The purse is split
 pro-rata across every good it wants — a lean budget shrinks all bids
 together instead of letting the head of the list eat the coin and

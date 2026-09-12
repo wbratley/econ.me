@@ -40,20 +40,23 @@ local warmth = std.holding_qty("WARMTH")
 local wood   = std.holding_qty("WOOD")
 local meat   = std.holding_qty("MEAT")
 local berries = std.holding_qty("BERRIES")
+local apples = std.holding_qty("APPLES")
 local cooked = std.holding_qty("COOKED_MEAT")
 local jerky  = std.holding_qty("JERKY")
-local food   = berries + cooked + jerky
+local food   = berries + apples + cooked + jerky
 
 -- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
 --    Meals are labor-free, instant, night-legal and place-free -- but
 --    they do not happen by themselves. Eat what spoils first (berries,
---    then cooked); jerky never rots, so it is the deep pantry; raw
---    meat is the desperate last resort (a one-in-four chance of
---    disease).
+--    then apples, then cooked); jerky never rots, so it is the deep
+--    pantry; raw meat is the desperate last resort (a one-in-four
+--    chance of disease).
 local satiety = std.holding_qty("SATIETY")
 if satiety < 1.5 then
   if berries >= 2 then
     ctx.action.start_process("EAT_BERRIES")
+  elseif apples >= 2 then
+    ctx.action.start_process("EAT_APPLES")
   elseif cooked >= 1 then
     ctx.action.start_process("EAT_COOKED")
   elseif jerky >= 1 then

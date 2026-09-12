@@ -173,8 +173,10 @@ def test_content_and_coin_markets(session):
     create_content(session)
     rows = list(session.execute(select(markets.Market)).scalars())
     assert {m.symbol for m in rows} == {
-        "LABOR", "BERRIES", "MEAT", "COOKED_MEAT", "JERKY", "WOOD", "YARN",
-        "FLINT", "SPEAR", "AXE", "BAG", "TRAP", "CLOTHES", "BED", "PELT"}
+        "LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
+        "EGGS", "CHICKEN", "WOOD", "YARN",
+        "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
+        "BED", "PELT"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -203,7 +205,7 @@ def test_gather_loot_table(session):
             if e["recipe"] == "GATHER"]
     assert len(done) >= 20
     assert {e.get("branch_label") for e in done} <= {
-        "berries", "wood", "yarn", "flint"}
+        "berries", "apples", "wood", "yarn", "flint"}
     for e in done:
         assert len(e["outputs"]) == 1  # one resource per roll
 
@@ -310,7 +312,7 @@ def test_axe_chops_certain_wood_and_fights_at_two(session):
     assert _hold(session, w.id, "WOOD") == Decimal("3")
     # the weapon: priced behind the spear, stacked when both are held
     assert combat.get_rules(session)["weapons"] == {
-        "SPEAR": 3, "AXE": 2}
+        "SPEAR": 3, "AXE": 2, "BOW": 3}
 
 
 def test_cook_meat_converts(session):
@@ -784,13 +786,19 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
     assert by_sym[("sell", "BERRIES")].limit_price == Decimal("1.25")
     assert by_sym[("sell", "BERRIES")].quantity == Decimal("60")
     assert by_sym[("sell", "COOKED_MEAT")].limit_price == Decimal("1.50")
-    # bids on every raw good, sized to the purse (4 each: 24 of 30 coin);
+    # the larder's seed stock (P5): two hens on the shelf at the ask
+    assert by_sym[("sell", "CHICKEN")].limit_price == Decimal("4.00")
+    assert by_sym[("sell", "CHICKEN")].quantity == Decimal("2")
+    # bids on every raw good, pro-rata across the P5 purse (7 goods
+    # x 4 = 44 against 30 COIN -> every quantity floors to 2);
     # BERRIES itself is skipped -- the ladder is already stuffed (60 >= 20)
-    for sym in ("MEAT", "WOOD", "YARN", "FLINT"):
-        assert by_sym[("buy", sym)].quantity == Decimal("4")
+    for sym in ("MEAT", "WOOD", "YARN", "FLINT", "APPLES", "EGGS", "PELT"):
+        assert by_sym[("buy", sym)].quantity == Decimal("2")
     assert ("buy", "BERRIES") not in by_sym
     assert by_sym[("buy", "MEAT")].limit_price == Decimal("1.00")
     assert by_sym[("buy", "YARN")].limit_price == Decimal("2.00")
+    assert by_sym[("buy", "EGGS")].limit_price == Decimal("1.20")
+    assert by_sym[("buy", "APPLES")].limit_price == Decimal("0.80")
     # it never crosses itself: BERRIES ask stands even with no bid
 
 
@@ -843,10 +851,11 @@ def test_post_bid_falls_when_supply_arrives(session):
     markets.place_order(session, seller.id, "WOOD", "sell",
                         Decimal("3"), Decimal("1.00"),
                         next(a.id for a in seller.accounts if a.currency == COIN))
-    _run(session, 1)                    # the fill
-    assert _hold(session, post.id, "WOOD") >= Decimal("3")
+    _run(session, 1)                    # the fill (pro-rata purse bids 2)
+    filled = _hold(session, post.id, "WOOD")
+    assert filled >= Decimal("2")
     assert next(a for a in seller.accounts if a.currency == COIN).balance \
-        == SEAT_COIN + Decimal("3")
+        == SEAT_COIN + filled
     _run(session, 1)                    # the post reads its fill
     bids = _open_orders(session, post.id, "WOOD", OrderSide.BUY)
     assert [o.limit_price for o in bids] == [Decimal("0.95")]
@@ -885,13 +894,15 @@ def test_post_never_bids_beyond_its_coin(session):
     assert committed <= Decimal("5.5")
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     by_sym = {mid[o.market_id]: o for o in buys}
-    # too thin to spread 4 each: one unit of the cheapest three fits
-    # (MEAT 1.00 + WOOD 1.00 + YARN 2.00 = 4.00 <= 5.5); FLINT's 2.00
-    # does not -- and NO good hoards the purse
+    # too thin to spread 4 each (P5: the purse serves eight wants now):
+    # one unit of the cheapest four fits (APPLES 0.80 + MEAT 1.00 +
+    # WOOD 1.00 + EGGS 1.20 = 4.00 <= 5.5); YARN's 2.00 does not --
+    # and NO good hoards the purse
+    assert by_sym["APPLES"].quantity == Decimal("1")
     assert by_sym["MEAT"].quantity == Decimal("1")
     assert by_sym["WOOD"].quantity == Decimal("1")
-    assert by_sym["YARN"].quantity == Decimal("1")
-    assert "FLINT" not in by_sym
+    assert by_sym["EGGS"].quantity == Decimal("1")
+    assert "YARN" not in by_sym and "FLINT" not in by_sym
 
 
 def test_post_dark_bids_freeze_instead_of_drifting(session):
@@ -914,9 +925,11 @@ def test_post_dark_bids_freeze_instead_of_drifting(session):
     buys = {mid[o.market_id]: o for o in
             _open_orders(session, post.id, side=OrderSide.BUY)}
     assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("1.00")
-    # five wants now (the rotted larder re-opened the BERRIES appetite):
-    # 12 coin against a 28-coin want -- every bid comes back, pro-rated
-    assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "BERRIES"}
+    # every want now (the rotted larder re-opened the BERRIES appetite):
+    # 12 coin against a 44-coin want -- every bid comes back, pro-rated
+    # to one unit each (P5: the purse serves the larder goods too)
+    assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
+                         "APPLES", "EGGS", "PELT"}
     assert all(o.quantity == Decimal("1") for o in buys.values())
 
 
@@ -1119,13 +1132,20 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     _at(session, w, "POST")   # a wolf at the door bites (S4: up close)
     ev = combat.resolve_attack(session, w.id, post.id, 21)
     assert ev.get("deterred") is True and not ev.get("hit")
-    # breeding cadence: rounds 1-4 nothing; round 5 tops up toward 3;
+    # breeding cadence (P5: wolves and boars are separate programs --
+    # filter by name; the boars keep their own clock, day 3 and every
+    # third day): rounds 1-4 no wolves; round 5 tops up toward 3;
     # round 10 stays at the cap
+    wolves = lambda rows: [r for r in rows
+                           if r["name"].startswith("Wolf Pack")]
+    boars = lambda rows: [r for r in rows
+                          if r["name"].startswith("Wild Boar")]
     assert spawns.apply_on_round(session, 4) == []
-    born5 = spawns.apply_on_round(session, 5)
-    assert len(born5) == 1                          # 2 alive, cap 3
-    assert spawns.apply_on_round(session, 9) == []
-    assert spawns.apply_on_round(session, 10) == []  # already at cap
+    assert [r["name"] for r in boars(spawns.apply_on_round(session, 3))] \
+        == ["Wild Boar I"]
+    assert len(wolves(spawns.apply_on_round(session, 5))) == 1   # cap 3
+    assert wolves(spawns.apply_on_round(session, 9)) == []
+    assert spawns.apply_on_round(session, 10) == []  # both at their caps
 
 
 def test_combat_between_entities(session):
@@ -1343,3 +1363,191 @@ def test_the_dark_road_wants_a_flame(session):
     ev = _walk("HEARTH")
     assert ev["status"] == "applied"
     assert ev.get("loud") is None
+
+
+# ===========================================================================
+# P5: THE LARDER
+# ===========================================================================
+
+def test_the_orchard_branch_feeds_the_bare_hand(session):
+    """P5's arithmetic, asserted from the installed rows: both gather
+    tables carry the orchard branch, the weights sum to 100, and bare
+    food income clears ~3.4 satiety-equivalent/hour (the income wall's
+    first break -- apples keep a day and a half where berries rot in a
+    morning, so the surplus is worth banking)."""
+    create_content(session)
+    gather = production.get_recipe(session, "GATHER")
+    bag = production.get_recipe(session, "GATHER_BAG")
+    per_hen = {"berries": 2 / 1.5, "apples": Decimal("2.8") / Decimal("1.5")}
+
+    def table(recipe):
+        rows = {}
+        for b in recipe.branches:
+            rows[b.label] = (b.weight, {o.symbol: o.quantity
+                                        for o in b.outputs})
+        assert sum(b.weight for b in recipe.branches) == Decimal("100")
+        return rows
+
+    bare, bagged = table(gather), table(bag)
+    assert set(bare) == {"berries", "apples", "wood", "yarn", "flint"}
+    assert bare["berries"][1] == {"BERRIES": Decimal("4")}
+    assert bare["apples"][1] == {"APPLES": Decimal("3")}
+    assert bagged["berries"][1] == {"BERRIES": Decimal("8")}
+    assert bagged["apples"][1] == {"APPLES": Decimal("6")}
+
+    def food_ev(rows):
+        ev = Decimal("0")
+        for label in ("berries", "apples"):
+            weight, outs = rows[label]
+            qty = Decimal(str(sum(outs.values()))) / Decimal("100")
+            ev += weight * qty * Decimal(str(per_hen[label]))
+        return ev
+
+    assert food_ev(bare) >= Decimal("3.4")     # the wall breaks bare-handed
+    assert food_ev(bagged) >= Decimal("6.9")   # and the bag doubles down
+
+
+def test_the_pen_serves_the_whole_flock_for_one_labor(session):
+    """Pastoral compounding (P5): a penned house with N hens collects N
+    eggs for a single labor hour -- one egg per hen held at completion,
+    capped at four (the pen's worth, which is also the body's carry
+    cap). The hens are held, never consumed; the flock is capital."""
+    from econengine import parcels
+    from econengine.models import Parcel
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Henkeeper")
+    _at(session, house, "HEARTH")           # the pen is built on the camp
+    camp = _camp(session, house)
+    markets.adjust_holding(session, house, "WOOD", Decimal("3"))
+    assert _act_day(session, house, "MAKE_PEN", parcel_id=camp.id)
+    _run(session, 3)
+    assert parcels.facility_capacity(session, camp.id, "PEN") >= 1
+    # four hens penned: one hour, four eggs
+    markets.adjust_holding(session, house, "CHICKEN", Decimal("4"))
+    assert _act_day(session, house, "COLLECT_EGGS")
+    _run(session, 2)
+    done = [e for e in _events(session, "process_completed")
+            if e.get("recipe") == "COLLECT_EGGS" and e["entity_id"] == house.id]
+    assert done[-1]["outputs"] == {"EGGS": "4.0000"}
+    assert _hold(session, house.id, "EGGS") >= Decimal("3.8")  # minus the hour's decay
+    assert _hold(session, house.id, "CHICKEN") == Decimal("4")  # unharmed
+    # two sold: the day's laying shrinks with the flock (honest scaling)
+    markets.adjust_holding(session, house, "CHICKEN", Decimal("-2"))
+    assert _act_day(session, house, "COLLECT_EGGS")
+    _run(session, 2)
+    done = [e for e in _events(session, "process_completed")
+            if e.get("recipe") == "COLLECT_EGGS" and e["entity_id"] == house.id]
+    assert done[-1]["outputs"] == {"EGGS": "2.0000"}
+    # no flock, no harvest: the good_requirements gate refuses at zero
+    markets.adjust_holding(session, house, "CHICKEN",
+                           -_hold(session, house.id, "CHICKEN"))
+    from econengine.markets import InsufficientHoldingsError
+    with pytest.raises(InsufficientHoldingsError, match="CHICKEN"):
+        production.start_process(session, house, "COLLECT_EGGS")
+
+
+def test_hens_are_capped_at_the_pens_worth(session):
+    """CHICKEN is durable, never consumed, and a body holds at most
+    four -- the cap that keeps one house from becoming a ranch."""
+    from econengine import goods as goods_mod
+    create_content(session)
+    hen = goods_mod.get_good(session, "CHICKEN")
+    assert hen.max_holding == Decimal("4")
+    assert hen.decay_per_tick is None or hen.decay_per_tick == Decimal("0")
+    apples = goods_mod.get_good(session, "APPLES")
+    assert apples.decay_per_tick == Decimal("0.08")
+    eggs = goods_mod.get_good(session, "EGGS")
+    assert eggs.decay_per_tick == Decimal("0.05")
+
+
+def test_the_boar_answers_a_spear_and_remembers(session):
+    """Dangerous prey (P5): the boar dens at the thicket, born carrying
+    its own carcass (the guarded shelf), and when a hunter comes for it
+    in the dark the boar retaliates -- and keeps answering while the
+    foe stands on its ground."""
+    from econengine import combat, spawns
+    from econengine.models import EntityStatus, Tick
+    create_content(session)
+    hunter = _seat(session, "Boarhunter")
+    _at(session, hunter, "THICKET")     # the boar's ground
+    born = spawns.apply_on_round(session, 3)
+    assert [b["name"] for b in born] == ["Wild Boar I"]
+    boar = session.get(Entity, born[0]["entity_id"])
+    assert boar.place.key == "THICKET"  # an hour's walk, not the wolves' forest
+    assert _hold(session, boar.id, "MEAT") == Decimal("6")
+    assert _hold(session, boar.id, "PELT") == Decimal("2")
+    assert combat.get_stats(session, boar.id) == {
+        "ATTACK": Decimal("4"), "DEFENSE": Decimal("2"),
+        "HITS": Decimal("12")}
+    # the hunter's program: spear the boar every night hour
+    src = (f"-- provoke\n"
+           f"local BOAR = {boar.id!r}\n"
+           "if std.is_night() then ctx.action.attack(BOAR) end\n")
+    session.add(Script(name=f"hunter-{hunter.id}", source=src,
+                       script_type=ScriptType.BEHAVIOUR,
+                       entity_id=hunter.id, timeout_ms=200, state={}))
+    markets.adjust_holding(session, hunter, "SPEAR", Decimal("1"))
+    session.commit()
+    _run(session, 30)                    # into the night and through it
+    fights = [e for e in _events(session, "combat")]
+    boar_answers = [e for e in fights
+                    if e.get("entity_id") == boar.id
+                    and e.get("target_id") == hunter.id]
+    assert boar_answers                  # tusk for spear
+    # it never hunts anyone: every boar swing targets its provoker
+    assert all(e.get("target_id") == hunter.id for e in boar_answers)
+
+
+def test_the_bow_hunts_the_day_table_and_prices_into_the_fight(session):
+    """Ranged capital (P5): HUNT_BOW is the best daylight table a lone
+    crafter can buy (held bow, never consumed, EV above the spear
+    hunt), and the weapons table prices it at +3 ATTACK like a spear."""
+    from econengine import combat
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Bowman")
+    _at(session, w, "FOREST")
+    with pytest.raises(Exception, match="BOW"):
+        production.start_process(session, w, "HUNT_BOW")
+    markets.adjust_holding(session, w, "BOW", Decimal("1"))
+    # the table: 15 nothing / 55 small (3) / 30 big (6) -> EV 3.45
+    recipe = production.get_recipe(session, "HUNT_BOW")
+    branches = {b.label: (b.weight, {o.symbol: o.quantity
+                                     for o in b.outputs})
+                for b in recipe.branches}
+    ev = sum(Decimal(str(sum(branches[l][1].values()))) * branches[l][0]
+             / Decimal("100") for l in branches)
+    assert ev == Decimal("3.45")
+    spear = production.get_recipe(session, "HUNT_SPEAR")
+    spear_ev = sum(Decimal(str(sum({o.symbol: o.quantity for o in b.outputs}.values()))) * b.weight
+                   / Decimal("100") for b in spear.branches)
+    assert ev > spear_ev
+    assert combat.effective_attack(session, w.id) == Decimal("4")  # 1+3
+
+
+def test_the_starter_eats_the_apples_it_finds(session):
+    """The floor learns the orchard (P5): a starter holding apples and
+    berries eats the berries first (they rot faster), then the apples
+    (a proper meal off the same gather)."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Orchardfloor")
+    _at(session, seat, "HEARTH")
+    markets.adjust_holding(
+        session, seat, "BERRIES", -_hold(session, seat.id, "BERRIES"))
+    markets.adjust_holding(session, seat, "SATIETY", Decimal("0"))
+    markets.adjust_holding(session, seat, "BERRIES", Decimal("2"))
+    markets.adjust_holding(session, seat, "APPLES", Decimal("2"))
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=seat.id, timeout_ms=200, state={}))
+    session.commit()
+    _run(session, 1)
+    # berries first (they rot faster): the meal came off the berry
+    # basket, and the apple sack is still full
+    assert Decimal("0") < _hold(session, seat.id, "BERRIES") < Decimal("1")
+    assert _hold(session, seat.id, "APPLES") > Decimal("1.8")
+    assert _hold(session, seat.id, "SATIETY") > Decimal("1")

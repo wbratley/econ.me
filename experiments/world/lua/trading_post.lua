@@ -1,14 +1,18 @@
 -- trading_post.lua  (BEHAVIOUR) -- the market maker of the stone age.
 --
--- The post SELLS safe food (BERRIES, COOKED_MEAT, JERKY) and BUYS raw
--- goods (MEAT, WOOD, YARN, FLINT, BERRIES) for COIN. Three runs showed
--- why it must exist: houses with coin and hunger found no seller,
--- hunters with meat found no buyer, and "the price is unknown" froze
--- the one agent that tried to trade. A standing counterparty IS the
--- fix: every order the post quotes is a price reference the whole
--- world can read. JERKY is salted meat: it never rots, so the shop
--- always has SOMETHING to sell, however late the customer arrives
--- (run 4: OSS died with 17 COIN in a world whose larder had rotted).
+-- The post SELLS safe food (BERRIES, COOKED_MEAT, JERKY) and the
+-- larder's seed capital (CHICKEN -- P5), and BUYS raw goods (MEAT,
+-- WOOD, YARN, FLINT, BERRIES, APPLES, EGGS, PELT) for COIN. Three runs
+-- showed why it must exist: houses with coin and hunger found no
+-- seller, hunters with meat found no buyer, and "the price is
+-- unknown" froze the one agent that tried to trade. A standing
+-- counterparty IS the fix: every order the post quotes is a price
+-- reference the whole world can read. JERKY is salted meat: it never
+-- rots, so the shop always has SOMETHING to sell, however late the
+-- customer arrives (run 4: OSS died with 17 COIN in a world whose
+-- larder had rotted). The hens are the pastoral ladder's seed: the
+-- post holds two, sells them at 4.00, and stands at 1.20 an egg --
+-- a hen pays her price back in four eggs (P5).
 --
 -- It haggles like a person would:
 --   sold food            -> ask +5%          (demand is real, charge it)
@@ -49,10 +53,15 @@ if not S.ask then
   -- COIN, ~14 satiety/day): berries 7 meals × 1.25 = 8.75, cooked
   -- 6 × 1.50 = 9.00, jerky 4 × 2.00 = 8.00. Runs 26-28 died with the
   -- whole purse unspent -- coin nobody could eat. BERRIES stays above
-  -- its 1.00 bid so the post never crosses itself.
-  S.ask = { BERRIES = 1.25, COOKED_MEAT = 1.50, JERKY = 2.00 }
+  -- its 1.00 bid so the post never crosses itself. CHICKEN is priced
+  -- against its own wage (P5): a hen lays ~1 egg/day the post buys at
+  -- 1.20, so 4.00 asks four days of laying -- capital that returns
+  -- itself, quoted so a house can see the arithmetic before it pays.
+  S.ask = { BERRIES = 1.25, COOKED_MEAT = 1.50, JERKY = 2.00,
+            CHICKEN = 4.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
-            YARN = 2.00, FLINT = 2.00, PELT = 3.00 }
+            YARN = 2.00, FLINT = 2.00, PELT = 3.00,
+            APPLES = 0.80, EGGS = 1.20 }
   S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
   S.live = {}    -- the (qty, price) placed per key, to spot drift
   S.ids = {}     -- order id per key, from applied place_order events
@@ -88,7 +97,7 @@ end
 
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward
 --    trade.
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
   if (S.quiet["sell_" .. sym] or 0) >= 3 then
     S.ask[sym] = math.max(S.ask[sym] * 0.95, ASK_FLOOR)
     S.quiet["sell_" .. sym] = 0
@@ -109,7 +118,7 @@ for _, a in ipairs(ctx.accounts) do
 end
 
 local want = {}
-for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
+for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
   local qty = math.floor(std.holding_qty(sym))
   if qty > 0 then
     want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),
@@ -121,7 +130,8 @@ end
 -- years. Desired qty 4 each; if the total exceeds the coin on hand,
 -- ALL quantities shrink by the same ratio -- no head-of-line feeding.
 local desired, total_cost = {}, 0
-for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES" }) do
+for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
+                       "APPLES", "EGGS", "PELT" }) do
   local price = S.bid[sym]
   -- never cross our own ask (the post will not trade with itself)
   if price and (not S.ask[sym] or price < S.ask[sym])
@@ -202,12 +212,13 @@ end
 --    does not draw maps to his firelight.
 if ctx.tick % 10 == 0 and not std.is_night() then
   local sells, buys = {}, {}
-  for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY" }) do
+  for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN" }) do
     if want["sell_" .. sym] then
       sells[#sells + 1] = sym .. " " .. r2(S.ask[sym])
     end
   end
-  for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES" }) do
+  for _, sym in ipairs({ "MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
+                         "APPLES", "EGGS", "PELT" }) do
     if want["buy_" .. sym] then
       buys[#buys + 1] = sym .. " " .. r2(S.bid[sym])
     end

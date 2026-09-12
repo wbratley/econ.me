@@ -145,6 +145,31 @@ def test_recipe_renders_branch_odds_gates_and_costs(session):
     ]
 
 
+def test_scaled_recipe_and_holding_cap_render_honestly(session):
+    """P5's honesty contract: a scaled row says its output multiplies by
+    the herd held at completion (with the cap), and a capped good says
+    the cap -- the catalog is the physics, not marketing."""
+    _seed(session)
+    production.create_recipe(
+        session, "LAY_EGGS",
+        inputs={"LABOR": Decimal("1")},
+        outputs={"EGGS": Decimal("1")}, duration_ticks=1,
+        good_requirements={"HEN": Decimal("1")},
+        scales_with={"HEN": 4})
+    goods.create_good(session, "HEN", max_holding=Decimal("4"))
+    state = catalog_state(session)
+    by_code = {r["code"]: r for r in state["recipes"]}
+    assert by_code["LAY_EGGS"]["effects"][-1] == (
+        "outputs × min(4, HEN held) at completion "
+        "(the row scales with the HEN you hold when it finishes)"
+    )
+    by_symbol = {g["symbol"]: g for g in state["goods"]}
+    assert "a body holds at most 4" in by_symbol["HEN"]["effect"]
+    text = catalog_text(state)
+    assert "outputs × min(4, HEN held)" in text
+    assert "a body holds at most 4" in text
+
+
 def test_market_renders_name_and_currency(session):
     _seed(session)
     state = catalog_state(session)

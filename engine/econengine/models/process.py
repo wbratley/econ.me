@@ -1,7 +1,8 @@
 import uuid
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, Enum as SAEnum
+from decimal import Decimal
+from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, Numeric, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -41,6 +42,12 @@ class Process(Base):
     # the selected row's position. NULL until completed / for plain recipes.
     outcome_branch: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outcome_roll: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # scaled recipes only (recipes.scales_with, P5): the factor the herd
+    # priced this harvest at — min(cap, units of the scaling symbol held
+    # at completion). NULL = the recipe paid its declared outputs as-is.
+    scale_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     # Travel (docs/spatial.md S3): a hop in a TravelRoute. Ordinary
     # start_process machinery (inputs, requirements, gates) created it,
     # but the road sets its duration (completes_tick = start + edge

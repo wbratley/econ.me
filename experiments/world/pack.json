@@ -12,11 +12,11 @@
   },
   "stone_age": {
    "edges": 8,
-   "goods": 23,
-   "markets": 15,
+   "goods": 27,
+   "markets": 19,
    "needs": 2,
    "places": 6,
-   "recipes": 32,
+   "recipes": 38,
    "technologies": 1,
    "threats": 0
   }
@@ -27,14 +27,15 @@
  },
  "engine_std": "f1a7fad89397b98f",
  "lua": {
+  "boar.lua": "653fed7376d2cfe7",
   "clerk.lua": "999bf6c106578846",
   "miner.lua": "3d985d09a4275581",
   "pack.lua": "4f68c575e7a8057b",
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
-  "stone_age_starter.lua": "9211790ab19c15c8",
-  "trading_post.lua": "fba344077106c200",
-  "wolf_pack.lua": "8d7d7fda47ec0ff9",
+  "stone_age_starter.lua": "d8425e8d72bfb82a",
+  "trading_post.lua": "2caa05c17548b762",
+  "wolf_pack.lua": "50f7117892502b4f",
   "world_lib.lua": "b1244db1c263994a"
  },
  "name": "demo-world",
