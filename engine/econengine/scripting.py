@@ -1350,14 +1350,14 @@ def build_queries(session: Session, tick_number: int | None = None,
         target = session.get(EntityModel, str(entity_id))
         if target is None:
             return None
-        return _statuses.active_conditions(session, target, tick)
+        return _statuses.active_conditions(session, target, _tick)
 
     def carriers(condition):
         """Who bears a register condition, graded: [{entity_id, strength}].
         Loud-family conditions carry act counts from the last N ticks
         (this tick's torchlit walkers are next tick's readings); every
         other condition carries strength 1 per active bearer."""
-        return _statuses.carriers(session, str(condition), tick)
+        return _statuses.carriers(session, str(condition), _tick)
 
     return {
         "balance": balance,
