@@ -656,6 +656,11 @@ def test_shelter_alone_is_misery_not_death(session):
                 production.start_process(session, w, "EAT_BERRIES")
             except Exception:
                 pass
+        if _hold(session, w.id, "SATIETY") < 1:      # the larder's second shelf:
+            try:                                      # a subsister eats its apples too
+                production.start_process(session, w, "EAT_APPLES")
+            except Exception:
+                pass
         _act_day(session, w, "GATHER")
     assert session.get(Entity, w.id).status == EntityStatus.ACTIVE
     assert _hold(session, w.id, "EXPOSURE") < Decimal("15")
@@ -1386,9 +1391,11 @@ def test_the_dark_road_wants_a_flame(session):
 def test_the_orchard_branch_feeds_the_bare_hand(session):
     """P5's arithmetic, asserted from the installed rows: both gather
     tables carry the orchard branch, the weights sum to 100, and bare
-    food income clears ~3.4 satiety-equivalent/hour (the income wall's
+    food income clears ~3.0 satiety-equivalent/hour (the income wall's
     first break -- apples keep a day and a half where berries rot in a
-    morning, so the surplus is worth banking)."""
+    morning, so the surplus is worth banking; run 38's wood-rich lever
+    took the berry share as the donor: 3.53 -> 3.00, food had slack --
+    FOOD sat 0.771, zero hunger deaths -- while the fire starved)."""
     create_content(session)
     gather = production.get_recipe(session, "GATHER")
     bag = production.get_recipe(session, "GATHER_BAG")
@@ -1417,8 +1424,48 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
             ev += weight * qty * Decimal(str(per_hen[label]))
         return ev
 
-    assert food_ev(bare) >= Decimal("3.4")     # the wall breaks bare-handed
-    assert food_ev(bagged) >= Decimal("6.9")   # and the bag doubles down
+    assert food_ev(bare) >= Decimal("2.99")    # the wall breaks bare-handed
+    assert food_ev(bagged) >= Decimal("6.2")   # and the bag doubles down
+
+
+def test_the_thicket_funds_the_night(session):
+    """Run 38's lever, asserted from the installed rows: the wood roll
+    pays for the night. All three houses died of FATIGUE beside a dark
+    fire (d10-d12; food 0.771, water 0.950 -- every prior clock quiet)
+    because the old tables banked ~0.3 wood per gather against a
+    ~10-log night. The branch is now a quarter of every gather, and
+    quantity over size -- frequency beats magnitude for famine: a
+    six-gather day finds zero wood 18% of the time, not 38%."""
+    create_content(session)
+    gather = production.get_recipe(session, "GATHER")
+    bag = production.get_recipe(session, "GATHER_BAG")
+
+    def table(recipe):
+        rows = {}
+        for b in recipe.branches:
+            rows[b.label] = (b.weight, {o.symbol: o.quantity
+                                        for o in b.outputs})
+        assert sum(b.weight for b in recipe.branches) == Decimal("100")
+        return rows
+
+    def wood_ev(rows):
+        weight, outs = rows["wood"]
+        return weight * sum(outs.values()) / Decimal("100")
+
+    bare, bagged = table(gather), table(bag)
+    assert bare["wood"] == (Decimal("25"), {"WOOD": Decimal("3")})
+    assert bagged["wood"] == (Decimal("20"), {"WOOD": Decimal("6")})
+    # 2.5x the famine tables: 0.75 and 1.20 logs per roll
+    assert wood_ev(bare) == Decimal("0.75")
+    assert wood_ev(bagged) == Decimal("1.20")
+    assert wood_ev(bagged) / wood_ev(bare) == Decimal("1.6")
+    # the polity break-even: three houses gathering ~5 apiece bank
+    # ~11 logs a day against a ~10-log night -- the famine becomes a
+    # margin economy, not a structural impossibility
+    assert 3 * 5 * wood_ev(bare) >= Decimal("11")
+    # frequency beats size: P(zero wood in a six-gather day)
+    miss = (Decimal("100") - bare["wood"][0]) / Decimal("100")
+    assert miss ** 6 <= Decimal("0.18")
 
 
 def test_the_pen_serves_the_whole_flock_for_one_labor(session):

@@ -499,7 +499,7 @@ same.
    or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
    ~6 hours fed per strip) -> sell MEAT.
 4a. AXE (flint+wood+yarn, an afternoon): CHOP_WOOD = 3 certain logs an
-   hour, six times the bare gather's wood -- the fire never wants again;
+   hour, four times the bare gather's wood -- the fire never wants again;
    and +2 ATK at the door, the half of a spear in a fist.
 4b. BOW (flint+2 wood+yarn, an afternoon): the best DAY hunt (better
    than the spear's table, nothing hunting you back) and +3 ATK in
@@ -1166,17 +1166,22 @@ def _create_recipes(session: Session) -> None:
 
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
-    # find). The thicket carries the larder's shelf (P5): the berry bushes
-    # and, since the orchard branch, the apple boughs -- bare-handed finds
-    # ~3.5 satiety-equivalent/hour (berries 40% x4, apples 25% x3, wood
-    # 15% x2, yarn 10% x1, flint 10% x1) against a need of ~14/day: food
-    # now costs ~4 of the 14 daylight hours bare-handed, ~2 with a bag --
-    # the income wall (runs 26-35: every house starved) breaks on the
-    # INCOME side, and apples keep a day and a half so the surplus is
-    # worth banking. On the doubled BAG table a ~5% branch of 1 COIN --
-    # shiny stones, minted by the ground itself (production credits a
-    # banked symbol to the account, production._credit_output). The bare
-    # table finds none: scarcity first, then the supply grows with tools.
+    # find). The thicket carries the larder's shelf (P5) and the night's
+    # fuel (run 38's lever: all three houses died of FATIGUE beside a
+    # dark fire -- the wood roll starved the commons): the berry bushes,
+    # the apple boughs, and now a fat wood branch -- bare-handed finds
+    # ~3.0 satiety-equivalent/hour (berries 30% x4, apples 25% x3, wood
+    # 25% x3, yarn 10% x1, flint 10% x1) against a need of ~14/day: food
+    # costs ~4.7 of the 14 daylight hours bare-handed, ~2.5 with a bag,
+    # and the SAME walk banks ~4.5 logs a day -- the berry share is the
+    # donor (run 38: FOOD sat 0.771, zero hunger deaths, fire dark 22x;
+    # food had slack, wood had none). Wood lands on a quarter of gathers,
+    # not a seventh -- frequency beats size for famine: P(zero wood in a
+    # six-gather day) falls 0.38 -> 0.18. On the doubled BAG table a ~5%
+    # branch of 1 COIN -- shiny stones, minted by the ground itself
+    # (production credits a banked symbol to the account,
+    # production._credit_output). The bare table finds none: scarcity
+    # first, then the supply grows with tools.
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
@@ -1185,9 +1190,9 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("40"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
+            {"weight": D("30"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"APPLES": D("3")}, "label": "apples"},
-            {"weight": D("15"), "outputs": {"WOOD": D("2")}, "label": "wood"},
+            {"weight": D("25"), "outputs": {"WOOD": D("3")}, "label": "wood"},
             {"weight": D("10"), "outputs": {"YARN": D("1")}, "label": "yarn"},
             {"weight": D("10"), "outputs": {"FLINT": D("1")}, "label": "flint"},
         ],
@@ -1200,9 +1205,9 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("35"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
-            {"weight": D("30"), "outputs": {"APPLES": D("6")}, "label": "apples"},
-            {"weight": D("12"), "outputs": {"WOOD": D("4")}, "label": "wood"},
+            {"weight": D("30"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
+            {"weight": D("27"), "outputs": {"APPLES": D("6")}, "label": "apples"},
+            {"weight": D("20"), "outputs": {"WOOD": D("6")}, "label": "wood"},
             {"weight": D("8"), "outputs": {"YARN": D("2")}, "label": "yarn"},
             {"weight": D("5"), "outputs": {"FLINT": D("2")}, "label": "flint"},
             {"weight": COIN_WEIGHT, "outputs": {COIN: D("1")}, "label": "shiny"},

@@ -325,5 +325,19 @@ user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
   night — the 40-tick policy window is the suite's operational
   "indefinitely", as it was for exposure pre-P4); the pressure is
   the point — keeping one fire lit is a group project, and sleep is
-  what it buys. Tuning candidate if run 38 starves the fire:
-  wood-rich gather, or a cheaper night.
+  what it buys. Run 38 DID starve the fire (all three houses dead of
+  FATIGUE d10-d12 with every other clock quiet; fire dark 22x,
+  SLEEP_BY_FIRE refused on dark fire, ~3-4 sleep-hours against the
+  ~6 break-even) — and took the pre-registered lever, the
+  economy-side one: WOOD-RICH GATHER, not the cheaper night.
+- Wood-rich gather (run 38's lever, shipped): share, not size — wood
+  is now a quarter of every gather (bare 25% x3, bag 20% x6; EV 0.75
+  and 1.20 logs a roll, 2.5x the famine tables) because frequency
+  beats magnitude for famine: P(zero wood in a six-gather day)
+  falls 0.38 -> 0.18. The berry share donated its weight (bare food
+  3.53 -> 3.00 satiety-equivalent/h — food had slack: run 38 sat
+  0.771, zero hunger deaths). Polity arithmetic: three houses
+  gathering ~5 apiece bank ~11 logs/day against the ~10-log night:
+  the famine becomes a margin economy, not a structural
+  impossibility. The axe rung stays premium (3 certain logs/h =
+  4x the bare roll, was 6x).
