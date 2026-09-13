@@ -45,6 +45,7 @@ local satiety = std.holding_qty("SATIETY")
 local meat    = std.holding_qty("MEAT")
 local warmth  = std.holding_qty("WARMTH")
 local water   = std.holding_qty("WATER")
+local rest    = std.holding_qty("REST")
 
 -- Ears: tonight's says -- and every torchlit walker -- name tonight's
 -- prey (P2: LOUD is the register's read, world.who_is_loud(); a brand
@@ -96,6 +97,13 @@ if std.is_night() then
     elseif hunger > 8 then
       ctx.action.attack(nil)
     end
+  elseif rest < 4 and not std.running_recipe("SLEEP_DEN") then
+    -- A fed pack dens (P4): the night is paid in rest as well as
+    -- warmth, and a pack that prowls every dark grows tired -- the
+    -- tired hunt worse (-1/-1 past the floor; the rules price it).
+    -- Hunger outranks sleep: a starving pack prowls anyway, and
+    -- pays for it -- the pack's version of the house's watch.
+    ctx.action.start_process("SLEEP_DEN")
   end
   -- caught out after dark: hold. The road home is a day matter.
 else

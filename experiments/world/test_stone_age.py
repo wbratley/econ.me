@@ -99,6 +99,14 @@ def _events(session, etype):
     return out
 
 
+def _set(session, entity, symbol, qty):
+    """Set a holding to an exact quantity (adjust_holding adds; tests
+    want known arithmetic)."""
+    markets.adjust_holding(
+        session, entity, symbol,
+        Decimal(str(qty)) - _hold(session, entity.id, symbol))
+
+
 def _seat(session, name="Worker"):
     """A stone-age INDIVIDUAL: buffers and a camp, no behaviour script."""
     return make_house(session, name)
@@ -254,7 +262,7 @@ def test_tool_and_facility_gates(session):
     with pytest.raises(Exception, match="no free FIRE"):
         production.start_process(session, w, "SMOKE_MEAT", camp.id)
     with pytest.raises(Exception, match="no free SHELTER"):
-        production.start_process(session, w, "REST_SHELTERED", camp.id)
+        production.start_process(session, w, "SLEEP_SHELTERED", camp.id)
     with pytest.raises(Exception, match="CLOTHES"):
         production.start_process(session, w, "HUDDLE")
     # The commons fire warms a house that owns no fire (auto-bind finds
@@ -639,7 +647,7 @@ def test_shelter_alone_is_misery_not_death(session):
     for _ in range(60):
         run_tick(session); session.commit()
         try:
-            production.start_process(session, w, "REST_SHELTERED",
+            production.start_process(session, w, "SLEEP_SHELTERED",
                                      _camp(session, w).id)   # labor-free
         except Exception:
             pass
@@ -1639,12 +1647,13 @@ def test_meals_part_hydrate(session):
     assert _hold(session, seat.id, "WATER") == Decimal("0.2")
 
 
-def _keep_fed_and_warm(session, house, stock=None):
+def _keep_fed_and_warm(session, house, stock=None, sleep=True):
     """Test scaffolding, not a policy: keep every need but WATER met so
     the thirst clock is the only clock under test. `stock` names the
     diet's symbol and its floor -- the scaffold keeps the basket fed
     (berries rot in hours; jerky never does), the THIRST arithmetic is
-    the subject."""
+    the subject. `sleep=False` leaves REST alone too -- for the nights
+    the FATIGUE clock is the subject."""
     if stock is not None:
         sym, floor, top = stock
         if _hold(session, house.id, sym) < Decimal(str(floor)):
@@ -1656,6 +1665,8 @@ def _keep_fed_and_warm(session, house, stock=None):
             _act(session, house, "EAT_JERKY")
     if _hold(session, house.id, "WARMTH") < Decimal("3"):
         markets.adjust_holding(session, house, "WARMTH", Decimal("6"))
+    if sleep and _hold(session, house.id, "REST") < Decimal("2"):
+        markets.adjust_holding(session, house, "REST", Decimal("6"))
 
 
 def test_the_wet_diet_rides_below_the_threshold(session):
@@ -1778,3 +1789,238 @@ def test_the_beasts_walk_to_water(session):
              and e["entity_id"] in (wolf.id, boar.id)}
     assert walks.get(wolf.id) == "RIVER"
     assert walks.get(boar.id) == "RIVER"
+
+
+# ===========================================================================
+# P4 — SLEEP: the night becomes a budget
+# ===========================================================================
+
+def test_rest_need_registered_and_the_clock(session):
+    """The sleep clock (P4): REST drains 0.25 an hour awake (six a day),
+    holds at most a day and a third, and an unmet draw grants FATIGUE
+    0.5 an hour -- the THIRST twin's arithmetic, on the night's stock.
+    An idle hour restores nothing: only SLEEP recipes fill it."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Awake")
+    assert _hold(session, w.id, "REST") == Decimal("4")   # born buffer
+    markets.adjust_holding(session, w, "REST", Decimal("20"))
+    assert _hold(session, w.id, "REST") == Decimal("8")   # the cap
+    from econengine import needs as needs_mod
+    need = needs_mod.get_need(session, "REST")
+    assert need.condition_symbol == "FATIGUE"
+    assert need.condition_quantity == Decimal("0.5")
+    # sixteen awake hours empty the born buffer; the grants then climb
+    # (a fresh body, alive past the sixteenth hour: neglect kills at 18+)
+    fresh = _seat(session, "Awake2")
+    _run(session, 16)
+    assert _hold(session, fresh.id, "REST") == Decimal("0")
+    assert _hold(session, fresh.id, "FATIGUE") == Decimal("0")
+    _run(session, 1)                     # the first unmet hour grants
+    assert _hold(session, fresh.id, "FATIGUE") > Decimal("0.4")
+    assert _hold(session, fresh.id, "REST") == Decimal("0")   # idle restores nothing
+
+
+def test_the_sleepless_clock_kills_on_the_third_night(session):
+    """Two sleepless nights tired, three dead (P4): fed, warm, and
+    watered -- but never sleeping -- the house dies of FATIGUE at
+    ~48h (the REST buffer buys 16h, the climb crosses 7.5 about 32h
+    later): the third night, never sooner. THIRST's twin arithmetic,
+    priced for a night the house already spends idle."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Insomniac")
+    died_at = None
+    for _ in range(80):
+        _keep_fed_and_warm(session, seat, ("JERKY", 3, 10), sleep=False)
+        _run(session, 1)
+        if session.get(Entity, seat.id).status != EntityStatus.ACTIVE:
+            died_at = production.next_tick_number(session) - 1
+            break
+    assert died_at is not None and 40 <= died_at <= 60, died_at
+    kills = [e for e in _events(session, "entity_incapacitated")
+             if e.get("entity_id") == seat.id]
+    assert kills[-1]["condition"] == "FATIGUE"
+    # the impaired floor is crossed on the way (the tired fight worse:
+    # -1/-1 while FATIGUE rides at or above 5 -- the estate burn
+    # zeroes the register at death, so assert it on the living)
+    from econengine import combat as combat_mod
+    tired = _seat(session, "Tired")
+    markets.adjust_holding(session, tired, "FATIGUE", Decimal("4"))
+    assert combat_mod.effective_attack(session, tired.id) == Decimal("1")
+    markets.adjust_holding(session, tired, "FATIGUE", Decimal("1"))  # at 5
+    assert combat_mod.effective_attack(session, tired.id) == Decimal("0")
+    assert combat_mod.effective_defense(session, tired.id) == Decimal("0")
+
+
+def test_sleep_by_fire_pays_both_clocks(session):
+    """SLEEP_BY_FIRE is the duration-1 watch (P4): an hour by a lit
+    commons fire credits REST +1 and WARMTH +3 -- the fire does double
+    duty, covering the night's 3/hour draw exactly while it burns
+    (the stock holds, nothing banks). A dark fire warms no sleeper.
+    """
+    from econengine import parcels as parcels_mod
+    create_content(session)
+    w = _seat(session, "Watcher")
+    _set(session, w, "WARMTH", Decimal("6"))
+    # the watch hour: outputs land at the NEXT tick's top (t1 runs,
+    # t2 completes) -- the first sleeping hour's draw precedes its
+    # credit, the seam every real watch repeats hour by hour
+    production.start_process(session, w, "SLEEP_BY_FIRE")   # commons fire
+    _run(session, 2)
+    assert _hold(session, w.id, "REST") == Decimal("4.5")    # +1, -0.5
+    # warmth fades a fifth an hour: 6 ->3 ->x0.8 ->2.4, +3 -3, ->1.92
+    assert _hold(session, w.id, "WARMTH") == Decimal("1.92")
+    assert _hold(session, w.id, "EXPOSURE") == Decimal("0")
+    # the lit gate: a dark fire refuses the sleeper like the sitter
+    for fire in session.execute(select(parcels_mod.Facility)).scalars():
+        if fire.facility_type == "FIRE":
+            fire.fuel = Decimal("0")
+    session.commit()
+    with pytest.raises(Exception, match="dark"):
+        production.start_process(session, w, "SLEEP_BY_FIRE")
+
+
+def test_the_comfort_ladder_shelter_and_bed_sleep(session):
+    """The ladder's rungs (P4): shelter sleeps leaky-warm (REST+1,
+    WARMTH+2, survivable misery), a bed under a roof sleeps deep
+    (REST+1.5, WARMTH+3 -- recovery half again as fast, the inert
+    hook pays off), and the den is the beasts' alone: a house reading
+    the catalog cannot curl up in it."""
+    create_content(session)
+    w = _seat(session, "Sleeper")
+    camp = _camp(session, w)
+    with pytest.raises(Exception, match="no free SHELTER"):
+        production.start_process(session, w, "SLEEP_SHELTERED", camp.id)
+    with pytest.raises(Exception, match="no free SHELTER"):
+        production.start_process(session, w, "SLEEP_IN_BED", camp.id)
+    parcels.add_facility(session, camp, "SHELTER")
+    with pytest.raises(Exception, match="BED"):
+        production.start_process(session, w, "SLEEP_IN_BED", camp.id)
+    # shelter rung: the hour lands at the next tick's top (2-tick
+    # arithmetic -- see the fire test)
+    _set(session, w, "REST", Decimal("1"))
+    _set(session, w, "WARMTH", Decimal("6"))
+    production.start_process(session, w, "SLEEP_SHELTERED", camp.id)
+    _run(session, 2)
+    assert _hold(session, w.id, "REST") == Decimal("1.5")    # +1, -0.5
+    # +2 credit against the 3-draw, warmth fading a fifth an hour:
+    # leaky by design -- but never unmet while the bank lasts
+    assert Decimal("1") < _hold(session, w.id, "WARMTH") < Decimal("3")
+    assert _hold(session, w.id, "EXPOSURE") == Decimal("0")
+    # bed rung: +1.5 rest an hour
+    markets.adjust_holding(session, w, "BED", Decimal("1"))
+    _set(session, w, "REST", Decimal("1"))
+    production.start_process(session, w, "SLEEP_IN_BED", camp.id)
+    _run(session, 2)
+    assert _hold(session, w.id, "REST") == Decimal("2.0")    # +1.5, -0.5
+    # the den is born, not learned: the CARNIVORE's alone
+    with pytest.raises(ValueError, match="requires CARNIVORE"):
+        production.start_process(session, w, "SLEEP_DEN")
+
+
+def test_wolf_dens_at_night_and_pays_prowl_with_rest(session):
+    """The beasts sleep too (P4): a fed wolf dens through the night
+    (SLEEP_DEN: REST+1, WARMTH+2 -- the CARNIVORE's watch), and the
+    spawn templates carry the born buffer. The pack that prowls every
+    dark instead grows tired: prowling has a price."""
+    create_content(session)
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    assert _hold(session, wolf.id, "REST") == Decimal("4")
+    from econengine import spawns
+    boar = spawns.spawn_one(session, "Wild Boar Test", {
+        "entity_type": "individual",
+        "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
+        "holdings": {"MEAT": 6, "PELT": 2, "WATER": 2,
+                     "REST": float(stone_age.REST_BEAST_BUFFER)},
+        "script_setting": "boar",
+        "account": {"COIN": 0},
+        "place": "THICKET",
+        "technologies": ["CARNIVORE"],
+    })
+    assert _hold(session, boar.id, "REST") == Decimal("4")
+    # a fed pack dens: run the wolf's program through a night with the
+    # stomach kept full (hunger outranks sleep -- see the block order)
+    markets.adjust_holding(session, wolf, "SATIETY", Decimal("6"))
+    markets.adjust_holding(session, wolf, "REST", Decimal("2"))
+    for _ in range(4):
+        markets.adjust_holding(session, wolf, "SATIETY",
+                               Decimal("6") - _hold(session, wolf.id, "SATIETY"))
+        _run(session, 1)                 # ticks 1..4: the deep of night
+    assert _hold(session, wolf.id, "REST") > Decimal("2")   # it slept
+    assert _hold(session, wolf.id, "FATIGUE") == Decimal("0")
+
+
+def test_an_attack_wakes_the_sleeper(session):
+    """Wolves counter sleep (P4): the pack declares the sleep_recipes
+    convention, and any resolved attempt on a sleeper -- the deterred
+    bark at the door included -- cancels their running sleep hour.
+    A sleeper by the fire holds little WARMTH (the seat refills the
+    stock; the sleep only covers the draw), so deterrence does not
+    cover them: the watch's price is vigilance's absence."""
+    create_content(session)
+    w = _seat(session, "Sleeper")
+    _run(session, 1)
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    _at(session, wolf, "HEARTH")        # up close (S4)
+    session.commit()
+    from econengine import combat as combat_mod
+    assert combat_mod.get_rules(session)["sleep_recipes"] == ["SLEEP_*"]
+    sleep = production.start_process(session, w, "SLEEP_BY_FIRE")
+    from econengine.models import ProcessStatus
+    ev = combat_mod.resolve_attack(session, wolf.id, w.id, 2)   # night
+    assert ev.get("interrupted") == ["SLEEP_BY_FIRE"]
+    assert sleep.status == ProcessStatus.CANCELLED
+
+
+def test_the_starter_sleeps_the_night_shift(session):
+    """The inherited floor now sleeps (P4): by a lit commons fire when
+    the body wants rest (the watch emerges -- sleep ticks, stoke
+    between them), seated when merely cold. The 40-tick window is the
+    suite's operational "indefinitely" (test_starter_survives) -- and
+    the commons fire is a SHARED cost: a lone floor house rides tired
+    once the genesis fuel burns (gather rolls ~1 wood a day against a
+    14-hour night), exactly the pressure that should pull houses to
+    keep one fire, together. Under it: alive, and the clock under its
+    killing threshold."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Floor")
+    session.add(Script(
+        name=f"starter-behaviour-{w.id}",
+        script_type=ScriptType.BEHAVIOUR,
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        entity_id=w.id,
+        timeout_ms=200,
+        state={},
+    ))
+    session.commit()
+    # night one, fire lit: the watch works -- REST climbs past born
+    _run(session, 3)
+    assert _hold(session, w.id, "REST") > Decimal("4")
+    _run(session, 37)
+    assert session.get(Entity, w.id).status == EntityStatus.ACTIVE
+    assert _hold(session, w.id, "FATIGUE") < Decimal("7.5")   # under death
+    sleeps = [e for e in _events(session, "process_completed")
+              if e.get("entity_id") == w.id
+              and e.get("recipe") == "SLEEP_BY_FIRE"]
+    assert sleeps                          # the floor sleeps, not idles
+
+
+def test_the_post_shelves_a_bed(session):
+    """The comfort ladder's storefront (P4): one bed on the shelf at
+    5.00 -- priced between \"build it yourself\" (1 LABOR + 2 WOOD +
+    3 YARN) and \"sleep rough\". When it is gone, it is gone: capital
+    that pays every night forever."""
+    create_content(session)
+    assert stone_age.POST_FOOD["BED"] == Decimal("1")
+    post = _post(session)
+    assert _hold(session, post.id, "BED") == Decimal("1")
+    _run(session, 1)
+    mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
+    sells = {mid[o.market_id]: o for o in _open_orders(session, post.id,
+                                                       side=OrderSide.SELL)}
+    assert sells["BED"].limit_price == Decimal("5.00")
+    assert sells["BED"].quantity == Decimal("1")

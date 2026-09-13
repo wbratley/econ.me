@@ -277,6 +277,14 @@ EMBER_TICKS = 2
 #             Meals part-hydrate, so the berry-grazer rides under the
 #             threshold (equilibrium ~5 on a wet diet: day 1 is never a
 #             death march, and the gatherer's road passes the river).
+#   FATIGUE:  grant 0.5/tick, decay 0.05 -> equilibrium 10, dies at 7.5
+#             (the THIRST twin). The REST stock (born 4, cap 8) drains
+#             0.25/h flat: sleepless, it empties at ~16h and the climb
+#             crosses the impaired floor 5 near the END of night 2
+#             (~32h) and kills mid-night-3 (~48h) -- 2 nights tired,
+#             3 dead. Sleep pays in hours the house already spends
+#             idle at night: no third time-tax (P3's lesson), the
+#             night becomes a budget instead.
 FOOD_PER_TICK = Decimal("0.5")
 WARMTH_PER_TICK = Decimal("1")
 WARMTH_PER_NIGHT_TICK = Decimal("3")
@@ -298,6 +306,29 @@ WATERSKIN_CAP = Decimal("8")
 WATERSKIN_DECAY = Decimal("0.02")
 WATER_SEAT_BUFFER = Decimal("4")
 WATER_BEAST_BUFFER = Decimal("2")
+
+# --- Sleep (P4, ROADMAP.md) -----------------------------------------------
+# The night has a budget: a body that must sleep somewhere warm has a
+# reason to be home at dusk. Run 37's exposed wound was night LOCATION
+# (the twins froze at the thicket one road from their lit hearth;
+# Ivar PACEd 26 night-hours as warmth). REST is the stock (SATIETY's
+# shape), FATIGUE the register twin of THIRST, and sleep is the
+# duration-1 idiom -- the WATCH is emergent in the script (sleep ticks,
+# stoke between them: fire fuel is the watch clock), never a committed
+# duration-8 process that could sleep through the fuel. The comfort
+# ladder: the commons fire (REST+1/WARMTH+3 -- the fire does double
+# duty), shelter (leaky warmth: survivable misery, equilibrium ~10
+# < 18 exposure), bed (capital: +1.5/h, faster recovery -- the inert
+# P5-era hook pays off). An attack on a sleeper wakes them (the
+# sleep_recipes convention, combat.py), and a tired body (FATIGUE >= 5)
+# fights at -1/-1 (stat_penalties) -- wolves counter sleep, and the
+# sleepless are prey.
+REST_PER_TICK = Decimal("0.25")
+FATIGUE_GRANT = Decimal("0.5")
+FATIGUE_IMPAIRED_FLOOR = Decimal("5")
+REST_CAP = Decimal("8")
+REST_SEAT_BUFFER = Decimal("4")
+REST_BEAST_BUFFER = Decimal("4")
 
 DEFAULT_TICKS = 40
 
@@ -581,7 +612,13 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # -- the price a thirsty house with coin reads. Water
              # itself is never sold: the river is free, and the SKIN
              # is what coin buys.
-             "WATERSKIN": Decimal("1")}
+             "WATERSKIN": Decimal("1"),
+             # The comfort ladder's storefront (P4): one bed on the
+             # shelf -- the capital that pays every night forever,
+             # priced for the house that has food, water, and fire
+             # solved and wants the top rung. Sell-buys round-trip
+             # comfort like hens round-trip the flock.
+             "BED": Decimal("1")}
 
 
 def spawn_trading_post(session: Session) -> Entity:
@@ -945,6 +982,37 @@ def _create_goods(session: Session) -> None:
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
     )
+    # FATIGUE (P4): the sleepless clock, the THIRST twin. Grant 0.5/
+    # unmet hour, decay 0.05 -> equilibrium 10, dies at 7.5 -- the
+    # climb crosses the impaired floor 5 (stat_penalties: -1/-1, see
+    # combat rules) near the end of the second sleepless night and
+    # kills mid-third. Recovery is sleep itself: the grants stop the
+    # hour the REST stock is fed again, and the register decays as
+    # the body catches up.
+    goods.create_good(
+        session, "FATIGUE", name="Fatigue",
+        description="The sleepless clock. Two nights without sleep dull "
+                    "the body (-1 attack, -1 defense while it rides above "
+                    "5); three kill it. The cure is a warm place and "
+                    "hours: sleep by a lit fire, under shelter, or in a "
+                    "bed -- and let the register fade.",
+        decay_per_tick=Decimal("0.05"),
+        incapacitates_at=Decimal("7.5"),
+    )
+    # REST (P4): the night's stock, SATIETY's shape. Cap 8 (a day and
+    # a third of waking -- the buffer a good night rebuilds), drained
+    # 0.25/h flat: sleeping 8 of the 14 night hours nets +6/day against
+    # the 6/day draw, exactly the rhythm. Filled only by SLEEP recipes
+    # -- an idle hour restores nothing (the body does not rest by
+    # standing still), which is why the night wants a plan.
+    goods.create_good(
+        session, "REST", name="Rest",
+        description="Sleep banked in the body: a night's work, spent by "
+        "every waking hour (0.25). Only sleep fills it -- by a lit fire, "
+        "under shelter, in a bed; standing idle restores nothing. A "
+        "body holds at most a day and a third of it.",
+        max_holding=REST_CAP,
+    )
     # Wolves (run 20): creatures, not pressure. A wolf is an ENTITY --
     # stats, health, needs, a hunting program -- and combat happens
     # between entities (combat.py, rules below). HITS is every
@@ -997,6 +1065,16 @@ def _create_combat(session: Session) -> None:
         "carry_stat": "CARRY",
         "bite_loot": {"MEAT": 1},
         "base_hit": 50, "per_point": 5,
+        # P4, sleep: a tired body (FATIGUE held at/above 5 -- the end
+        # of the second sleepless night) fights at -1/-1: the sleepy
+        # are prey (a sleeper holds little WARMTH, so deterrence does
+        # not cover them), and prowling all night now costs the beast.
+        "stat_penalties": {"FATIGUE": {"floor": str(FATIGUE_IMPAIRED_FLOOR),
+                                        "ATTACK": -1, "DEFENSE": -1}},
+        # P4, sleep: an attack on a sleeper wakes them -- any resolved
+        # attempt (the deterred bark at the door included) cancels the
+        # defender's RUNNING sleep hour. Wolves counter sleep.
+        "sleep_recipes": ["SLEEP_*"],
     })
     # The conditions register (P2): named, per-tick, queryable states —
     # every reader (the night gate, deterrence, ctx.entity.conditions,
@@ -1033,7 +1111,8 @@ def _create_combat(session: Session) -> None:
             "template": {
                 "entity_type": "individual",
                 "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-                "holdings": {"MEAT": 1, "PELT": 1, "WATER": 2},
+                "holdings": {"MEAT": 1, "PELT": 1, "WATER": 2,
+                             "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "wolf",
                 "account": {"COIN": 0},
                 # The den (S4): wolves wake in the deep forest, and the
@@ -1054,7 +1133,8 @@ def _create_combat(session: Session) -> None:
                 "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
                 # Born carrying its own carcass: the estate seizure on a
                 # kill is the point -- high meat, big pelt.
-                "holdings": {"MEAT": 6, "PELT": 2, "WATER": 2},
+                "holdings": {"MEAT": 6, "PELT": 2, "WATER": 2,
+                             "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "boar",
                 "account": {"COIN": 0},
                 # The thicket's edge, an hour out: the boar is the larder's
@@ -1483,10 +1563,57 @@ def _create_recipes(session: Session) -> None:
         outputs={}, duration_ticks=3, builds_facility="SHELTER",
     )
     production.create_recipe(
-        session, "REST_SHELTERED", name="Rest Sheltered",
-        description="Sleep warm under your own roof — no labor required.",
+        session, "SLEEP_SHELTERED", name="Sleep Sheltered",
+        description="Sleep under your own roof: an hour of rest and leaky "
+                    "warmth (+2 -- the wind is out, the cold is not; with "
+                    "clothes the night rides survivable-miserable). Free, "
+                    "labor-free, and the fire is someone else's problem.",
         inputs={},
-        outputs={"WARMTH": D("1")}, duration_ticks=1, requires_facility="SHELTER",
+        outputs={"REST": D("1"), "WARMTH": D("2")}, duration_ticks=1,
+        requires_facility="SHELTER",
+    )
+    # --- Sleep: the night becomes a budget (P4) ----------------------------
+    # The duration-1 idiom, WARM_BY_FIRE's shape: the WATCH is emergent
+    # in the script (sleep ticks, stoke between them -- fire fuel is
+    # the watch clock), never a committed duration-8 process that
+    # could sleep through the fuel and freeze. An attack on a sleeper
+    # cancels the running hour (combat.py sleep_recipes), and the
+    # tired body fights worse (stat_penalties) -- sleepers are prey,
+    # prowling has a price. The ladder: commons fire (communal,
+    # fuel-hungry, wolf-vulnerable) < shelter (private, leaky) < bed
+    # (capital: +1.5/h, faster recovery -- the inert hook pays off).
+    production.create_recipe(
+        session, "SLEEP_BY_FIRE", name="Sleep By Fire",
+        description="A watch sleep at a lit commons fire: an hour of rest "
+                    "(+1) wrapped by the flames' warmth (+3 -- the fire "
+                    "does double duty, covering the night's draw exactly). "
+                    "Free and labor-free; the fire wants feeding, and the "
+                    "sleeping hold no torch -- a wolf that finds a sleeper "
+                    "finds prey.",
+        inputs={}, outputs={"REST": D("1"), "WARMTH": D("3")},
+        duration_ticks=1,
+        requires_facility="FIRE", requires_facility_lit=True,
+    )
+    production.create_recipe(
+        session, "SLEEP_IN_BED", name="Sleep In Bed",
+        description="The comfort top rung: a bed under a roof. An hour of "
+                    "deep rest (+1.5 -- recovery half again as fast) and "
+                    "tight warmth (+3, the night fully covered). The bed is "
+                    "held, never consumed: capital that pays every night "
+                    "forever, craftable or bought at the post.",
+        inputs={},
+        outputs={"REST": D("1.5"), "WARMTH": D("3")}, duration_ticks=1,
+        requires_facility="SHELTER", good_requirements={"BED": D("1")},
+    )
+    production.create_recipe(
+        session, "SLEEP_DEN", name="Sleep In Den",
+        description="The beast's watch: curled in the dark, an hour of rest "
+                    "and animal warmth. Born, not learned (the CARNIVORE's "
+                    "den) -- wolves dens in the forest, boars in the "
+                    "thicket, and a prowling beast pays the night's price "
+                    "like anyone else.",
+        inputs={}, outputs={"REST": D("1"), "WARMTH": D("2")},
+        duration_ticks=1, requires=["CARNIVORE"],
     )
     production.create_recipe(
         session, "MAKE_CLOTHES", name="Make Clothes",
@@ -1659,6 +1786,25 @@ def _create_needs(session: Session) -> None:
         entity_type=EntityType.INDIVIDUAL, priority=2,
         condition_symbol="THIRST", condition_quantity=THIRST_GRANT,
     )
+    # REST (P4): the sleep clock, drawn flat (day and night alike --
+    # being awake costs rest, whatever the sun is doing). Only SLEEP
+    # recipes fill the stock; an idle hour restores nothing. Miss the
+    # draw and fatigue accrues: -1/-1 past 5, death at 7.5 -- two
+    # sleepless nights tired, three dead. Sleep pays in hours the
+    # house already spends idle at night: the night becomes a budget,
+    # not a third time-tax.
+    needs.create_need(
+        session, "REST", REST_PER_TICK, ["REST"],
+        name="Rest",
+        description="The sleep clock: 0.25 an hour awake (six a day), "
+                    "filled only by sleeping -- an hour by a lit fire, "
+                    "under shelter, or in a bed (+1 to +1.5 an hour; the "
+                    "beasts den). Miss the draw and fatigue accrues: two "
+                    "sleepless nights dull the body, three kill it. Sleep "
+                    "is free -- the cost is being home, warm, at dusk.",
+        entity_type=EntityType.INDIVIDUAL, priority=3,
+        condition_symbol="FATIGUE", condition_quantity=FATIGUE_GRANT,
+    )
 
 
 def _create_markets(session: Session) -> None:
@@ -1700,6 +1846,7 @@ def make_house(session: Session, name: str = "House") -> Entity:
     markets.adjust_holding(session, house, "BERRIES", BERRY_BUFFER)
     markets.adjust_holding(session, house, "WARMTH", WARMTH_BUFFER)
     markets.adjust_holding(session, house, "WATER", WATER_SEAT_BUFFER)
+    markets.adjust_holding(session, house, "REST", REST_SEAT_BUFFER)
     markets.adjust_holding(session, house, "HITS", HOUSE_HITS)
     combat.create_stat(session, house.id, "ATTACK", Decimal("1"))
     combat.create_stat(session, house.id, "DEFENSE", Decimal("1"))
@@ -1727,7 +1874,8 @@ def make_wolf(session: Session, name: str) -> Entity:
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-        "holdings": {"MEAT": 1, "PELT": 1, "WATER": WATER_BEAST_BUFFER},
+        "holdings": {"MEAT": 1, "PELT": 1, "WATER": WATER_BEAST_BUFFER,
+                     "REST": REST_BEAST_BUFFER},
         "script_setting": "wolf",
         "account": {"COIN": 0},
         "place": "FOREST",

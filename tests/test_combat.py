@@ -334,3 +334,58 @@ def test_a_kill_in_a_tick_emits_the_death_event(session):
     death = next(e for e in tick.events if e["type"] == "entity_incapacitated")
     assert death["entity_id"] == house.id and death["condition"] == "HITS"
     assert house.status == EntityStatus.INCAPACITATED
+
+
+def test_stat_penalties_dull_the_tired(session):
+    """The stat_penalties rule (P4): a condition held at or above its
+    floor subtracts from the fighter, and only then -- a recovering
+    body sheds the penalty as the condition decays. No rule, no
+    penalty: the platform stays neutral on what tired means."""
+    from econengine import production
+    wolf, house = _world(session)
+    goods.create_good(session, "FATIGUE", incapacitates_at=Decimal("18"))
+    combat.set_rules(session, combat.get_rules(session) | {
+        "stat_penalties": {"FATIGUE": {"floor": 5,
+                                       "ATTACK": -1, "DEFENSE": -1}}})
+    markets.adjust_holding(session, house, "FATIGUE", Decimal("4"))
+    assert combat.effective_attack(session, house.id) == Decimal("1")
+    assert combat.effective_defense(session, house.id) == Decimal("1")
+    markets.adjust_holding(session, house, "FATIGUE", Decimal("1"))  # 5: at floor
+    assert combat.effective_attack(session, house.id) == Decimal("0")
+    assert combat.effective_defense(session, house.id) == Decimal("0")
+    assert combat.effective_attack(session, wolf.id) == Decimal("4")  # rested
+    combat.set_rules(session, {k: v for k, v in combat.get_rules(session).items()
+                               if k != "stat_penalties"})
+    assert combat.effective_attack(session, house.id) == Decimal("1")
+
+
+def test_an_attack_wakes_a_sleeper(session):
+    """The sleep_recipes convention (P4): any resolved attempt on a
+    defender -- deterred bark included -- cancels their RUNNING sleep;
+    other work is untouched; with no rule declared, nothing changes."""
+    from econengine import production
+    from econengine.models import ProcessStatus
+    wolf, house = _world(session)
+    goods.create_good(session, "REST")
+    production.create_recipe(session, "SLEEP_BY_FIRE", name="Sleep",
+                             inputs={}, outputs={"REST": Decimal("1")},
+                             duration_ticks=1)
+    production.create_recipe(session, "MAKE_SPEAR", name="Spear",
+                             inputs={}, outputs={"SPEAR": Decimal("1")},
+                             duration_ticks=1)
+    sleep = production.start_process(session, house, "SLEEP_BY_FIRE")
+    spear = production.start_process(session, wolf, "MAKE_SPEAR")
+    markets.adjust_holding(session, house, "WARMTH", Decimal("1"))  # deterred
+    combat.set_rules(session, combat.get_rules(session) | {
+        "sleep_recipes": ["SLEEP_*"]})
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)  # night tick
+    assert ev["deterred"] is True
+    assert ev["interrupted"] == ["SLEEP_BY_FIRE"]
+    assert sleep.status == ProcessStatus.CANCELLED
+    assert spear.status == ProcessStatus.RUNNING  # only sleep is breakable
+    again = production.start_process(session, house, "SLEEP_BY_FIRE")
+    combat.set_rules(session, {k: v for k, v in combat.get_rules(session).items()
+                               if k != "sleep_recipes"})
+    ev = combat.resolve_attack(session, wolf.id, house.id, 2)
+    assert "interrupted" not in ev
+    assert again.status == ProcessStatus.RUNNING

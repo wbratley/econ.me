@@ -58,7 +58,8 @@ from sqlalchemy.orm import Session
 
 from . import clock, conditions, rng
 from .models import (
-    Entity, EntityStatus, EntityType, EntityStat, Holding, Tick, WorldSetting,
+    Entity, EntityStatus, EntityType, EntityStat, Holding, Process,
+    ProcessStatus, Tick, WorldSetting,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -109,12 +110,32 @@ def _holding_qty(session: Session, entity_id: str, symbol: str) -> Decimal:
     return h.quantity if h is not None else Decimal("0")
 
 
+def _stat_penalty(session: Session, rules: dict, entity_id: str,
+                  stat: str) -> Decimal:
+    """A held condition dulls the body: the stat_penalties rule maps a
+    condition symbol to signed per-stat deltas ("FATIGUE": {"floor": 5,
+    "ATTACK": -1}), applied only while the entity HOLDS the condition at
+    or above its floor -- the deterrence holding-floor precedent, so a
+    recovering body sheds the penalty as the condition decays. Default:
+    no rule, no penalty -- the platform stays neutral on what tired
+    means."""
+    total = Decimal("0")
+    for symbol, penalties in (rules.get("stat_penalties") or {}).items():
+        delta = (penalties or {}).get(stat)
+        if delta is None:
+            continue
+        if _holding_qty(session, entity_id, str(symbol)) >= \
+                Decimal(str((penalties or {}).get("floor", 0))):
+            total += Decimal(str(delta))
+    return total
+
+
 def effective_attack(session: Session, entity_id: str) -> Decimal:
     rules = get_rules(session)
     atk = get_stats(session, entity_id).get("ATTACK", Decimal("0"))
     for symbol, bonus in (rules.get("weapons") or {}).items():
         atk += Decimal(bonus) * _holding_qty(session, entity_id, symbol)
-    return atk
+    return atk + _stat_penalty(session, rules, entity_id, "ATTACK")
 
 
 def effective_defense(session: Session, entity_id: str) -> Decimal:
@@ -122,7 +143,7 @@ def effective_defense(session: Session, entity_id: str) -> Decimal:
     dfn = get_stats(session, entity_id).get("DEFENSE", Decimal("0"))
     for symbol, bonus in (rules.get("armor") or {}).items():
         dfn += Decimal(bonus) * _holding_qty(session, entity_id, symbol)
-    return dfn
+    return dfn + _stat_penalty(session, rules, entity_id, "DEFENSE")
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +170,39 @@ def _deterred(session: Session, rules: dict, entity_id: str,
         if _holding_qty(session, entity_id, key) >= Decimal(floor):
             return True
     return False
+
+
+def _interrupt_sleep(session: Session, rules: dict,
+                     entity_id: str) -> list[str]:
+    """An attack on a sleeper wakes them. The world declares which
+    recipes are sleep by fnmatch pattern (rules["sleep_recipes"],
+    e.g. ["SLEEP_*"]; default empty -- no behavior change): every
+    resolved attempt -- hit, miss, or the deterred bark at the door --
+    cancels the defender's RUNNING sleep, inputs forfeit. A process
+    already past its cancellation window simply finishes: the sleeper
+    loses the hour to waking, not the outputs. Wolves counter sleep."""
+    from fnmatch import fnmatchcase
+
+    from . import production
+
+    patterns = list(rules.get("sleep_recipes") or [])
+    if not patterns:
+        return []
+    awakened: list[str] = []
+    for process in session.execute(
+        select(Process).where(Process.entity_id == entity_id,
+                               Process.status == ProcessStatus.RUNNING)
+        .order_by(Process.id)
+    ).scalars().all():
+        code = process.recipe.code
+        if not any(fnmatchcase(code, str(pattern)) for pattern in patterns):
+            continue
+        try:
+            production.cancel_process(session, process.id, entity_id)
+            awakened.append(code)
+        except ValueError:
+            pass  # the completion seed is committed; the hour finishes
+    return awakened
 
 
 def pick_prey(session: Session, tick_number: int,
@@ -307,6 +361,11 @@ def resolve_attack(session: Session, attacker_id: str,
         return {**event, "status": "rejected",
                 "reason": f"too bright to hunt (hour {clock.hour_of(tick_number)}, "
                           f"daylight is hours 06..19)"}
+    # An attack on a sleeper wakes them -- any resolved attempt
+    # (deterred bark included): the night's watch is breakable.
+    awakened = _interrupt_sleep(session, rules, defender_id)
+    if awakened:
+        event["interrupted"] = awakened
     event["attack"] = str(effective_attack(session, attacker_id).quantize(
         _QUANTUM, rounding=ROUND_HALF_UP))
     event["defense"] = str(effective_defense(session, defender_id).quantize(

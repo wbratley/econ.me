@@ -1,8 +1,9 @@
 -- stone_age_starter.lua  (BEHAVIOUR) -- the default a player inherits.
 --
 -- A hand-to-mouth loop with a commute (S4: the world has places, and
--- they are hours apart): keep the COMMONS fire fed and take a seat by
--- dark (warming is a seat, not a stock), EAT when the stomach runs low
+-- they are hours apart): keep the COMMONS fire fed and sleep by it
+-- through the dark (P4: warming is a seat, resting is a watch -- the
+-- fire pays both while it burns), EAT when the stomach runs low
 -- (eating is your decision now -- the engine no longer chews for you),
 -- gather whatever the thicket offers, and WALK between them -- an hour
 -- each way, the road exposed place by place. It survives -- barely. It
@@ -38,6 +39,7 @@ local woods  = "THICKET"          -- the subsistence walk: food and wood
 local river  = "RIVER"            -- the world's tap: free water at the bank
 
 local warmth = std.holding_qty("WARMTH")
+local rest   = std.holding_qty("REST")
 local wood   = std.holding_qty("WOOD")
 local meat   = std.holding_qty("MEAT")
 local berries = std.holding_qty("BERRIES")
@@ -110,15 +112,28 @@ if low_fuel and wood >= 1 and (place == home or can_walk) then
   end
 end
 
--- 1a. Sit when cold or when dark falls: the commons fire warms whoever
---     takes a seat while it burns (a dark fire warms no one -- feed it
---     first). Night draws 3 warmth an hour; a body holds six.
+-- 1a. Sleep or sit by dark (P4): the night draws 3 warmth an hour
+--     AND a quarter-rest -- and an idle hour restores nothing. When
+--     the body wants rest, SLEEP_BY_FIRE pays both draws at once
+--     (REST +1, WARMTH +3 -- the fire does double duty) while it
+--     burns. The WATCH is emergent, not scripted: sleep an hour, and
+--     when the fuel runs low the stoke branch above takes the tick
+--     between sleeps (fire fuel is the watch clock -- nobody sleeps,
+--     keeps the fire, and stands watch all at once). The sleep wants
+--     warmth BANKED first (>= 3: the stoke hour between sleeps draws
+--     uncovered -- a seat before the watch, a seam never bit). Rested
+--     and dark: take a seat as before (WARM_BY_FIRE, +6 -- the seat that
+--     refills the stock a sleeping body only holds). A wolf that
+--     finds a sleeper finds prey: sleeping holds no torch and little
+--     warmth -- the price of the watch is vigilance's absence.
 if (std.is_night() or warmth < 4) and #fires > 0
-   and not std.running_recipe("WARM_BY_FIRE")
    and (place == home or can_walk) then
   if place ~= home then
     ctx.action.travel(home)
-  else
+  elseif std.is_night() and rest < 5 and warmth >= 3
+        and not std.running_recipe("SLEEP_BY_FIRE") then
+    ctx.action.start_process("SLEEP_BY_FIRE")
+  elseif not std.running_recipe("WARM_BY_FIRE") then
     ctx.action.start_process("WARM_BY_FIRE")
   end
 end
@@ -156,14 +171,23 @@ end
 --    pays for itself before the walk home. Stocked, or caught by dark
 --    away from home: head back -- warmth is fatal to be without, food
 --    buffers can wait out a night.
+--    P4, dusk discipline: the night has a PLAN now -- sleep by a lit
+--    fire -- and the plan starts before dark. Leave the woods when
+--    the walk home would land in the dark (run 37's census: the twins
+--    froze AT the thicket one road from their lit hearth; the floor
+--    no longer models that death). Home before dark, stoked, asleep:
+--    the watch is the reward for the commute's timing.
+local walk_home = world.distance_ticks(woods, home) or 1
+local dusk_closing = std.hour() + walk_home >= 19
 if not std.is_night() then
-  if (food < 8 or wood < 6) and not std.running_recipe("GATHER") then
+  if (food < 8 or wood < 6) and not dusk_closing
+     and not std.running_recipe("GATHER") then
     if place ~= woods then
       ctx.action.travel(woods)
     else
       ctx.action.start_process("GATHER")
     end
-  elseif place ~= home and food >= 8 and wood >= 6 then
+  elseif place ~= home and (dusk_closing or (food >= 8 and wood >= 6)) then
     ctx.action.travel(home)
   end
 else
