@@ -227,13 +227,14 @@ reliably kills between ticks 18–40, and adaptation reliably saves.
 **The larder** (P5 — the income wall's relief; ten straight runs died
 starving beside wealth, so the wall breaks on income): the gather
 tables carry an **orchard branch** (APPLES keep a day and a half where
-berries rot in a morning; bare food income ~3.0 satiety-equivalent an
-hour, ~6.2 bagged) and a **fat wood branch** (run 38's lever — all
-three houses died of FATIGUE beside a dark fire with every other clock
-quiet: the wood roll now pays 0.75 logs a gather bare-handed, 1.20
-bagged, so a polity of gatherers breaks even against the ~10-log
-night; the berry share donated its weight — food had slack, fuel had
-none), **hens are capital that lays** (the post sells two
+berries rot in a morning; bare food income ~3.5 satiety-equivalent an
+hour, ~6.7 bagged — run 39 starved on the donated 30%-berry table
+beside a funded fire, so the berries came back and yarn/flint paid)
+and a **fat wood branch** (run 38's lever — all three houses died of
+FATIGUE beside a dark fire with every other clock quiet: the wood roll
+pays 0.75 logs a gather bare-handed, 1.20 bagged, so a polity of
+gatherers breaks even against the ~10-log night — a quarter of every
+gather, because frequency beats magnitude for famine), **hens are capital that lays** (the post sells two
 at 4.00; MAKE_PEN on the camp, then COLLECT_EGGS serves the whole
 flock for one labor hour — an egg per hen held at completion, capped
 at four, which is also the body's CHICKEN carry cap; eggs keep near a
