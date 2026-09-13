@@ -5,8 +5,12 @@ Written 2026-09-06 after run 33 (breaker A/B closed, drain cap shipped as PR
 SHIPPED (torches + conditions register), P5 SHIPPED (the larder —
 reordered ahead of P3/P4 by the user: runs 26–35 ALL died on the income
 wall, so relief came first), P3 SHIPPED (water — the thirst clock;
-run 36 validated P5 first: a deepseek seat survived d40 on the full
-larder playbook), P4 (sleep) next. One phase = one
+run 37 validated it: zero THIRST deaths, water kills via the TIME tax
+— the river pilgrimage priced a gather day, the commute drink is the
+affordable rhythm — the larder playbook), P4 SHIPPED (sleep — the
+night becomes a budget; run 37's exposed wound was night LOCATION:
+the twins froze one road from their lit hearth and the champion PACEd
+26 night-hours). One phase = one
 PR = one run; every phase re-asserts
 the three balance policies (do-nothing dies <2 rounds; starter survives
 indefinitely; tooled policies accumulate surplus).
@@ -125,14 +129,26 @@ as landed (numbers PROVISIONAL — the census tunes the tap):
 - Water is never marketable (the tap is free — no free-good arbitrage;
   the SKIN is what coin buys). Zero engine surfaces.
 
-## P4 — Sleep (PRESSURE; the night becomes a budget)
+## P4 — Sleep (PRESSURE; the night becomes a budget) — SHIPPED
 
-REST need + FATIGUE condition: 2 sleepless nights = impaired (stat
-penalties −ATK/−DEF — lean), 3 = dead, 8h clears. SLEEP: night-legal,
-must be firelit-or-sheltered, duration 8h or shorter watches; an attack
-on a sleeper INTERRUPTS it (wolves counter sleep). The existing idle BED
-becomes real: shelter+bed = faster full recovery. Can't sleep, keep the
-fire, and stand watch at once — three roles, one night.
+Shipped as the `sleep` PR. REST need (0.25/h flat, six a day — paid in
+hours the house already spends idle at night: the P3 lesson, no third
+time-tax) + FATIGUE condition (grant 0.5/decay 0.05 — the THIRST
+twin; two sleepless nights impaired −1/−1 at the floor, three dead).
+Sleep is the duration-1 idiom, not a duration-8 process: the WATCH is
+emergent in the script — sleep ticks, stoke between them, fire fuel is
+the watch clock — so nobody sleeps through the fuel and freezes. The
+original sketch said "duration 8h or shorter watches"; the census
+arithmetic said duration-1 (see the decisions log). The comfort
+ladder: commons fire (REST+1/WARMTH+3 — the fire does double duty),
+shelter (leaky warmth — survivable misery), bed (REST+1.5 — the inert
+hook pays off, faster recovery). An attack on a sleeper wakes them
+(deterred bark included — the sleep_recipes convention), and the tired
+fight worse (stat_penalties) — wolves counter sleep, sleepers are
+prey, prowling has a price (the packs den too: SLEEP_DEN, CARNIVORE-
+gated). The post shelves one BED at 5.00. Can't sleep, keep the fire,
+and stand watch at once — three roles, one night, and the answer is a
+plan: home by dusk, stoked, asleep in watches.
 
 ## P5 — The larder (RELIEF; attacks the income wall) — SHIPPED
 
@@ -267,3 +283,47 @@ user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
   (carrion 0.9), boars by the orchard (apples 0.6) — both still run
   dry and walk to the bank by day. Creatures, not pressure: they
   share the physics and the roads.
+- The watch is duration-1, not duration-8 (P4): process outputs land
+  at completion, and WARMTH is a flow the body cannot bank (cap 6,
+  fades 20%/h) — a committed 8h sleep would freeze hours before its
+  outputs arrived. So SLEEP_* are 1h recipes repeated by the script
+  (WARM_BY_FIRE's idiom): the watch emerges in lua, fire fuel is its
+  clock, and "8h clears" is 8 ticks.
+- FATIGUE arithmetic under PROPORTIONAL decay (P4, corrected in
+  flight): the plan's flat-decay numbers (threshold 18) would never
+  fire — grant 0.5 against 5%-of-held decay equilibrates at 10 < 18.
+  Kept the approved TIMELINE with the THIRST twin's numbers instead:
+  threshold 7.5, impaired floor 5 — the born REST buffer (4) empties
+  ~16h, the climb crosses 5 near the end of night two (~32h) and
+  7.5 mid-night-three (~48h). Two nights tired, three dead, as
+  sketched.
+- stat_penalties + sleep_recipes are combat RULES, not code (P4): the
+  pack declares {"FATIGUE": {floor 5, ATTACK −1, DEFENSE −1}} and
+  ["SLEEP_*"] patterns; the engine applies holding-floor penalties
+  (the deterrence precedent) and cancels a defender's RUNNING sleep
+  on any resolved attack (deterred included). Default rules: empty —
+  no behavior change for other packs. Two lean surfaces, no
+  migrations.
+- Sleepers are prey, by deterrence arithmetic (P4): sleeping by fire
+  covers the night draw exactly but never banks — a sleeper rides
+  WARMTH below the deterrence floor, holds no torch, and a wolf that
+  finds one finds the counter-sleep payoff. The watch's price is
+  vigilance's absence.
+- The den is CARNIVORE-gated (P4): both wolves and boars carry the
+  born trait, so ONE recipe (SLEEP_DEN, free, night-legal, anywhere)
+  covers every beast — and no house can curl up in it. The packs'
+  programs den when fed and below REST 4; hunger outranks sleep (the
+  starving pack prowls anyway and pays the morning for it).
+- Dusk discipline in the floor (P4): run 37's twins froze AT the
+  thicket one road from their lit hearth — the inherited starter now
+  leaves the woods when the walk home would land in the dark
+  (hour + road >= 19), and sleeps in watches by the lit fire with
+  warmth banked first (the stoke hour between sleeps draws
+  uncovered — a seat before the watch, a seam never bit).
+- The commons fire is a SHARED cost (P4 census note): a lone floor
+  house rides tired (gather rolls ~1 wood a day against a 14-hour
+  night — the 40-tick policy window is the suite's operational
+  "indefinitely", as it was for exposure pre-P4); the pressure is
+  the point — keeping one fire lit is a group project, and sleep is
+  what it buys. Tuning candidate if run 38 starves the fire:
+  wood-rich gather, or a cheaper night.

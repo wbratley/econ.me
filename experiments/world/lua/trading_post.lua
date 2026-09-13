@@ -63,8 +63,12 @@ if not S.ask then
   -- is 3.00 and the egg trade pays 1.20 -- 6.00 stands between "sew
   -- it yourself" and "coin is quicker", the anchor thirsty houses
   -- read. One on the shelf; when it is gone, it is gone.
+  -- BED (P4): 1 LABOR + 2 WOOD + 3 YARN by hand (the egg trade pays
+  -- the yarn) -- 5.00 stands between "build it yourself" and "coin
+  -- is quicker", the comfort ladder's storefront. One on the shelf;
+  -- when it is gone, it is gone.
   S.ask = { BERRIES = 1.25, COOKED_MEAT = 1.50, JERKY = 2.00,
-            CHICKEN = 4.00, WATERSKIN = 6.00 }
+            CHICKEN = 4.00, WATERSKIN = 6.00, BED = 5.00 }
   S.bid = { BERRIES = 1.00, MEAT = 1.00, WOOD = 1.00,
             YARN = 2.00, FLINT = 2.00, PELT = 3.00,
             APPLES = 0.80, EGGS = 1.20 }
@@ -104,7 +108,7 @@ end
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward
 --    trade.
 for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
-                       "WATERSKIN" }) do
+                       "WATERSKIN", "BED" }) do
   if (S.quiet["sell_" .. sym] or 0) >= 3 then
     S.ask[sym] = math.max(S.ask[sym] * 0.95, ASK_FLOOR)
     S.quiet["sell_" .. sym] = 0
@@ -126,7 +130,7 @@ end
 
 local want = {}
 for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
-                       "WATERSKIN" }) do
+                       "WATERSKIN", "BED" }) do
   local qty = math.floor(std.holding_qty(sym))
   if qty > 0 then
     want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),

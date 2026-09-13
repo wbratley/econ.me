@@ -30,6 +30,7 @@ local berries = std.holding_qty("BERRIES")
 local apples  = std.holding_qty("APPLES")
 local meat    = std.holding_qty("MEAT")
 local water   = std.holding_qty("WATER")
+local rest    = std.holding_qty("REST")
 
 -- The feud: answer tooth for tusk, and remember who while they stand
 -- on this ground. A bounced attack (the foe dead, fled, or day-broke)
@@ -49,6 +50,12 @@ if std.is_night() then
   end
   if S.foe then
     ctx.action.attack(S.foe)
+  elseif rest < 4 and not std.running_recipe("SLEEP_DEN") then
+    -- A grazer's night is a den's night (P4): sleep pays the body's
+    -- other clock, and the thicket is home. The feud outranks sleep
+    -- -- provoked, the boar stands its ground all night and pays
+    -- the morning for it.
+    ctx.action.start_process("SLEEP_DEN")
   end
 end
 

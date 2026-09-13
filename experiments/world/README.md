@@ -266,16 +266,39 @@ walk to water by day. Water is never marketable — the tap is free,
 the SKIN is what coin buys. Zero engine surfaces: multi-output meals,
 place-gated recipes, condition goods and need satisfiers all existed.
 
+**Sleep** (P4 — the night becomes a budget; run 37's exposed wound
+was night LOCATION): every individual draws 0.25 REST an hour awake
+(six a day) from a stock that only sleep fills — an idle hour
+restores nothing. Miss the draw and FATIGUE accrues (grant 0.5,
+decay 0.05 — the THIRST twin): two sleepless nights impaired (−1
+ATTACK, −1 DEFENSE while FATIGUE rides ≥ 5), three dead. Sleep is
+the duration-1 idiom — the WATCH is emergent in the script, fire
+fuel its clock — on a comfort ladder: **SLEEP_BY_FIRE** (a lit
+commons fire: REST+1, WARMTH+3 — the fire does double duty, covering
+the night draw exactly), **SLEEP_SHELTERED** (your own roof: REST+1,
+leaky WARMTH+2 — survivable misery), **SLEEP_IN_BED** (a held bed
+under a roof: REST+1.5 — faster recovery; the post shelves one BED
+at 5.00), and **SLEEP_DEN** (the CARNIVORE's watch — wolves and
+boars den anywhere; hunger outranks their sleep). An attack on a
+sleeper wakes them — the deterred bark included — so sleepers are
+prey (sleeping banks no torch and little warmth: deterrence does not
+cover a watch), and the tired fight worse: wolves counter sleep, and
+prowling has a price. The night now has a plan — home by dusk,
+stoked, asleep in watches — and the REST it pays with is hours the
+house was already spending idle: no third time-tax (P3's lesson).
+Two lean engine surfaces, both data-driven combat rules with empty
+defaults: `stat_penalties` and `sleep_recipes`.
+
 The balance contract is three policy tests, not numbers in a comment:
 `test_neglect_kills` (a seat that gathers nothing dies in 18–40),
 `test_shelter_alone_is_misery_not_death` (chronic cold, alive), and
 `test_starter_survives` (the bare `lua/stone_age_starter.lua` treadmill
 survives 40 ticks — barely, by design: it never builds capital).
 
-Expansion hooks left deliberately inert: BED (built, no effect yet),
-TRAP-consuming HUNT_TRAPS (best table, consumable), and the whole
-GOOD/RESEARCH axis from `docs/game.md` — the pack is data, so phases
-land as new rows, not engine patches.
+Expansion hooks left deliberately inert: TRAP-consuming HUNT_TRAPS
+(best table, consumable) and the whole GOOD/RESEARCH axis from
+`docs/game.md` — the pack is data, so phases land as new rows, not
+engine patches. (BED shipped as P4's comfort rung.)
 
 ### The trading post (run 1–3 postmortem: the missing sell side)
 
