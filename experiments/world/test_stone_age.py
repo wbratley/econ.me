@@ -533,7 +533,7 @@ def test_the_commons_fire_stands(session):
     assert fire.fuel_burn_per_tick == FIRE_FUEL_BURN
     assert production.get_recipe(session, "TEND_FIRE") is None
     stoke = production.get_recipe(session, "STOKE_FIRE")
-    assert stoke.facility_fuel_output == Decimal("2")
+    assert stoke.facility_fuel_output == Decimal("4")
     assert stoke.duration_ticks == 0 and not stoke.requires_daylight
     warm = production.get_recipe(session, "WARM_BY_FIRE")
     assert warm.outputs[0].quantity == WARMTH_CAP and warm.requires_facility_lit
@@ -546,7 +546,7 @@ def test_the_commons_fire_stands(session):
 def test_stoke_burns_and_goes_dark(session):
     """The fuel cycle: the bank burns one an hour whether anyone sits,
     runout is a facility_dark fact, a dark fire warms no one, and a log
-    relights it (1 WOOD = 2 hours -- a full bank refuses more)."""
+    relights it (1 WOOD = 4 hours -- a full bank refuses more)."""
     create_content(session)
     _no_wolves(session)
     w = _seat(session, "Stoker")
@@ -567,7 +567,7 @@ def test_stoke_burns_and_goes_dark(session):
     with pytest.raises(Exception, match="dark"):
         production.start_process(session, w, "WARM_BY_FIRE")
     assert _act(session, w, "STOKE_FIRE")
-    assert _fuel(session) == Decimal("2")
+    assert _fuel(session) == Decimal("4")
     assert _act(session, w, "WARM_BY_FIRE")
 
 
@@ -1482,10 +1482,19 @@ def test_the_thicket_funds_the_night(session):
     because the old tables banked ~0.3 wood per gather against a
     ~10-log night. The branch is now a quarter of every gather, and
     quantity over size -- frequency beats magnitude for famine: a
-    six-gather day finds zero wood 18% of the time, not 38%."""
+    six-gather day finds zero wood 18% of the time, not 38%.
+
+    Run 41's lever completes the arithmetic: run 40 funded the food
+    (zero hunger deaths) and still died all-FATIGUE d4h19 -- the
+    polity stoked 14 times and bought 28 of the ~80 dark fuel-hours,
+    nights dark from ~h22. Doubling what a stoked log banks (STOKE
+    1 WOOD -> +4 fuel) makes the OBSERVED watch sufficient: the same
+    14 stokes buy 56 hours, and the ten dark hours cost a dusk relight
+    (2 WOOD) plus two stokes -- 4 WOOD a night."""
     create_content(session)
     gather = production.get_recipe(session, "GATHER")
     bag = production.get_recipe(session, "GATHER_BAG")
+    stoke = production.get_recipe(session, "STOKE_FIRE")
 
     def table(recipe):
         rows = {}
@@ -1506,10 +1515,16 @@ def test_the_thicket_funds_the_night(session):
     assert wood_ev(bare) == Decimal("0.75")
     assert wood_ev(bagged) == Decimal("1.20")
     assert wood_ev(bagged) / wood_ev(bare) == Decimal("1.6")
+    # run 41's lever: one stoked log banks half a night
+    assert stoke.facility_fuel_output == Decimal("4")
+    # the night's price from dark: a dusk relight (2 WOOD = 2 hours)
+    # plus two stokes (4 hours each) carries the ten dark hours
+    night_price = Decimal("2") + (Decimal("10") - Decimal("2")) / stoke.facility_fuel_output
+    assert night_price == Decimal("4")
     # the polity break-even: three houses gathering ~5 apiece bank
-    # ~11 logs a day against a ~10-log night -- the famine becomes a
-    # margin economy, not a structural impossibility
-    assert 3 * 5 * wood_ev(bare) >= Decimal("11")
+    # ~11 logs a day -- the night is paid TWICE over (run 40 died
+    # inside the margin; the margin becomes a surplus economy)
+    assert 3 * 5 * wood_ev(bare) >= 2 * night_price
     # frequency beats size: P(zero wood in a six-gather day)
     miss = (Decimal("100") - bare["wood"][0]) / Decimal("100")
     assert miss ** 6 <= Decimal("0.18")

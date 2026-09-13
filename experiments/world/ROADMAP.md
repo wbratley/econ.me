@@ -358,3 +358,19 @@ user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
   constraint is the daylight hour itself; the 2h river roads are the
   named next lever (run 41: river proximity, wolves revive,
   sleepers-are-prey finally testable).
+- Stoke doubles (run 40's lever, shipped as run 41's): run 40
+  validated the food half (zero hunger deaths, ~6 gathers/seat/day,
+  36 berry meals) and died all-FATIGUE d4h19 anyway -- the night
+  collapsed behaviorally: sleeps 3/6/8 (run 39: 14/25/26), stokes
+  14 (run 39: 33), fire dark from ~h22 every night but one, and
+  both gpt-oss rewrites discarded the starter's dusk/night doctrine
+  (Harald r1 "removing the low-fuel and food-threshold checks";
+  Ivar's r4 rewrite never landed -- model failure). The lever chosen
+  is the night's price, not the seats' scripts: STOKE_FIRE 1 WOOD ->
+  +4 fuel (was +2), one variable -- cap stays 6, burn stays 1/h,
+  MAKE_FIRE stays 2 WOOD. The ten dark hours now cost a dusk relight
+  plus two stokes (~4 WOOD, was ~6); the observed run-40 watch (14
+  stokes) would have bought 56 of the ~80 dark hours instead of 28.
+  River proximity stays parked (named next for the run AFTER the
+  night is ruled out as the killer; run 40's Ivar died at the hearth,
+  not the river road).

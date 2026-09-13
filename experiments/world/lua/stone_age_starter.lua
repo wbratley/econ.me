@@ -90,7 +90,7 @@ end
 
 -- 1. The fire is common ground: a standing fire at the clearing seats
 --    four and burns one fuel an hour, lit or empty. Keep it fed -- a
---    split log (STOKE_FIRE: 1 WOOD) buys two hours for everyone it
+--    split log (STOKE_FIRE: 1 WOOD) buys four hours for everyone it
 --    warms, free and night-legal -- and take a seat by dark (warming
 --    is a SEAT: +6 an hour, a body holds six). Both hearth-bound: if
 --    the fire will want work, walk home first -- the walk is the
