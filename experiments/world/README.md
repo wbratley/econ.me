@@ -189,8 +189,9 @@ warmth from **the commons fire** (P1) plus a graded ladder — REST
 under a SHELTER (1.0, labor-free), HUDDLE in CLOTHES (+0.5,
 labor-free). The fire is a **pure commons**: a standing fire-ground at
 the hearth clearing — no owner, four seats, six banked hours of fuel,
-burning one an hour whether anyone sits. Anyone may STOKE (1 WOOD → +2
-hours of fuel, instant, night-legal, capped at 6) or take a seat
+burning one an hour whether anyone sits. Anyone may STOKE (1 WOOD → +4
+hours of fuel — run 41's lever: the log banks twice the dark; instant,
+night-legal, capped at 6) or take a seat
 (WARM_BY_FIRE: +6 WARMTH for the hour, labor-free, needs a lit fire);
 the same fire cooks (COOK/SMOKE bind it by day, warmth has it by
 night — capacity is seats, and day and night never contend).
@@ -233,8 +234,9 @@ beside a funded fire, so the berries came back and yarn/flint paid)
 and a **fat wood branch** (run 38's lever — all three houses died of
 FATIGUE beside a dark fire with every other clock quiet: the wood roll
 pays 0.75 logs a gather bare-handed, 1.20 bagged, so a polity of
-gatherers breaks even against the ~10-log night — a quarter of every
-gather, because frequency beats magnitude for famine), **hens are capital that lays** (the post sells two
+gatherers banks the night twice over — a dusk relight plus two stokes
+carries the ten dark hours for ~4 WOOD (run 41's stoke lever), a
+quarter of every gather because frequency beats magnitude for famine), **hens are capital that lays** (the post sells two
 at 4.00; MAKE_PEN on the camp, then COLLECT_EGGS serves the whole
 flock for one labor hour — an egg per hen held at completion, capped
 at four, which is also the body's CHICKEN carry cap; eggs keep near a

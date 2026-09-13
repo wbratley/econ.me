@@ -223,20 +223,22 @@ WARMTH_BUFFER = Decimal("6")
 # One fire warms many. The fire-ground's standing FIRE is PUBLIC (four
 # seats -- WARM_BY_FIRE occupies one for its hour, like every facility
 # process), burns one fuel per hour WHETHER ANYONE SITS OR NOT, and banks
-# at most six hours of burn (STOKE_FIRE: 1 WOOD = 2 hours -- splitting
+# at most six hours of burn (STOKE_FIRE: 1 WOOD = 4 hours -- splitting
 # the log is the craft). No one owns it; anyone may stoke, warm, or cook
 # at it, and everyone freezes when no one feeds it. WARMTH itself caps
 # at 6 -- a body holds about two cold hours' grace -- so banking warmth
 # is not a strategy (until hot-water-bottle tech); warming is presence
-# at a lit fire. A night is ten dark hours: a dusk-full bank (6) plus a
-# stoke or two from whoever sits carries the village for ~3 WOOD --
-# against ~12 and a dozen labor-hours when every house banked alone.
+# at a lit fire. A night is ten dark hours: a dusk relight (2 WOOD) plus
+# two stokes carries it for ~4 WOOD (run 41's lever -- run 40 stoked
+# 14 times and bought 28 of the 80 dark hours; the same watch at +4
+# buys 56) -- against ~12 and a dozen labor-hours when every house
+# banked alone.
 WARMTH_CAP = Decimal("6")
 FIRE_SEATS = 4
 FIRE_FUEL_START = Decimal("6")
 FIRE_FUEL_CAP = Decimal("6")
 FIRE_FUEL_BURN = Decimal("1")
-STOKE_FUEL = Decimal("2")
+STOKE_FUEL = Decimal("4")
 WARM_BY_FIRE_WARMTH = Decimal("6")
 
 # --- Torches: the night kit (P2, ROADMAP.md) ------------------------------
@@ -367,7 +369,7 @@ stock -- a body holds at most 6 WARMTH (two cold hours' grace), and
 only sitting at a lit fire fills it (WARM_BY_FIRE: +6 an hour seated,
 labor-free, night-legal). The standing fire at the clearing seats FOUR
 at once, burns one fuel an hour whether anyone sits or not, and banks
-at most six hours (STOKE_FIRE: 1 WOOD = 2 hours, free and instant --
+at most six hours (STOKE_FIRE: 1 WOOD = 4 hours, free and instant --
 refused when the fire is fully banked). No one owns it; anyone may
 feed it, warm at it, cook on it -- and everyone freezes when no one
 feeds it. Keep a seat and keep it fed (std.hour() and std.is_night()
@@ -475,7 +477,7 @@ same.
 
 == THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
 1. THE FIRE IS COMMON GROUND: a standing fire at the clearing already
-   seats four and cooks for anyone -- keep it fed (1 WOOD stokes two
+   seats four and cooks for anyone -- keep it fed (1 WOOD stokes four
    hours) and take your seat by dark (WARM_BY_FIRE). MAKE_FIRE (2 WOOD)
    adds four public seats when the clearing is crowded. Do not sleep
    fireless.
