@@ -1391,11 +1391,12 @@ def test_the_dark_road_wants_a_flame(session):
 def test_the_orchard_branch_feeds_the_bare_hand(session):
     """P5's arithmetic, asserted from the installed rows: both gather
     tables carry the orchard branch, the weights sum to 100, and bare
-    food income clears ~3.0 satiety-equivalent/hour (the income wall's
+    food income clears ~3.5 satiety-equivalent/hour (the income wall's
     first break -- apples keep a day and a half where berries rot in a
-    morning, so the surplus is worth banking; run 38's wood-rich lever
-    took the berry share as the donor: 3.53 -> 3.00, food had slack --
-    FOOD sat 0.771, zero hunger deaths -- while the fire starved)."""
+    morning, so the surplus is worth banking; run 39's census sent
+    the berries back: the donated 30% table starved two houses by d5
+    beside a funded fire, so the larder pays at its famine-era
+    strength again and the crafts pay the bill)."""
     create_content(session)
     gather = production.get_recipe(session, "GATHER")
     bag = production.get_recipe(session, "GATHER_BAG")
@@ -1424,8 +1425,54 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
             ev += weight * qty * Decimal(str(per_hen[label]))
         return ev
 
-    assert food_ev(bare) >= Decimal("2.99")    # the wall breaks bare-handed
-    assert food_ev(bagged) >= Decimal("6.2")   # and the bag doubles down
+    assert food_ev(bare) >= Decimal("3.4")    # the wall breaks bare-handed
+    assert food_ev(bagged) >= Decimal("6.7")   # and the bag doubles down
+
+
+def test_the_crafts_pay_the_larders_bill(session):
+    """Run 39's lever, asserted from the installed rows: the berries
+    come back and the crafts pay. The wood-rich donation (berries
+    40 -> 30) was the margin, not slack -- run 39 funded the fire
+    (36 logs gathered vs 33 stoked, zero exposure deaths) and starved
+    the larder: HUNGER d3h16 and d5h03, on ~3.5 gather-hours a day,
+    because run 38's 0.771 food sat was an average carried by apples
+    and bought jerky. The berry rows return to their famine-era
+    weights, the wood branch keeps its quarter (run 38's lever
+    stands), and yarn/flint halve -- run 39 was not binding on
+    crafts (pens built, torches lit)."""
+    create_content(session)
+    gather = production.get_recipe(session, "GATHER")
+    bag = production.get_recipe(session, "GATHER_BAG")
+
+    def rows(recipe):
+        out = {}
+        for b in recipe.branches:
+            out[b.label] = (b.weight, {o.symbol: o.quantity
+                                       for o in b.outputs})
+        assert sum(b.weight for b in recipe.branches) == Decimal("100")
+        return out
+
+    def ev(table, label):
+        weight, outs = table[label]
+        return weight * sum(outs.values()) / Decimal("100")
+
+    bare, bagged = rows(gather), rows(bag)
+    # the berries are back at the wall-breaking weights
+    assert bare["berries"][0] == Decimal("40")
+    assert bagged["berries"][0] == Decimal("35")
+    # the crafts pay, halved but proportional (the bag keeps the
+    # famine-era 8:5 yarn:flint tilt at 5:3)
+    assert bare["yarn"] == (Decimal("5"), {"YARN": Decimal("1")})
+    assert bare["flint"] == (Decimal("5"), {"FLINT": Decimal("1")})
+    assert bagged["yarn"] == (Decimal("5"), {"YARN": Decimal("2")})
+    assert bagged["flint"] == (Decimal("3"), {"FLINT": Decimal("2")})
+    # 0.10 -> 0.05 each bare-handed, 0.26 -> 0.16 bagged: the
+    # toolmaker's walk (DIG_FLINT) and the spinner carry the craft
+    # supply now
+    assert ev(bare, "yarn") == Decimal("0.05")
+    assert ev(bare, "flint") == Decimal("0.05")
+    assert ev(bagged, "yarn") == Decimal("0.10")
+    assert ev(bagged, "flint") == Decimal("0.06")
 
 
 def test_the_thicket_funds_the_night(session):

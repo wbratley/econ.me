@@ -341,3 +341,20 @@ user reordered P5 ahead of P3/P4 after runs 34–35 repeated the wall
   the famine becomes a margin economy, not a structural
   impossibility. The axe rung stays premium (3 certain logs/h =
   4x the bare roll, was 6x).
+- Berries restored, crafts pay (run 39's lever): the wood-rich
+  donation was priced wrong — run 38's 0.771 food sat was an average
+  carried by Lagertha's 14 apple meals and Ivar's bought jerky; the
+  marginal seat-day had no slack. Run 39 funded the fire (36 logs
+  gathered vs 33 stoked, zero exposure deaths, sleep-by-fire ran)
+  and starved the larder: HUNGER d3h16 and d5h03 (Harald zero apple
+  meals, 13 gathers in 3.6 days against a 33-gather run-38 window —
+  the commute-and-meal day leaves ~3.5 gather-hours), and Ivar
+  FATIGUE at the river at 5am, still running the drink pilgrimage.
+  So the berries return to 40x4 bare / 35x8 bagged (food 3.00 ->
+  3.53 satiety-equivalent/h, bag 6.22 -> 6.76) while wood keeps its
+  quarter (0.75 / 1.20 — both levers stand), and yarn+flint pay the
+  bill (bare 10 -> 5 each; bag 8 -> 5 and 5 -> 3) — run 39 was not
+  binding on crafts (pens built, torches lit). The new binding
+  constraint is the daylight hour itself; the 2h river roads are the
+  named next lever (run 41: river proximity, wolves revive,
+  sleepers-are-prey finally testable).

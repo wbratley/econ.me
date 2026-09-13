@@ -1169,15 +1169,22 @@ def _create_recipes(session: Session) -> None:
     # find). The thicket carries the larder's shelf (P5) and the night's
     # fuel (run 38's lever: all three houses died of FATIGUE beside a
     # dark fire -- the wood roll starved the commons): the berry bushes,
-    # the apple boughs, and now a fat wood branch -- bare-handed finds
-    # ~3.0 satiety-equivalent/hour (berries 30% x4, apples 25% x3, wood
-    # 25% x3, yarn 10% x1, flint 10% x1) against a need of ~14/day: food
-    # costs ~4.7 of the 14 daylight hours bare-handed, ~2.5 with a bag,
-    # and the SAME walk banks ~4.5 logs a day -- the berry share is the
-    # donor (run 38: FOOD sat 0.771, zero hunger deaths, fire dark 22x;
-    # food had slack, wood had none). Wood lands on a quarter of gathers,
-    # not a seventh -- frequency beats size for famine: P(zero wood in a
-    # six-gather day) falls 0.38 -> 0.18. On the doubled BAG table a ~5%
+    # the apple boughs, and a fat wood branch -- bare-handed finds
+    # ~3.5 satiety-equivalent/hour (berries 40% x4, apples 25% x3, wood
+    # 25% x3, yarn 5% x1, flint 5% x1) against a need of ~14/day: food
+    # costs ~4 of the 14 daylight hours bare-handed, ~2 with a bag,
+    # and the SAME walk banks ~4.5 logs a day. Run 39 priced the
+    # wood lever honestly: the fire got funded (36 logs gathered vs
+    # 33 stoked, zero exposure deaths) but the berry share that paid
+    # was the MARGIN, not slack -- two houses starved by d5 on the
+    # ~3.5 gather-hours a commute-and-meal day affords, because run
+    # 38's 0.771 food sat was an average carried by apples and
+    # bought jerky. So the crafts pay the larder's bill back:
+    # berries restored, wood kept, yarn and flint halved (run 39
+    # was not binding on crafts -- pens got built, torches lit).
+    # Wood stays a quarter of gathers, not a seventh -- frequency
+    # beats size for famine: P(zero wood in a six-gather day) is
+    # 0.18. On the doubled BAG table a ~5%
     # branch of 1 COIN -- shiny stones, minted by the ground itself
     # (production credits a banked symbol to the account,
     # production._credit_output). The bare table finds none: scarcity
@@ -1190,11 +1197,11 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("30"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
+            {"weight": D("40"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"APPLES": D("3")}, "label": "apples"},
             {"weight": D("25"), "outputs": {"WOOD": D("3")}, "label": "wood"},
-            {"weight": D("10"), "outputs": {"YARN": D("1")}, "label": "yarn"},
-            {"weight": D("10"), "outputs": {"FLINT": D("1")}, "label": "flint"},
+            {"weight": D("5"), "outputs": {"YARN": D("1")}, "label": "yarn"},
+            {"weight": D("5"), "outputs": {"FLINT": D("1")}, "label": "flint"},
         ],
     )
     production.create_recipe(
@@ -1205,11 +1212,11 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("30"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
+            {"weight": D("35"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
             {"weight": D("27"), "outputs": {"APPLES": D("6")}, "label": "apples"},
             {"weight": D("20"), "outputs": {"WOOD": D("6")}, "label": "wood"},
-            {"weight": D("8"), "outputs": {"YARN": D("2")}, "label": "yarn"},
-            {"weight": D("5"), "outputs": {"FLINT": D("2")}, "label": "flint"},
+            {"weight": D("5"), "outputs": {"YARN": D("2")}, "label": "yarn"},
+            {"weight": D("3"), "outputs": {"FLINT": D("2")}, "label": "flint"},
             {"weight": COIN_WEIGHT, "outputs": {COIN: D("1")}, "label": "shiny"},
             {"weight": D("5"), "outputs": {}, "label": "nothing"},
         ],
@@ -1226,7 +1233,7 @@ def _create_recipes(session: Session) -> None:
     )
     # The scrape's whole point: certain flint for an hour's work, two
     # hours from home -- the toolmaker's walk (vs the thicket table's
-    # 15% flint rolls).
+    # 5% flint rolls).
     production.create_recipe(
         session, "DIG_FLINT", name="Dig Flint",
         description="An hour at the scrape: two certain flints, no gamble. "
