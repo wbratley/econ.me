@@ -336,6 +336,9 @@ def test_system_prompt_offers_the_three_actions(client):
                                 edit_mode=True)
     assert "KEEP" in prompt_edit and "<<<<<<< SEARCH" in prompt_edit
     assert ">>>>>>> REPLACE" in prompt_edit
+    # edits first: blocks are offered before the whole-script rewrite
+    assert (prompt_edit.index("<<<<<<< SEARCH")
+            < prompt_edit.index("complete Lua source"))
 
 
 class FlakyProvider:

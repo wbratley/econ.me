@@ -26,9 +26,11 @@ One cycle = observe, think, submit (retried on lint refusal, bounded),
 journal. Warnings, per-tick script errors and rejected intents (with
 their reasons, translated) ride into the next cycle's prompt: the model
 sees the consequences of its last rewrite. The model has three ways to
-answer: the complete script, edit blocks (edit_mode), or KEEP to carry
-the current behaviour forward verbatim — a player whose script is
-right readies up without gambling on a rewrite.
+answer: edit blocks (edit_mode's default — the smallest change that
+fixes what was learned, anchored on exact quotes of the current
+behaviour), the complete script (only when the structure itself must
+change), or KEEP to carry the current behaviour forward verbatim — a
+player whose script is right readies up without gambling on a rewrite.
 """
 
 from __future__ import annotations
@@ -94,19 +96,22 @@ def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False,
     if edit_mode:
         reply_rules = (
             "Reply in one of three ways:\n"
-            "- the complete Lua source of your next behaviour script (no prose,\n"
-            "  no markdown fences), or\n"
-            "- the single line KEEP, to carry the current behaviour forward\n"
-            "  unchanged, or\n"
-            "- a list of edit blocks, to change only part of the current\n"
-            "  behaviour — nothing outside the blocks:\n\n"
+            "- edit blocks — the default and the preferred answer: change\n"
+            "  only what this round taught you, nothing outside the blocks:\n\n"
             "  <<<<<<< SEARCH\n"
             "  exact lines copied from the current behaviour\n"
             "  =======\n"
             "  replacement lines\n"
             "  >>>>>>> REPLACE\n\n"
-            "  Each SEARCH must match the current behaviour exactly, whitespace\n"
-            "  included; blocks apply in order.")
+            "  Prefer the smallest set of blocks that fixes what you\n"
+            "  learned; untouched lines carry forward unchanged. Each\n"
+            "  SEARCH must match the current behaviour exactly, whitespace\n"
+            "  included; blocks apply in order.\n"
+            "- the complete Lua source of your next behaviour script (no\n"
+            "  prose, no markdown fences) — only when the structure itself\n"
+            "  must change, never for a local fix\n"
+            "- the single line KEEP, to carry the current behaviour forward\n"
+            "  unchanged")
     text = f"""\
 You are the mind of entity {entity_id} in a batched simulated economy. You
 do NOT act tick by tick: your whole agency is one Lua BEHAVIOUR script
@@ -216,9 +221,11 @@ def user_prompt(observation: dict, current: dict, feedback: list[str],
     if feedback:
         parts += ["", "FINDINGS since your last submission (address these):"]
         parts += [f"- {f}" for f in feedback]
-    parts += ["", ("Write the next behaviour: complete Lua source, edit "
-                    "blocks, or KEEP." if edit_mode
-                    else "Write the next behaviour. Lua source only.")]
+    parts += ["", ("Write the next behaviour: edit blocks — the smallest "
+                   "change that fixes what you learned; a complete rewrite "
+                   "only if the structure itself must change; or KEEP."
+                   if edit_mode
+                   else "Write the next behaviour. Lua source only.")]
     return "\n".join(parts)
 
 
