@@ -24,7 +24,7 @@ import json
 import time
 from pathlib import Path
 
-from .llm import DeepSeekModel, NimModel, deepseek_key, nim_key
+from .llm import DeepSeekModel, NimModel, deepseek_key, nim_key, llama_model
 
 
 def parse_prompt_file(path: Path) -> dict:
@@ -57,7 +57,8 @@ def parse_prompt_file(path: Path) -> dict:
 
 
 def build_model(spec: str, on_trace) -> object:
-    """'nim:slug' / 'deepseek:slug' (loop names) or a bare NIM slug."""
+    """'nim:slug' / 'deepseek:slug' / 'llama:slug' (loop names) or a
+    bare NIM slug."""
     if spec.startswith("deepseek:"):
         key = deepseek_key()
         if not key:
@@ -65,6 +66,8 @@ def build_model(spec: str, on_trace) -> object:
                              "~/.deepseek_api_key")
         return DeepSeekModel(key, spec[len("deepseek:"):],
                              on_trace=on_trace)
+    if spec.startswith("llama:"):
+        return llama_model(spec[len("llama:"):], on_trace=on_trace)
     slug = spec[len("nim:"):] if spec.startswith("nim:") else spec
     key = nim_key()
     if not key:

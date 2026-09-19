@@ -54,3 +54,17 @@ def test_build_model_routes_by_prefix():
     assert n.name == "nim:openai/gpt-oss-20b"
     bare = build_model("openai/gpt-oss-20b", None)
     assert isinstance(bare, NimModel) and bare._model == "openai/gpt-oss-20b"
+
+
+def test_build_model_routes_llama_prefix_without_any_key():
+    # the llama branch must not touch the NIM key lookup: a local
+    # llama.cpp seat needs no key at all
+    from experiments.agent.llm import NimModel
+
+    m = build_model("llama:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", None)
+    assert isinstance(m, NimModel)
+    assert m.name == "llama:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+    assert m._base_url == "http://127.0.0.1:8080"
+    assert m._limiter_factory is None      # the box is ours: no RPM budget
+    # the thinking qwen family gets the big budget, capitals and all
+    assert m._max_tokens == 24000
