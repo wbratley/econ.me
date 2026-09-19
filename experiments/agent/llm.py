@@ -571,13 +571,23 @@ _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     # trivial ask — observed 11 reasoning tokens for "say ok").
     "deepseek-reasoner": 32768,
     "deepseek-v4": 32768,
+    # The local llama.cpp qwen seat (run 42): Qwen3.8-27B is a thinking
+    # model, and unlike the hosted endpoints there is a hard ctx wall —
+    # the server runs -c 32768. 24000 for thinking+script leaves ~8k
+    # for a ~2-3k-token round prompt plus headroom, so a verbose think
+    # dies at the budget (a readable retry) instead of the ctx (a
+    # server-side truncation).
+    "qwen3.8": 24000,
 }
 
 
 def _default_max_tokens(model: str) -> int:
-    """Completion budget by slug family; plain instruct default 8192."""
+    """Completion budget by slug family; plain instruct default 8192.
+    Case-insensitive: NIM slugs are lowercase but a local llama.cpp id
+    like unsloth/Qwen3.8-27B-GGUF carries capitals."""
+    lowered = model.lower()
     for family, budget in _REASONING_TOKEN_DEFAULTS.items():
-        if family in model:
+        if family in lowered:
             return budget
     return 8192
 
@@ -599,6 +609,43 @@ def nim_key(env: dict[str, str] | None = None) -> str | None:
             if first and first[0].strip():
                 return first[0].strip()
     return None
+
+
+# --- the local llama.cpp seat --------------------------------------
+#
+# A `llama serve` on the same box (run 42: unsloth/Qwen3.8-27B-GGUF
+# UD-Q4_K_M) speaks the OpenAI chat-completions dialect — including
+# stream:true SSE and (with --reasoning-format on) a separate
+# reasoning_content channel — so the streamed NimModel client drives
+# it unchanged. Two courtesies the hosted endpoint wants are dropped:
+# no API key (llama.cpp ignores Authorization unless --api-key is set;
+# the placeholder satisfies the client), and no shared rate budget —
+# the box is ours, per-token credit and per-minute RPM limits don't
+# apply.
+LLAMA_DEFAULT_BASE = "http://127.0.0.1:8080"
+
+
+def llama_model(model: str,
+                on_trace: Callable[[dict], None] | None = None,
+                env: dict[str, str] | None = None) -> NimModel:
+    """A local llama.cpp seat: the NIM client pointed at localhost.
+
+    model is the server's own model id (what /v1/models reports —
+    e.g. unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M); a single-model server
+    accepts any name, but the real id keeps calls.log honest.
+    ECON_LLAMA_BASE overrides the endpoint for a second instance on
+    another port. max_tokens comes from the family default — see
+    _REASONING_TOKEN_DEFAULTS for why qwen3.8 is budgeted, and note
+    the ctx wall is real: the budget must leave room for the prompt.
+    """
+    e = dict(env if env is not None else os.environ)
+    m = NimModel(
+        "no-key", model,
+        base_url=e.get("ECON_LLAMA_BASE", LLAMA_DEFAULT_BASE),
+        limiter_factory=None,
+        on_trace=on_trace)
+    m.name = f"llama:{model}"
+    return m
 
 
 class _RateLimiter:

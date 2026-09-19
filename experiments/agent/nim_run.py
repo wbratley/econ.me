@@ -11,6 +11,13 @@
                  mistralai/mistral-small-24b-instruct-2501 \
         --rounds 10 --out /tmp/nim-run
 
+    # seat prefixes: deepseek:slug seats DeepSeek (billing gate, see
+    # README); llama:slug seats a local `llama serve` (ECON_LLAMA_BASE,
+    # default http://127.0.0.1:8080, no key):
+    .venv/bin/python -m experiments.agent.nim_run \
+        --models deepseek:deepseek-v4-flash llama:qwen3.8-27b \
+        --rounds 10 --out /tmp/nim-run
+
     # offline dress rehearsal (no key, canned responses — proves the pipe):
     .venv/bin/python -m experiments.agent.nim_run --scripted a.jsonl b.jsonl c.jsonl \
         --rounds 3 --out /tmp/nim-rehearsal
@@ -45,7 +52,7 @@ from pathlib import Path
 
 from .dashboard import build_dashboard
 from .llm import (Model, DeepSeekModel, NimModel, ScriptedModel,
-                  deepseek_key, nim_key)
+                  deepseek_key, nim_key, llama_model)
 from .loop import AgentLoop, McpClient
 from .multi import (Dynasty, build_agent_world, read_world_meta,
                     run_rounds)
@@ -289,6 +296,13 @@ def main(argv=None) -> int:
                             "it in ~/.deepseek_api_key")
                     models.append(DeepSeekModel(
                         dk, seat_model[len("deepseek:"):]))
+                elif seat_model.startswith("llama:"):
+                    # a local llama.cpp seat: the same streamed client
+                    # pointed at a `llama serve` on this box (ECON_LLAMA_BASE
+                    # overrides the default http://127.0.0.1:8080) — no key,
+                    # no shared rate budget, see llama_model
+                    models.append(llama_model(
+                        seat_model[len("llama:"):]))
                 else:
                     models.append(NimModel(key, seat_model))
                 model_names.append(seat_model)

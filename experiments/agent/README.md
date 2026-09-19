@@ -199,6 +199,20 @@ sends `reasoning_effort: low` — ~9× cheaper and faster, well inside
 the budget; `ECON_DEEPSEEK_REASONING` overrides (medium/high/…, or
 empty to take the API default).
 
+Local llama.cpp seats: a `llama:` prefix in `--models` (e.g.
+`--models llama:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`) seats a
+`llama serve` on this box — the same streamed OpenAI-dialect client
+as NIM, pointed at `ECON_LLAMA_BASE` (default
+`http://127.0.0.1:8080`), no key, no shared rate budget. The prefix
+argument is the server's own model id (what `/v1/models` reports).
+Thinking models get family budgets from the same table that sizes
+gpt-oss/deepseek (qwen3.8 → 24000 against the server's `-c 32768`);
+the ctx wall is real, so the budget must leave room for the prompt.
+Inline `<think>` blocks are stripped and a separate
+`reasoning_content` channel is ignored either way. Note the server
+is shared: whatever else talks to that port queues with the seats
+unless it runs `--parallel`.
+
 Repetition breaker (default ON): run 32's forensics showed reasoning
 marathons — a degenerated stream burning its whole 65,536-token budget
 re-walking the same lines ("We can..." x7,120; one warmth argument

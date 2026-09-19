@@ -343,6 +343,28 @@ def test_deepseek_model_gates_peak_and_skips_the_nim_budget(monkeypatch):
     assert m3.complete("s", "u") == "ok"     # window open: gate passes
 
 
+def test_llama_model_points_the_nim_client_at_localhost():
+    import experiments.agent.llm as llm
+    m = llm.llama_model("unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M")
+    assert m.name == "llama:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
+    assert m._base_url == llm.LLAMA_DEFAULT_BASE == "http://127.0.0.1:8080"
+    assert m._limiter_factory is None        # the box is ours: no RPM budget
+    # the placeholder key rides the Authorization header; llama.cpp
+    # ignores it unless --api-key is set
+    assert m._api_key == "no-key"
+    # family budget matching is case-insensitive: the hosted slugs are
+    # lowercase but llama.cpp ids carry capitals
+    assert m._max_tokens == 24000
+    assert llm._default_max_tokens("qwen3.8-27b") == 24000
+    assert llm._default_max_tokens("some-plain-model") == 8192
+    # ECON_LLAMA_BASE retargets (a second instance on another port)
+    alt = llm.llama_model("qwen3.8-27b",
+                          env={"ECON_LLAMA_BASE": "http://127.0.0.1:8081"})
+    assert alt._base_url == "http://127.0.0.1:8081"
+    # the env dict is hermetic: no real-environment bleed into tests
+    assert llm.llama_model("x", env={})._base_url == "http://127.0.0.1:8080"
+
+
 def test_deepseek_reasoning_effort_default_low_env_overridable(monkeypatch):
     import httpx
     import experiments.agent.llm as llm
