@@ -634,15 +634,26 @@ def llama_model(model: str,
     e.g. unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M); a single-model server
     accepts any name, but the real id keeps calls.log honest.
     ECON_LLAMA_BASE overrides the endpoint for a second instance on
-    another port. max_tokens comes from the family default — see
+    another port. ECON_LLAMA_THINKING=0 disables Qwen's thinking mode
+    via chat_template_kwargs (unset leaves the server default).
+    max_tokens comes from the family default — see
     _REASONING_TOKEN_DEFAULTS for why qwen3.8 is budgeted, and note
     the ctx wall is real: the budget must leave room for the prompt.
     """
     e = dict(env if env is not None else os.environ)
+    extra: dict | None = None
+    if e.get("ECON_LLAMA_THINKING", "").strip().lower() in ("0", "false", "off", "no"):
+        # Qwen3.8's chat template honors enable_thinking; run 42 showed the
+        # thinking mode can spend the whole token budget on reasoning and
+        # return empty content (finish_reason=length), so the knob exists to
+        # field the seat with thinking off while keeping the server default
+        # reproducible (unset = whatever the server was launched with).
+        extra = {"chat_template_kwargs": {"enable_thinking": False}}
     m = NimModel(
         "no-key", model,
         base_url=e.get("ECON_LLAMA_BASE", LLAMA_DEFAULT_BASE),
         limiter_factory=None,
+        extra_body=extra,
         on_trace=on_trace)
     m.name = f"llama:{model}"
     return m

@@ -365,6 +365,18 @@ def test_llama_model_points_the_nim_client_at_localhost():
     assert llm.llama_model("x", env={})._base_url == "http://127.0.0.1:8080"
 
 
+def test_llama_model_thinking_knob():
+    import experiments.agent.llm as llm
+    # default (unset/anything truthy): server default — no kwarg, the
+    # run-42 behaviour stays reproducible
+    for e in ({}, {"ECON_LLAMA_THINKING": "1"}, {"ECON_LLAMA_THINKING": "on"}):
+        assert llm.llama_model("qwen3.8", env=e)._extra_body == {}
+    # off spellings inject the chat-template kwarg Qwen3.8 honors
+    for off in ("0", "false", "OFF", " no "):
+        m = llm.llama_model("qwen3.8", env={"ECON_LLAMA_THINKING": off})
+        assert m._extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 def test_deepseek_reasoning_effort_default_low_env_overridable(monkeypatch):
     import httpx
     import experiments.agent.llm as llm
