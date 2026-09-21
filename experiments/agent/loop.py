@@ -41,8 +41,8 @@ import json
 import re
 from pathlib import Path
 
-from .llm import (ScriptedModelEmpty, extract_script_detailed,
-                  strip_fences, strip_think)
+from .llm import (ScriptedModelEmpty, _lua_compiles,
+                  extract_script_detailed, strip_fences, strip_think)
 
 
 def _slug(name: str) -> str:
@@ -277,7 +277,7 @@ def diary_prompt(system_text: str, transcript: list[dict],
 # ---------------------------------------------------------------------------
 
 _PATCH_RE = re.compile(
-    r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE",
+    r"<{3,} SEARCH\r?\n(.*?)\r?\n={3,}\r?\n(.*?)\r?\n>{3,} REPLACE",
     re.DOTALL)
 
 
@@ -743,6 +743,35 @@ class AgentLoop:
                 source, extractor = extract_script_detailed(
                     raw, current["source"] if has_current else None)
                 action = "rewrite"
+
+            # The inert gate: a script that can never act is never intent.
+            # Run 43 (Lagertha, d5h17): a degenerate rewrite -- the
+            # starter's `holding_qty` line, alone, twice -- compiled,
+            # smoke-ran clean (reading a variable cannot fault) and was
+            # accepted; it then did nothing for a day and a half while
+            # she starved with food in hand. Compiles-and-does-nothing
+            # passes every other gate, so this one asks the only question
+            # that death asked: can the script ever act, or even record
+            # a plan? (ctx.state writes pass: state is the documented
+            # planning surface; pure reads and bare locals are not.)
+            # Only COMPILING submissions are claimed here -- a reply
+            # that doesn't compile falls through to the lint, whose
+            # syntax/prose/strict-globals refusals carry better hints.
+            if (_lua_compiles(source)
+                    and "ctx.action" not in source
+                    and "ctx.state" not in source
+                    and "function" not in source):
+                last_error = "submission refused: script never acts"
+                feedback.append("submission refused: script never acts -- "
+                                "no ctx.action call, no function definition, "
+                                "no ctx.state write; it cannot eat, move, "
+                                "work, trade, or even plan. Send a behaviour "
+                                "that acts")
+                transcript.append(
+                    {"platform": "submission refused: script never acts "
+                                "(no ctx.action, no ctx.state, no function) "
+                                "-- send a behaviour that acts"})
+                continue
 
             try:
                 result = self.mcp.call(

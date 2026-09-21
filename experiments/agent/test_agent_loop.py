@@ -30,7 +30,8 @@ from experiments.agent.llm import (
     strip_think,
 )
 from experiments.agent.loop import (
-    AgentLoop, McpClient, McpError, system_prompt, user_prompt,
+    AgentLoop, McpClient, McpError, _parse_patches, system_prompt,
+    user_prompt,
 )
 from experiments.agent.run import run_cycles
 
@@ -192,7 +193,7 @@ def test_diary_record_shows_the_full_retry_chain(client):
     assert entry["accepted"] and entry["attempts"] == 2
     diary_user = model.calls[-1]["user"]
     assert TRAP in diary_user                    # the failed attempt, kept
-    assert "submission refused by lint" in diary_user
+    assert "submission refused" in diary_user    # the platform's rejection
     assert diary_user.count("PROMPT TO YOU") == 2
     assert CLEAN in diary_user
 
@@ -205,7 +206,12 @@ def test_diary_off_by_default_and_failure_degrades_to_silence(client):
 
 
 def test_lint_refusal_feeds_back_and_second_attempt_accepts(client):
-    lp, model = loop(client, [TRAP, CLEAN])
+    # TRAP carries a ctx.state line: pure read-only zombies would be
+    # claimed by the inert gate first (see the inert-gate tests); the
+    # strict-globals lint path needs a submission that writes state
+    # yet still calls an undeclared global
+    trap_ctx = TRAP + "\nctx.state.plan = std.amount_str(1)"
+    lp, model = loop(client, [trap_ctx, CLEAN])
     entry = lp.cycle()
     assert entry["accepted"] and entry["attempts"] == 2
     assert "undeclared global 'settle_last_orders'" in entry["refusal"]
@@ -322,6 +328,55 @@ def test_failed_patch_feeds_back_and_retries(client):
     assert "SEARCH not found" in model.calls[1]["user"]
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(3)"
+
+
+def test_edit_marker_widths_parse_as_patches():
+    # thinking-Qwen under a reasoning budget emits 6-arrow markers (the
+    # r5 probe, run-44 prep); the canonical format is 7. The regex is
+    # the fuzzer's safety net: 3 or more arrows/equals is the intent.
+    for width in (3, 6, 7, 9):
+        a, e, r = "<" * width, "=" * width, ">" * width
+        text = f"{a} SEARCH\nold line\n{e}\nnew line\n{r} REPLACE"
+        assert _parse_patches(text) == [("old line", "new line")], width
+
+
+def test_inert_script_refused_and_retry_accepts(client):
+    # run 43's killer: Lagertha's r5 rewrite was the starter's
+    # holding_qty line, alone, twice -- compiles, smoke-runs clean,
+    # does nothing; she starved with food in hand. It must be refused
+    # with feedback the model can act on, and the retry accepted.
+    inert = ("local apples = std.holding_qty('APPLES')\n"
+             "local apples = std.holding_qty('APPLES')")
+    lp, model = loop(client, [inert, CLEAN])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "never acts" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+def test_inert_patch_result_is_refused(client):
+    # the gate holds for the edit path too: a patch whose RESULT is a
+    # pure read is refused, not applied
+    bad = f"<<<<<<< SEARCH\n{CLEAN}\n=======\nlocal n = std.holding_qty('WOOD')\n>>>>>>> REPLACE"
+    lp, model = loop(client, [bad, CLEAN])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "never acts" in model.calls[1]["user"]
+
+
+def test_state_only_script_passes_the_inert_gate(client):
+    # ctx.state writes are the planning surface -- a state-only script
+    # is not the read-only death class and must be accepted
+    statedep = STATEDEP
+    lp, _ = loop(client, [statedep])
+    lp.ensure_entity()
+    entry = lp.cycle()
+    assert entry["accepted"]
 
 
 def test_system_prompt_offers_the_three_actions(client):
