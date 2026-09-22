@@ -754,22 +754,26 @@ class AgentLoop:
             # that death asked: can the script ever act, or even record
             # a plan? (ctx.state writes pass: state is the documented
             # planning surface; pure reads and bare locals are not.)
+            # Run 44 (Lagertha r8) evolved the killer: a 224-char helper
+            # FRAGMENT -- a `traveling()` definition plus a local flag --
+            # which sailed through on the old `function` carve-out and
+            # ran dead for a round. A script that references neither
+            # ctx.action nor ctx.state cannot act, whatever it defines.
             # Only COMPILING submissions are claimed here -- a reply
             # that doesn't compile falls through to the lint, whose
             # syntax/prose/strict-globals refusals carry better hints.
             if (_lua_compiles(source)
                     and "ctx.action" not in source
-                    and "ctx.state" not in source
-                    and "function" not in source):
+                    and "ctx.state" not in source):
                 last_error = "submission refused: script never acts"
                 feedback.append("submission refused: script never acts -- "
-                                "no ctx.action call, no function definition, "
-                                "no ctx.state write; it cannot eat, move, "
+                                "no ctx.action call, no ctx.state write; it "
+                                "cannot eat, move, "
                                 "work, trade, or even plan. Send a behaviour "
                                 "that acts")
                 transcript.append(
                     {"platform": "submission refused: script never acts "
-                                "(no ctx.action, no ctx.state, no function) "
+                                "(no ctx.action, no ctx.state) "
                                 "-- send a behaviour that acts"})
                 continue
 

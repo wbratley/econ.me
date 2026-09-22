@@ -369,6 +369,26 @@ def test_inert_patch_result_is_refused(client):
     assert "never acts" in model.calls[1]["user"]
 
 
+def test_function_only_fragment_is_refused(client):
+    # run 44's killer (Lagertha r8): a 224-char helper fragment -- a
+    # traveling() definition plus a local flag -- compiles, defines a
+    # function, and calls nothing. Definitions are not acts: refuse.
+    fragment = (
+        'local function traveling()\n'
+        '  for _, p in ipairs(ctx.processes) do\n'
+        '    if p.recipe == "TRAVEL_WALK" then return true end\n'
+        '  end\n'
+        '  return false\n'
+        'end\n'
+        'local moved = false  -- one travel per tick')
+    lp, model = loop(client, [fragment, CLEAN])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert "never acts" in model.calls[1]["user"]
+
+
 def test_state_only_script_passes_the_inert_gate(client):
     # ctx.state writes are the planning surface -- a state-only script
     # is not the read-only death class and must be accepted
