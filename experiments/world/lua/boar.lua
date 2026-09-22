@@ -82,6 +82,15 @@ if water < 1 and not std.is_night() and ctx.entity.place ~= river then
   ctx.action.travel(river)
 elseif ctx.entity.place == river and water < 2 then
   ctx.action.start_process("DRINK")
+elseif not std.is_night() and ctx.entity.place ~= den
+    and water >= 1 then
+  -- The walk home. Run-44's autopsy: the drink-run had no return --
+  -- a boar topped its cup at the bank and then stood there, PACE and
+  -- SLEEP on the gravel, for the rest of its life. Boar I drank at
+  -- t90/100/109/118 with zero travels after the outbound walk, and
+  -- starved at t128 two hours from a thicket full of browse. A
+  -- grazer's business is the browse: water carried, hooves home.
+  ctx.action.travel(den)
 elseif not std.is_night() and hunger > 1
     and not std.running_recipe("GATHER")
     and ctx.entity.place == den then
