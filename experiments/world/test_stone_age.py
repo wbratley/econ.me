@@ -1273,11 +1273,23 @@ def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
                 if e.name.startswith("Wolf Pack"))
     assert wolf.place.key == "FOREST"
     # hungry (an empty stomach keeps granting HUNGER): the raid walk
-    # begins at dusk -- three hours of road, walked while the light lasts
-    markets.adjust_holding(session, wolf, "HUNGER", Decimal("4"))
-    markets.adjust_holding(session, wolf, "SATIETY", Decimal("0"))
+    # begins at dusk -- three hours of road, walked while the light
+    # lasts. Run-44's gate change: the raid road opens only to a
+    # genuinely starving pack (HUNGER past 5) -- a merely peckish one
+    # works the range instead (the hunt feeds better than the fire-
+    # ground's flocks). Pin the state so the decision is not a race:
+    # a nearly-dry cup at dawn (the water errand departs at first
+    # light and is home by noon -- it must not eat the dusk window),
+    # a full stomach (no meal tops the cup), and HUNGER set exactly
+    # past the bar just before the window opens (the day's hunt dice
+    # must not decide the raid).
+    markets.adjust_holding(session, wolf, "HUNGER", Decimal("6"))
+    markets.adjust_holding(session, wolf, "SATIETY", Decimal("6"))
+    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.25"))
     while clock.hour_of(production.next_tick_number(session)) < 16:
         run_tick(session); session.commit()
+    h = markets.get_holding(session, wolf.id, "HUNGER").quantity
+    markets.adjust_holding(session, wolf, "HUNGER", Decimal("8") - h)
     # dusk falls: out to the hearth, a night of prowling, home by day
     for _ in range(24):
         run_tick(session); session.commit()
