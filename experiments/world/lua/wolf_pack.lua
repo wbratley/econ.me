@@ -118,16 +118,28 @@ else
   -- for a full cup starves standing in the river. In the last
   -- daylight a hungry pack walks OUT: dusk is when the raid road is
   -- still open (it closes at dark).
-  if water < 1 and ctx.entity.place ~= "RIVER" then
+  --
+  -- Run-44 autopsy: the errand gates crowded the hunt out of the
+  -- pack's day. Pack I hunted ONCE in its 36-tick life (10 travels,
+  -- 11 PACE) and died mid-walk-home of hunger -- yet bare HUNT
+  -- yields ~2 satiety/hour against the 0.5/h the body draws, and a
+  -- meal of carrion carries its own water. The pack was never
+  -- starving for scarcity; it was starving for errands. Three
+  -- gates, loosened so the range gets worked before the roads do:
+  -- the water-run waits for a nearly-dry cup (0.5, not 1 -- the
+  -- walk to the bank costs three hours each way), the raid road
+  -- opens only to a genuinely starving pack (5, not 3), and the
+  -- hunt starts at the first hungy hour (1, not 2).
+  if water < 0.5 and ctx.entity.place ~= "RIVER" then
     ctx.action.travel("RIVER")
   elseif ctx.entity.place == "RIVER" and water < 2 then
     ctx.action.start_process("DRINK")
   elseif std.hour() >= dusk and std.hour() + walk_ahead < 20
-     and hunger > 3 and ctx.entity.place ~= prowl then
+     and hunger > 5 and ctx.entity.place ~= prowl then
     ctx.action.travel(prowl)
   elseif ctx.entity.place ~= home then
     ctx.action.travel(home)
-  elseif hunger > 2 and not std.running_recipe("HUNT") then
+  elseif hunger > 1 and not std.running_recipe("HUNT") then
     ctx.action.start_process("HUNT")
   end
 end
