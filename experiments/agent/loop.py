@@ -692,12 +692,18 @@ class AgentLoop:
                 transcript.append(
                     {"platform": f"the model call failed: {exc}"})
                 continue
-            transcript.append({"user": usr_text, "reply": raw})
             # The action channel is the post-deliberation text: reasoning
             # models that embed <think> blocks in content get them peeled
             # before KEEP/patch/rewrite parsing (stone-run5: the separator
             # must be structural — the diary prompt could not stop it).
+            # The transcript records the PEELD reply: the diary prompt
+            # embeds every reply verbatim, and a content-embedded think
+            # block would ride straight back into the model's context
+            # (run 44 r1: a 90K-char diary prompt on the heels of a
+            # 44K-think round; the slot wall is the failure class). The
+            # code is the reply of record — deliberation is not.
             body = strip_think(raw)
+            transcript.append({"user": usr_text, "reply": body})
 
             # action 1: KEEP — carry the behaviour forward verbatim, no
             # submission at all. Readying up without gambling a rewrite.

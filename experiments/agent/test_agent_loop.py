@@ -160,6 +160,22 @@ def test_diary_captures_the_minds_reasoning(client):
     #                                                               not diary
 
 
+def test_diary_prompt_strips_embedded_think_blocks(client):
+    # run 44 r1: the diary prompt embeds every reply verbatim, and a
+    # content-embedded <think> block rides straight back into the
+    # model's context (a 44K-char think round behind a 90K diary
+    # prompt; the llama slot wall is the failure class). The transcript
+    # records the peeled reply: the code is the reply of record.
+    thinky = ("<think>I should consider the hearth, the wolves, the "
+              "market for yarn, the ...</think>\n" + CLEAN)
+    lp, model = loop(client, [thinky, "Kept the hearth plan."], diary=True)
+    entry = lp.cycle()
+    assert entry["accepted"]
+    diary_user = model.calls[-1]["user"]
+    assert "I should consider the hearth" not in diary_user
+    assert CLEAN in diary_user                 # the code, verbatim
+
+
 def test_diary_leak_flag_marks_prompt_restatement_openers(client):
     # run-7's one true leak of 44: the entry OPENED with a restatement of
     # the prompt (context-poisoned by the refused prose round before it)
