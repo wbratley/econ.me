@@ -75,6 +75,7 @@ if not S.ask then
   S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
   S.live = {}    -- the (qty, price) placed per key, to spot drift
   S.ids = {}     -- order id per key, from applied place_order events
+  S.answered = {} -- last tick each house was answered at the counter
 end
 
 local ASK_FLOOR, ASK_CAP = 1.00, 8.00
@@ -222,7 +223,7 @@ end
 --    AFTER DARK THE COUNTER GOES QUIET: at night, speech is a beacon
 --    (wolves hunt by ear). He is old, careful, and tooled up -- he
 --    does not draw maps to his firelight.
-if ctx.tick % 10 == 0 and not std.is_night() then
+local function menu()
   local sells, buys = {}, {}
   for _, sym in ipairs({ "BERRIES", "COOKED_MEAT", "JERKY", "CHICKEN",
                          "WATERSKIN" }) do
@@ -236,9 +237,47 @@ if ctx.tick % 10 == 0 and not std.is_night() then
       buys[#buys + 1] = sym .. " " .. r2(S.bid[sym])
     end
   end
+  return sells, buys
+end
+
+if ctx.tick % 10 == 0 and not std.is_night() then
+  local sells, buys = menu()
   if #sells + #buys > 0 then
     ctx.action.say("POST: selling " .. table.concat(sells, ", ")
       .. " | buying " .. table.concat(buys, ", ")
       .. ". Sell me your surplus for coin -- the shelf feeds the lean days.")
+  end
+end
+
+-- 6b. The counter ANSWERS (run 45: a house starved broke at a full
+--     larder, holding ten wood against a shouted bid of five -- the
+--     book was legible, nobody crossed the aisle). The merchant does
+--     not cold-call and he does not read purses: he answers the
+--     customer's own move, and only that. A buy that bounced at his
+--     counter -- the empty purse he watched try to pay, now a loud
+--     fact -- gets the sell-side quote in plain speech; a house that
+--     SPEAKS at the counter gets the book. One answer per house per
+--     six hours, day only: after dark the counter stays quiet
+--     (speech is a beacon, and the wolves hunt by ear).
+for _, e in ipairs(ctx.events or {}) do
+  if e.entity_id and e.entity_id ~= ctx.entity.id
+     and (ctx.tick - (S.answered[e.entity_id] or -999)) >= 6
+     and not std.is_night()
+     and ((e.type == "order_cancelled"
+           and e.reason == "insufficient funds at auction")
+          or (e.type == "say" and e.status ~= "rejected")) then
+    local sells, buys = menu()
+    if e.type == "order_cancelled" and #buys > 0 then
+      S.answered[e.entity_id] = ctx.tick
+      ctx.action.say("POST: no coin at my counter? I pay coin for "
+        .. table.concat(buys, ", ")
+        .. " -- sell me what you carry and eat tonight.")
+    elseif #sells + #buys > 0 then
+      S.answered[e.entity_id] = ctx.tick
+      ctx.action.say("POST: heard at the counter -- selling "
+        .. table.concat(sells, ", ") .. " | buying "
+        .. table.concat(buys, ", ")
+        .. ". The book stands; the shelf feeds the lean days.")
+    end
   end
 end

@@ -22,7 +22,7 @@ from .models import Entity, EntityStatus, EventObserver
 #: repealed, by the witness feed. New loud facts (wolf attacks) join
 #: here as content lands.
 OBSERVABLE_EVENT_TYPES: frozenset[str] = frozenset(
-    {"say", "entity_incapacitated", "combat"})
+    {"say", "entity_incapacitated", "combat", "order_cancelled"})
 
 
 def _observable(event: dict) -> bool:
@@ -31,6 +31,15 @@ def _observable(event: dict) -> bool:
     # An intent event that was refused never happened -- the refusal
     # stays in the actor's own log, but the world heard nothing.
     if event.get("status") == "rejected":
+        return False
+    # A bounced order is loud only at the counter it bounced on (run
+    # 45: six "insufficient funds at auction" cancellations the
+    # merchant never saw -- he watched the empty purse try to pay and
+    # said nothing, and the house starved holding what he bids for).
+    # The post's own book plumbing -- cancel-and-replace, price drift
+    # -- stays private, or every digest drowns in market churn.
+    if (event.get("type") == "order_cancelled"
+            and "insufficient funds" not in (event.get("reason") or "")):
         return False
     return True
 
