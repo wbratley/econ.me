@@ -27,8 +27,8 @@ from sqlalchemy.orm import Session
 
 from econengine import markets, parcels, production, services
 from econengine.models import (
-    Base, Entity, EntityStatus, EntityType, Holding, Market, Order,
-    OrderSide, OrderStatus, Script, ScriptType, Tick,
+    Account, Base, Entity, EntityStatus, EntityType, Holding, Market,
+    Order, OrderSide, OrderStatus, Script, ScriptType, Tick,
 )
 from econengine.tick import run_tick
 
@@ -2209,3 +2209,75 @@ def test_the_post_shelves_a_bed(session):
                                                        side=OrderSide.SELL)}
     assert sells["BED"].limit_price == Decimal("5.00")
     assert sells["BED"].quantity == Decimal("1")
+
+
+def test_the_counter_answers_a_bounced_order(session):
+    """Run 45: Lagertha starved broke at a full larder, holding ten
+    wood against a shouted bid of five. The book was legible; nobody
+    crossed the aisle. Now the merchant answers the customer's own
+    move: a buy that bounces for insufficient funds AT his counter --
+    the empty purse he watched try to pay, a loud fact now -- gets the
+    sell-side quote in speech, broadcast so the bounced house reads
+    its own way out. One answer per house per six hours."""
+    from econengine import clock
+    create_content(session)
+    post = _post(session)
+    house = _seat(session, "Broke")
+    _at(session, house, "POST")            # markets trade where they stand
+    acct = session.execute(
+        select(Account).where(Account.entity_id == house.id,
+                              Account.currency == "COIN")
+    ).scalar_one()
+    acct.balance = Decimal("0")            # the empty purse
+    session.commit()
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    # the shelf is quoted: the ask the broke buy is about to cross
+    assert _open_orders(session, post.id, "JERKY", OrderSide.SELL)
+    markets.place_order(session, house.id, "JERKY", "buy",
+                        Decimal("1"), Decimal("2.00"), acct.id)
+    session.commit()
+    run_tick(session); session.commit()     # the auction: bounced, loudly
+    assert [e for e in _events(session, "order_cancelled")
+            if e.get("entity_id") == house.id
+            and "insufficient funds" in (e.get("reason") or "")]
+    nsays = len(_events(session, "say"))
+    for _ in range(3):                      # the feed lands next tick
+        run_tick(session); session.commit()
+    replies = [e for e in _events(session, "say")[nsays:]
+               if e.get("entity_id") == post.id
+               and "no coin at my counter" in str(
+                   (e.get("params") or {}).get("text"))]
+    assert replies                          # the merchant answers
+
+
+def test_the_counter_answers_a_house_that_speaks(session):
+    """Speech becomes two-way: a house that SPEAKS at the counter gets
+    the book -- both sides, current prices -- because speech is the
+    one channel every house's prompt already reads. The merchant does
+    not cold-call; he answers words with words, by day (after dark
+    the counter stays quiet: speech is a beacon, wolves hunt by
+    ear)."""
+    from econengine import clock
+    create_content(session)
+    post = _post(session)
+    house = _seat(session, "Chatty")
+    hs = Script(
+        name=f"chatty-{house.id}", lineage_id=None,
+        description="says at the counter", script_type=ScriptType.BEHAVIOUR,
+        source='ctx.action.say("Post -- what will you pay for wood?")',
+        is_active=True, timeout_ms=5000, entity_id=house.id,
+    )
+    session.add(hs)
+    session.commit()
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    nsays = len(_events(session, "say"))
+    for _ in range(3):
+        run_tick(session); session.commit()
+    assert [e for e in _events(session, "say")[nsays:]
+            if e.get("entity_id") == house.id]        # the house spoke
+    assert [e for e in _events(session, "say")[nsays:]
+            if e.get("entity_id") == post.id
+            and "heard at the counter" in str(
+                (e.get("params") or {}).get("text"))]

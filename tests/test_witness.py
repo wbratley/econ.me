@@ -108,6 +108,28 @@ def test_say_text_is_normalized(pair, session):
     assert _says(tick, alice.id)[0]["params"]["text"] == "padded"
 
 
+def test_a_bounced_order_is_loud_but_book_plumbing_is_not(session):
+    """Run 45: a buy that bounces 'insufficient funds at auction'
+    does so at the post's public counter -- the empty purse the whole
+    market watched. The bounce is loud now (the merchant answers it);
+    the post's own cancel-and-replace churn is not, or every digest
+    drowns in book plumbing."""
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    bob = create_entity(session, "Bob", EntityType.INDIVIDUAL)
+    session.flush()
+    events = [
+        {"type": "order_cancelled", "entity_id": alice.id,
+         "market": "JERKY", "reason": "insufficient funds at auction"},
+        {"type": "order_cancelled", "entity_id": alice.id,
+         "order_id": "x", "reason": "replaced"},
+    ]
+    written = witness.record_delivery(session, 9, events)
+    rows = session.execute(select(EventObserver)).scalars().all()
+    assert written == 2 and len(rows) == 2     # the bounce, to both
+    assert all(r.event_index == 0 for r in rows)
+    assert all(r.tick_number == 9 for r in rows)
+
+
 # --- delivery: the witness table ------------------------------------------
 
 def test_delivery_broadcasts_observables_only(session):
