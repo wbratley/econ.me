@@ -1299,6 +1299,70 @@ def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
     assert "FOREST" in walks                # and home again by day
 
 
+def test_the_raid_holds_the_doorstep_and_bites_in_the_dark(session):
+    """Run 45's structural bug, fixed: both packs walked the raid road
+    and about-faced on the ARRIVAL tick -- the day block's walk-home
+    branch fired while the light still stood, the night block never
+    saw the fire-ground, and the raid was a six-hour round walk that
+    fed nobody (the packs died on the dark road home, of a feud it
+    drove them into). Now arrival is arrival: the pack holds the
+    fire-ground through the window, bites blind once hunger passes
+    the raid's own bar -- 5, not the starving 8 -- and the road home
+    waits for day."""
+    from econengine import clock
+    create_content(session)
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    assert wolf.place.key == "FOREST"
+    # the run-44/45 shaping (a decision that is not a race): a full
+    # stomach keeps the cup topped, a nearly-dry cup runs its errand
+    # at first light (home by noon -- the dusk window stays free)
+    markets.adjust_holding(session, wolf, "SATIETY", Decimal("6"))
+    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.25"))
+    while clock.hour_of(production.next_tick_number(session)) < 15:
+        run_tick(session); session.commit()
+    # HUNGER set exactly past the raid bar as the window opens
+    h = markets.get_holding(session, wolf.id, "HUNGER").quantity
+    markets.adjust_holding(session, wolf, "HUNGER", Decimal("6") - h)
+    # out to the hearth at dusk, three hours of road
+    arrived = None
+    for _ in range(30):
+        run_tick(session); session.commit()
+        if wolf.place.key == "HEARTH":
+            arrived = len(_events(session, "travel"))
+            break
+    assert arrived is not None, "the raid walk never arrived"
+    # the doorstep hold: no about-face while the light stands
+    while not clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    def _to(e):
+        return e.get("to") or (e.get("params") or {}).get("to")
+    assert not [e for e in _events(session, "travel")[arrived:]
+                if e["entity_id"] == wolf.id and _to(e) == "FOREST"]
+    # the bite, armed by the raid's own bar: pin HUNGER at 6 -- between
+    # 5 and 8, so only the new fire-ground clause can fire it -- and
+    # take one dark tick (applied, deterred, or refused: it bit)
+    h = markets.get_holding(session, wolf.id, "HUNGER").quantity
+    markets.adjust_holding(session, wolf, "HUNGER", Decimal("6") - h)
+    ncomb = len(_events(session, "combat"))
+    run_tick(session); session.commit()
+    assert [e for e in _events(session, "combat")[ncomb:]
+            if e["entity_id"] == wolf.id]
+    # the night passes in the yard; the road home is a day matter
+    ntrav = len(_events(session, "travel"))
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+        assert not [e for e in _events(session, "travel")[ntrav:]
+                    if e["entity_id"] == wolf.id and _to(e) == "FOREST"]
+    for _ in range(12):
+        if [e for e in _events(session, "travel")[ntrav:]
+                if e["entity_id"] == wolf.id and _to(e) == "FOREST"]:
+            break
+        run_tick(session); session.commit()
+    assert [e for e in _events(session, "travel")[ntrav:]
+            if e["entity_id"] == wolf.id and _to(e) == "FOREST"]
+
+
 def test_starter_floor_survives_the_wolves(session):
     """The integration contract: two hunting packs, a silent floor with
     a fire -- no incapacity across two days. Wolves that find nothing
