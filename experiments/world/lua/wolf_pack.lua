@@ -27,7 +27,14 @@
 --
 -- The program never fights fire: a lit hearth turns a pack at the door
 -- (combat rules do that). It attacks what it can find up close, eats
--- what it caught, and stays warm by moving.
+-- what it caught, and stays warm by moving. And the raid COMPLETES
+-- (run 45: both packs walked the road to the fire-ground and
+-- about-faced on the arrival tick -- the walk-home branch fired while
+-- the light still stood, and the dark road home killed them): arrived
+-- is arrived. The pack holds the fire-ground through the window, bites
+-- blind at the raid's own hunger bar (5 -- it walked out hungry enough
+-- to raid; it does not stand in the yard all night listening), and the
+-- road home waits for day.
 
 local S = ctx.state
 
@@ -94,7 +101,13 @@ if std.is_night() then
   if hunger > 3 then
     if S.prey then
       ctx.action.attack(S.prey)
-    elseif hunger > 8 then
+    elseif hunger > 8
+       or (ctx.entity.place == prowl and hunger > 5) then
+      -- At the fire-ground the blind bite is armed by the raid's own
+      -- bar (5, not the starving 8): the pack that walked out hungry
+      -- enough to raid bites up close in the dark -- the sleepers
+      -- stand by the fire it came for. What turns it is the hearth
+      -- (combat rules do that); what it came for is the dark one.
       ctx.action.attack(nil)
     end
   elseif rest < 4 and not std.running_recipe("SLEEP_DEN") then
@@ -137,6 +150,13 @@ else
   elseif std.hour() >= dusk and std.hour() + walk_ahead < 20
      and hunger > 5 and ctx.entity.place ~= prowl then
     ctx.action.travel(prowl)
+  elseif ctx.entity.place == prowl and std.hour() >= dusk then
+    -- The doorstep hold (run 45): arrived with the last light, the
+    -- walk-home branch used to about-face the pack here -- three
+    -- hours walked out, turned on the arrival tick, and the dark
+    -- road home did the killing (a feud on the way). The night
+    -- block below does the biting; dawn is when the road home
+    -- opens again.
   elseif ctx.entity.place ~= home then
     ctx.action.travel(home)
   elseif hunger > 1 and not std.running_recipe("HUNT") then
