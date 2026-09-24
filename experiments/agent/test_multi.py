@@ -868,3 +868,64 @@ def test_nim_run_clock_mode_end_to_end(tmp_path):
     meta = _json.loads((out / "meta.json").read_text())
     assert meta["status"] == "complete"
     assert meta["round"] == rounds_seen[-1]
+
+
+# ===========================================================================
+# The live panel: the dashboard rides the world's SSE stream while live
+# ===========================================================================
+
+def _live_meta(status, **extra):
+    """The meta nim_run's write_dash would carry for a 2-of-4 round run
+    at the given status (live_url + refresh only while live, exactly
+    as write_dash adds them)."""
+    meta = {"title": "live run", "ticks_per_round": 2, "generated": "now",
+            "status": status, "round": 2, "rounds_total": 4,
+            "elapsed_s": 30.0}
+    if status == "live":
+        meta["refresh_s"] = 10     # the LIVE header reads it
+        meta["live_url"] = "http://127.0.0.1:8925/"
+    meta.update(extra)
+    return meta
+
+
+def test_live_panel_streams_the_world_clock(client, monkeypatch, tmp_path):
+    """While live, the page opens an EventSource on the world's SSE
+    stream — the between-rounds view (§9.2): ticks, hours, rounds, and
+    the observable events each tick broadcasts, with houses rendered by
+    name (the id map is built from the snapshots themselves, entity ids
+    AND the run's user-id scheme for eliminations)."""
+    loops = make_loops(client, [[CLEAN, CLEAN2]] * 3, monkeypatch, rounds_k=2)
+    snapshots = run_rounds(loops, 2, tmp_path)
+    html = build_dashboard(snapshots, _live_meta("live"))
+    # the stream target: the world server, not the static harness port
+    assert '"http://127.0.0.1:8925"' in html
+    assert "new EventSource(LIVE + '/rounds/events')" in html
+    # the handlers: tick events (header + observables + eliminations)
+    # and the round-closure divider
+    assert "addEventListener('tick'" in html
+    assert "addEventListener('round_closed'" in html
+    assert "addEventListener('hello'" in html
+    assert "world_tick_seconds" in html          # cadence note from hello
+    # entity ids and user ids both resolve to house names
+    eid = snapshots[0]["dynasties"]["House One"]["entry"]["entity"]
+    assert f'"{eid}": "House One"' in html
+    assert '"u-house-one": "House One"' in html
+    assert "flash-combat" in html and "flash-death" in html
+    # ticks_per_round rides the meta so the header can derive the round
+    assert "var LIVE = \"http://127.0.0.1:8925\", NAMES = " in html
+    assert ", K = 2;" in html
+
+
+def test_live_panel_drops_off_the_finished_page(client, monkeypatch,
+                                                tmp_path):
+    """The panel belongs to a live world: the final rewrite (complete/
+    extinct — even with the URL still in hand) and URL-less metas
+    render no stream, so the artifact stays self-contained forever."""
+    loops = make_loops(client, [[CLEAN, CLEAN2]] * 3, monkeypatch, rounds_k=2)
+    snapshots = run_rounds(loops, 2, tmp_path)
+    for meta in (_live_meta("complete", live_url="http://127.0.0.1:8925/"),
+                 _live_meta("extinct", live_url="http://127.0.0.1:8925/"),
+                 _live_meta("live", live_url=None)):
+        html = build_dashboard(snapshots, meta)
+        assert "EventSource" not in html
+        assert 'id="lv"' not in html
