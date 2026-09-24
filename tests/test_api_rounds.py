@@ -496,3 +496,118 @@ def test_mcp_set_ready_publishes_on_the_event_stream(client, monkeypatch):
     assert kinds == ["readiness", "round_closed", "round_opened"]
     opened = next(d for e, d in seen if e == "round_opened")
     assert opened["round"] == 2
+
+
+# ===========================================================================
+# The world clock (§9.2) -- the server ticks on its own initiative
+# ===========================================================================
+
+def test_world_tick_env_parsing(monkeypatch):
+    """The clock's pace parses like the backstop's: off by default, and
+    a bad env value must not become a zero-second world."""
+    from econ.api.rounds import world_tick_seconds
+
+    monkeypatch.delenv("ECON_WORLD_TICK_SECONDS", raising=False)
+    assert world_tick_seconds() == 0.0            # off by default
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "0")
+    assert world_tick_seconds() == 0.0
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "-5")
+    assert world_tick_seconds() == 0.0            # bad values never arm it
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "one minute")
+    assert world_tick_seconds() == 0.0
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    assert world_tick_seconds() == 60.0
+
+
+def test_clock_tick_advances_without_requests(client, monkeypatch):
+    """The clock's unit: with life in the world, a driven heartbeat
+    runs exactly one tick and commits it -- no request anywhere. The
+    round counter does not move: rounds close on tick multiples, not on
+    completion."""
+    from econ.api.main import _clock_tick_once
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    _make_eligible()
+
+    summary = _clock_tick_once()
+    assert summary is not None and summary["closed"] is None
+    assert summary["tick"] == 1 and summary["hour"] == 0
+    s = _current(client).json()
+    assert s["ticks_run"] == 1 and s["round_number"] == 0
+    assert s["ticks_into_round"] == 1
+
+
+def test_clock_closes_round_on_boundary(client, monkeypatch):
+    """A tick whose number is a multiple of K closes the round through
+    the shared boundary path: counter upsert, readiness reset for the
+    new window, eliminations scan -- identical bookkeeping to an
+    advance, because it IS the same code path."""
+    from econ.api.main import _clock_tick_once
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "3")
+    _make_eligible()
+
+    for _ in range(3):
+        summary = _clock_tick_once()
+        assert summary is not None
+    assert summary["closed"] is not None
+    assert summary["closed"]["round_number"] == 1
+    assert summary["closed"]["next_round"] == 2
+    s = _current(client).json()
+    assert s["round_number"] == 1 and s["ticks_run"] == 3
+    assert s["ticks_per_round"] == 3
+    assert s["readiness"]["ready"] == 0     # register reset for round 2
+
+
+def test_clock_disarms_the_backstop(client, monkeypatch):
+    """Ownership rule (§9.2): when the clock is armed the deadline
+    backstop stands down -- both running would double-advance every
+    round."""
+    from econ.api.rounds import maybe_auto_advance
+    from econengine.models import WorldSetting
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    monkeypatch.setenv("ECON_ROUND_DEADLINE_S", "60")
+    _set_gate(client, "readiness")
+    _make_eligible()
+    engine = app.state._test_engine
+    with Session(engine) as session:              # a window opened long ago
+        session.get(WorldSetting, "round.readiness", with_for_update=True)
+        session.execute(
+            WorldSetting.__table__.insert().values(
+                key="round.readiness",
+                value={"round": 1, "ready": [], "opened_at": 0.0}))
+        session.commit()
+
+    with Session(engine) as session:
+        assert maybe_auto_advance(session) is None   # deadline long past
+
+
+def test_clock_consent_records_but_never_resolves(client, monkeypatch):
+    """Under the clock, consent is recorded but never resolves: the
+    clock owns advancement (§9.2), so a fully-consenting world closes
+    its round at the boundary instead of in-request."""
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    _set_gate(client, "readiness")
+    _make_eligible()
+
+    r = client.post("/rounds/ready", headers=_auth("u-alice"))
+    assert r.status_code == 200, r.text          # recorded, not resolved
+    body = r.json()
+    assert body["resolved"] is None
+    state = body["readiness"]
+    assert state["ready"] == state["eligible"] == 1
+    assert _current(client).json()["round_number"] == 0  # nothing advanced
+
+
+def test_clock_extinction_brake(client, monkeypatch):
+    """No ACTIVE entities: the heartbeat holds -- the clock never ticks
+    a corpse (§9.2) -- and nothing is written."""
+    from econ.api.main import _clock_tick_once
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    # users exist in this world, but nobody is alive
+
+    assert _clock_tick_once() is None
+    assert _current(client).json()["ticks_run"] == 0

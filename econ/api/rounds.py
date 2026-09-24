@@ -33,6 +33,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from econ.api import epochs as epochs_mod
+from econengine import witness as witness_mod
+from econengine.clock import hour_of
 from econengine.models import Entity, EntityStatus, Tick, WorldSetting
 from econengine.tick import run_tick
 
@@ -45,6 +47,12 @@ DEFAULT_TICKS_PER_ROUND = 10
 #: WorldSetting): 0/absent/invalid = off, and existing worlds never see
 #: a server-closed round -- consent or the operator still does it.
 DEADLINE_ENV = "ECON_ROUND_DEADLINE_S"
+
+#: The world clock: wall-clock seconds per scheduled tick (game.md §9.2).
+#: Deployment pace like the deadline backstop -- env, not a WorldSetting:
+#: 0/absent/invalid = off (the world advances only when somebody asks
+#: it to), and existing worlds never see a server-initiated tick.
+CLOCK_ENV = "ECON_WORLD_TICK_SECONDS"
 
 #: The readiness gate (game.md §9.1): rounds close by player consent in
 #: ``readiness`` mode; ``operator`` mode (the default) keeps the clock
@@ -81,6 +89,20 @@ def round_deadline_s() -> float:
     the backstop is off; negative/invalid reads as off too — a bad env
     value must not turn into a zero-second world)."""
     raw = os.environ.get(DEADLINE_ENV)
+    if not raw:
+        return 0.0
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if n > 0 else 0.0
+
+
+def world_tick_seconds() -> float:
+    """Wall-clock seconds per world-clock tick (0 = the clock is off;
+    negative/invalid reads as off -- a bad env value must not become a
+    zero-second world)."""
+    raw = os.environ.get(CLOCK_ENV)
     if not raw:
         return 0.0
     try:
@@ -238,7 +260,10 @@ def set_user_ready(session: Session, user_id: str) -> dict[str, Any]:
     state = readiness_state(session)
     resolved = None
     if (
-        state["mode"] == "readiness"
+        world_tick_seconds() <= 0         # clock armed: the clock owns
+                                          # advancement (§9.2) -- consent
+                                          # is recorded, never resolves
+        and state["mode"] == "readiness"
         and state["eligible"] > 0          # empty set never blocks (genesis)
         and state["ready"] == state["eligible"]
     ):
@@ -321,6 +346,25 @@ def advance_round(session: Session) -> dict[str, Any]:
         # ends still counts. It stops itself the moment the epoch ends.
         stamps_made.extend(epochs_mod.observe_tick(session, tick.number))
 
+    closed = _close_round(session, rounds_before, tick_numbers[-1])
+    return {
+        **closed,
+        "ticks": tick_numbers,
+        "events": total_events,
+        "events_by_type": dict(events_by_type),
+        "victory_stamps": stamps_made,
+    }
+
+
+def _close_round(session: Session, rounds_before: int,
+                 last_tick_number: int) -> dict[str, Any]:
+    """The round-boundary work shared by every path that completes a
+    round (§9): population renewal (spawns), the round-counter upsert,
+    the readiness reset with its submit-window anchor, and the dynasty
+    extinction scan. Pure boundary bookkeeping -- no ticks. The
+    operator's advance, a full-consent resolve, and the world clock's
+    boundary all land here, so the three paths cannot drift apart.
+    """
     # Population renews at the round boundary (spawns.py): what the
     # world's SPAWN_RULES call for, after the round's ticks committed.
     from econengine import spawns as spawns_mod
@@ -353,18 +397,66 @@ def advance_round(session: Session) -> dict[str, Any]:
     _write_readiness_register(session, rounds_before + 2, [], opened_at=opened_at)
 
     # Dynasty-extinction scan: once per round, after the batch (§14.2).
-    eliminations = epochs_mod.scan_eliminations(session, tick_numbers[-1])
-
+    eliminations = epochs_mod.scan_eliminations(session, last_tick_number)
     return {
         "round_number": rounds_before + 1,   # the round just completed
-        "ticks": tick_numbers,
-        "events": total_events,
-        "events_by_type": dict(events_by_type),
         "next_round": rounds_before + 2,
-        "ticks_per_round": k,
+        "ticks_per_round": ticks_per_round(),
         "next_opened_at": opened_at,
-        "victory_stamps": stamps_made,
         "eliminations": eliminations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The world clock (§9.2) -- the server ticks on its own initiative
+# ---------------------------------------------------------------------------
+
+def _any_active_entities(session: Session) -> bool:
+    """Is anyone alive? The extinction brake's question (§9.2): the
+    clock never ticks a corpse -- a world whose last dynasty died
+    stops on its own, and only new life (an admin spawn, a join)
+    restarts the heartbeat."""
+    n = session.execute(
+        select(func.count()).select_from(Entity).where(
+            Entity.status == EntityStatus.ACTIVE)
+    ).scalar_one()
+    return n > 0
+
+
+def run_scheduled_tick(session: Session) -> dict[str, Any] | None:
+    """The world clock's unit (§9.2): one tick on the server's own
+    initiative, no request behind it. The extinction brake comes first
+    (a dead world's clock stops); then the tick + the victory observer
+    -- and when the tick's number completes a round (a multiple of K),
+    the round closes exactly as an advance would close it: spawns,
+    counter, readiness reset, extinction scan, all through the shared
+    ``_close_round``.
+
+    Returns the tick summary -- number, hour, event counts, the
+    observable subset for broadcast (the same vocabulary the witness
+    feed carries, §15.6), and the round-closure summary when this tick
+    closed a round -- or ``None`` when the brake held. The caller owns
+    the commit: one transaction per tick, so a busy-timeout loss rolls
+    back exactly one heartbeat and the next one retries.
+    """
+    if not _any_active_entities(session):
+        return None
+    tick = run_tick(session)
+    stamps = epochs_mod.observe_tick(session, tick.number)
+    closed = None
+    if tick.number % ticks_per_round() == 0:
+        closed = _close_round(session, _rounds_completed(session),
+                              tick.number)
+    events = list(tick.events or [])
+    by_type = Counter(str(e.get("type", "unknown")) for e in events)
+    return {
+        "tick": tick.number,
+        "hour": hour_of(tick.number),
+        "events": len(events),
+        "events_by_type": dict(by_type),
+        "victory_stamps": stamps,
+        "observables": witness_mod.observable_events(events),
+        "closed": closed,
     }
 
 
@@ -391,6 +483,9 @@ def maybe_auto_advance(session: Session, now: float | None = None) -> dict[str, 
     single writer makes the flush serialize; a busy-timeout loss rolls
     back and the next scheduler poll retries).
     """
+    if world_tick_seconds() > 0:
+        return None        # the world clock owns advancement (§9.2): both
+                          # running would double-advance every boundary
     deadline = round_deadline_s()
     if deadline <= 0 or gate_mode(session) != "readiness":
         return None

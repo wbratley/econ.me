@@ -19,7 +19,7 @@ from econ.api import events
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.rounds import (
     NotEligibleError, advance_round, current_round_state, gate_mode,
-    set_gate_mode, set_user_ready, unset_user_ready,
+    set_gate_mode, set_user_ready, unset_user_ready, world_tick_seconds,
 )
 from econ.api.schemas import (
     GateMode, GateModeUpdate, ReadyResponse, RoundState, RoundSummary,
@@ -123,8 +123,11 @@ async def round_events(
     keep proxies from reaping an idle stream. The session closes before
     streaming starts; nothing DB-shaped is held for the stream's life.
     """
-    hello = jsonable_encoder({"type": "hello",
-                             **current_round_state(session)})
+    hello = jsonable_encoder(
+        {"type": "hello", **current_round_state(session),
+         "world_tick_seconds": world_tick_seconds()})  # cadence fact: a
+    # connecting seat learns immediately whether the world ticks itself
+    # (§9.2) and can budget its wall-clock against it -- 0 means off.
     session.close()                       # hold no connection while streaming
 
     def sse(event: str, data: dict) -> str:

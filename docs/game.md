@@ -330,6 +330,50 @@ operator, or deadline — is broadcast on the public SSE stream
 `round_closed` / `round_opened{deadline_epoch}`), so an always-connected
 seat hears the world without polling.
 
+### 9.2 The world clock — the server ticks
+
+*Shipped with the realtime server: the always-on world (M2a's
+companion).*
+
+The batched model freezes the world while seats think: a round resolves
+only when consent (or the operator, or the backstop) fires, so a slow
+seat holds the world hostage no matter how the gate is tuned. The world
+clock removes that coupling: `ECON_WORLD_TICK_SECONDS > 0` arms a
+lifespan heartbeat that runs **one tick per wall-clock interval**, on a
+fixed-rate schedule anchored on the *planned* tick time (bounded
+catch-up: a slow tick never speeds the world up; a world that falls
+behind simply runs behind until it recovers). The operator's advance
+and the single-tick escape hatch are unchanged.
+
+**Rounds become accounting boundaries.** The clock closes a round when
+a tick's number is a multiple of K — through the same boundary path an
+advance uses (spawns, round-counter upsert, readiness reset,
+extinction scan), so the two paths cannot drift apart. What changes is
+semantics, and it is the point of the lever: **decision latency becomes
+a survival variable.** A seat that thinks for three intervals returns to
+a world three ticks older; its stale orders execute against a world
+that moved. Pacing matches wall-clock, not cognition — the exact
+inversion of §9.1's argument, chosen deliberately for worlds whose
+interesting pressure is attention.
+
+**Ownership is exclusive.** When the clock is armed it owns advancement:
+consent is still recorded (readiness stays a public fact and a social
+signal) but never resolves, and the deadline backstop stands down —
+two advancing mechanisms would double-advance every boundary. The
+extinction brake carries over, checked per heartbeat: **no ACTIVE
+entities, no ticks** — a dead world's clock stops, and only new life
+restarts it.
+
+**Observability rides the existing stream.** Each heartbeat publishes a
+`tick` event on `GET /rounds/events` — tick number, hour, event counts,
+and the observable subset (the same vocabulary the witness feed
+carries, §15.6) — and a boundary tick also publishes the usual
+`round_closed` / `round_opened` pair, so waiting seats and dashboards
+hear the world breathe without polling. Write contention follows the
+SQLite doctrine everywhere else in the scheduler: one transaction per
+tick; a busy-timeout loss rolls back exactly one heartbeat and the next
+retries.
+
 ## 10. Logistics — planned, triggered, and specified
 
 Distance/maps/transport were **out of scope for v0** and safely so:

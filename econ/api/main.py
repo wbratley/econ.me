@@ -1,10 +1,13 @@
 """The world server app: one FastAPI instance over one world.db.
 
 Round-clock wiring (game.md §9): routes own consent and operator
-advances; when the deadline backstop is armed (ECON_ROUND_DEADLINE_S >
-0) a lifespan background task closes rounds nobody closed -- the
+advances; two server-side heartbeats may run. The deadline backstop
+(ECON_ROUND_DEADLINE_S > 0) closes rounds nobody closed -- the
 always-on host (M2a): a seat that never shows costs the world one
-deadline period, not a hang.
+deadline period, not a hang. The world clock (ECON_WORLD_TICK_SECONDS
+> 0, §9.2) ticks the world itself on the wall clock, one tick per
+interval, and supersedes the backstop -- when the clock is armed it
+owns advancement; the backstop stays asleep.
 """
 import asyncio
 import logging
@@ -60,12 +63,77 @@ async def _deadline_scheduler() -> None:
             events.publish_round_closed(summary)
 
 
+def _clock_tick_once() -> dict | None:
+    """One world-clock heartbeat (§9.2): run the scheduled tick and
+    commit it. Same session discipline as the backstop poll -- own short
+    session, one transaction per tick, so a busy-timeout loss against a
+    concurrent request write rolls back exactly one heartbeat and the
+    next one retries. Returns the tick summary, or ``None`` when the
+    extinction brake held (nothing alive) or the clock is unarmed."""
+    from sqlalchemy.orm import Session
+
+    from econ.db import engine as db_engine
+    from econ.api.rounds import run_scheduled_tick
+    from fastapi.encoders import jsonable_encoder
+
+    engine = getattr(app.state, "_test_engine", None) or db_engine
+    with Session(engine) as session:
+        summary = run_scheduled_tick(session)
+        session.commit()
+        return jsonable_encoder(summary) if summary else None
+
+
+async def _world_clock() -> None:
+    """The world's own heartbeat (§9.2): one tick per interval, forever,
+    on a fixed-rate schedule anchored on the PLANNED tick time (a slow
+    tick never speeds the world up; a persistently slow world simply
+    runs behind until it catches up -- bounded catch-up, no burst). At
+    each tick the world broadcasts itself: a ``tick`` event (number,
+    hour, the observable subset) rides the SSE stream, and a tick that
+    completed a round also speaks the round-closure the seats and the
+    dashboard already know how to hear."""
+    import time as _time
+
+    from econ.api.rounds import world_tick_seconds
+
+    interval = world_tick_seconds()
+    next_due = _time.monotonic() + interval
+    while True:
+        await asyncio.sleep(max(0.0, next_due - _time.monotonic()))
+        try:
+            summary = await asyncio.to_thread(_clock_tick_once)
+        except Exception:  # noqa: BLE001 -- the clock must survive its ticks
+            log.warning("world-clock tick failed", exc_info=True)
+            next_due += interval
+            continue
+        if summary:
+            events.publish("tick", summary)
+            if summary.get("closed"):
+                events.publish_round_closed({
+                    "round_number": summary["closed"]["round_number"],
+                    "ticks": [summary["tick"]],
+                    "events": summary["events"],
+                    "events_by_type": summary["events_by_type"],
+                    "next_round": summary["closed"]["next_round"],
+                    "eliminations": summary["closed"]["eliminations"],
+                })
+        # Fixed-rate: the next tick is due one interval after the planned
+        # one, not after the work -- unless we have fallen a full interval
+        # behind (slow ticks, paused debugger), in which case re-anchor so
+        # catch-up never bursts.
+        next_due += interval
+        if next_due < _time.monotonic() - interval:
+            next_due = _time.monotonic() + interval
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from econ.api.rounds import round_deadline_s
+    from econ.api.rounds import round_deadline_s, world_tick_seconds
 
     task = None
-    if round_deadline_s() > 0:
+    if world_tick_seconds() > 0:
+        task = asyncio.create_task(_world_clock())   # the clock owns it
+    elif round_deadline_s() > 0:
         task = asyncio.create_task(_deadline_scheduler())
     yield
     if task is not None:
