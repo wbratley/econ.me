@@ -16,7 +16,9 @@ replaces it. From then on every mind in the world is a model rewriting
 Lua between rounds; the readiness gate (§9.1) paces it: each round,
 every dynasty cycles then readies, and the final ready resolves the
 round in-request. No admin in the pacing loop — the operator built the
-world, then stepped back.
+world, then stepped back. Under a world clock (§9.2, `clock_wait`) the
+same loop runs one beat slower: consent is recorded but the world
+closes rounds on its own ticks, and the runner waits.
 
 Snapshots are taken from each dynasty's OWN MCP surface (the §13 parity
 set plus leaderboard/prices): the dashboard's data is exactly what the
@@ -312,26 +314,42 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                out_dir: str | Path,
                admin_advance=None, on_round=None,
                start_round: int = 1,
-               snapshots: list[dict] | None = None) -> list[dict]:
-    """Rounds start_round..N (default 1..N). A resumed run passes the
-    rounds already on disk as `snapshots` so `on_round` and the return
-    value carry the WHOLE run — the dashboard never forgets round 1
-    because the process restarted. Each round: every dynasty cycles —
-    CONCURRENTLY, the decisions are independent — then readies in order,
-    and the final ready resolves the round in-request (readiness gate);
-    a snapshot lands in `out_dir/round-XX.json`. A dynasty whose model
-    hard-fails (network, provider) keeps its behaviour, journals the
-    failure, and STILL readies — one dead model must not stop the world.
+               snapshots: list[dict] | None = None,
+               clock_wait=None) -> list[dict]:
+    """Rounds until the WORLD has completed N (default 1..N; a resumed
+    run continues at start_round and passes the rounds already on disk
+    as `snapshots` so `on_round` and the return value carry the WHOLE
+    run — the dashboard never forgets round 1 because the process
+    restarted). Each round: every dynasty cycles — CONCURRENTLY, the
+    decisions are independent — then readies in order, and the final
+    ready resolves the round in-request (readiness gate); a snapshot
+    lands in `out_dir/round-XX.json`. A dynasty whose model hard-fails
+    (network, provider) keeps its behaviour, journals the failure, and
+    STILL readies — one dead model must not stop the world.
     `admin_advance` is the referee fallback for a round nobody resolved
     (never expected in readiness mode; keeps long runs unstickable).
     `on_round(snapshots)` fires after each resolved round with the
-    full list so far — the live dashboard is rewritten from it."""
+    full list so far — the live dashboard is rewritten from it.
+
+    `clock_wait(after_round)` is clock mode (§9.2): the world clock owns
+    advancement, consent is recorded but never resolves, and after the
+    readies the runner parks on this callback until the world's own
+    ticks close the NEXT round past after_round; it returns the closure
+    summary in the same shape an in-request resolution has. Seats
+    slower than a round are the lever's point: rounds can close while
+    the dynasties think, so the round that closes may be LATER than the
+    one this iteration played — the snapshot is labeled with the round
+    that actually closed, and the run ends when the world's counter
+    reaches N. Without clock_wait the consent path is bit-identical to
+    before."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     mcps = [(d, lp.mcp) for d, lp in loops]
     snapshots = snapshots if snapshots is not None else []
 
-    for round_no in range(start_round, rounds + 1):
+    rounds_done = start_round - 1
+    while rounds_done < rounds:
+        round_no = rounds_done + 1
         resolved, entries = None, {}
         with ThreadPoolExecutor(max_workers=len(loops)) as pool:
             futures = [(d, pool.submit(_decide, d, lp, round_no))
@@ -356,14 +374,23 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
             # extinct — the world's answer is in (run 16 ended in a
             # RuntimeError here at round 27, after the last house died
             # mid-round-26 and the run crashed on a gate nobody was left
-            # to close). Stop the world instead.
+            # to close). Stop the world instead — and in clock mode do it
+            # BEFORE parking on clock_wait: the extinction brake stops
+            # the clock with the last dynasty, and a dead world will
+            # never close the round we'd be sleeping on.
             if entries and all(e.get("action") == "extinct"
                                for e in entries.values()):
                 last = snapshots[-1]["round"] if snapshots else 0
                 print(f"  total extinction — no dynasty left to act; "
                       f"stopping after round {last}")
                 break
-            if admin_advance is None:
+            if clock_wait is not None:
+                # Clock mode (§9.2): the world closes rounds on its own
+                # ticks. The closure may be for a later round than the
+                # one this iteration played (seats slower than a round) —
+                # take whatever closed.
+                resolved = clock_wait(rounds_done)
+            elif admin_advance is None:
                 refusals = "; ".join(
                     f"{name}: {e['refusal']}" for name, e in
                     sorted(entries.items()) if "refusal" in e)
@@ -372,15 +399,21 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                     "readied (gate not in readiness mode?)"
                     + (f" -- readies refused: {refusals}" if refusals
                        else ""))
-            resolved = admin_advance(round_no)
+            else:
+                resolved = admin_advance(round_no)
+        # The world's counter, not the iteration count, drives the run:
+        # consent resolves exactly round_no, but a clocked world (or an
+        # admin advance into a new gate) may close LATER rounds.
+        rounds_done = resolved["round_number"]
 
         snap = _snapshot(mcps, resolved, entries)
-        (out / f"round-{round_no:02d}.json").write_text(
+        (out / f"round-{resolved['round_number']:02d}.json").write_text(
             json.dumps(snap.to_json(), indent=1))
         snapshots.append(snap.to_json())
         kinds = ", ".join(f"{k}×{v}" for k, v in
                           sorted(snap.events_by_type.items())) or "quiet"
-        print(f"  round {round_no} resolved (ticks {snap.ticks[0]}.."
+        first_t = snap.ticks[0] if snap.ticks else "?"
+        print(f"  round {snap.round} resolved (ticks {first_t}.."
               f"{snap.ticks[-1] if snap.ticks else '?'}): {kinds}")
         if on_round is not None:
             on_round(snapshots)

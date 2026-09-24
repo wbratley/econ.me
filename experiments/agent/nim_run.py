@@ -28,7 +28,11 @@ What happens: fresh SQLite world; the content-pack substrate
 the model itself); readiness gate ON; a uvicorn on a scratch port; then
 `multi.run_rounds` — each round every dynasty cycles (observe -> think ->
 submit through its own MCP surface) and readies, the final ready resolves
-the round, a snapshot lands in out/round-XX.json. After the last round:
+the round, a snapshot lands in out/round-XX.json. With
+--world-tick-seconds the world clock (§9.2) owns advancement instead:
+the server ticks itself, consent is recorded but never resolves, and
+the runner waits out each closure — a seat slower than a round returns
+to a world that moved. After the last round:
 one self-contained HTML dashboard. The operator built the world and then
 stepped back — no admin client paces anything.
 
@@ -184,6 +188,54 @@ def spawn_server(port: int, log_path: Path) -> subprocess.Popen:
     raise RuntimeError(f"server did not come up; see {log_path}")
 
 
+def clock_waiter(base: str, admin_token: str,
+                 tick_seconds: float) -> "callable":
+    """The harness half of clock mode (§9.2): the world closes rounds on
+    its own ticks, so after the readies multi.run_rounds parks on this
+    until the world's completed-round counter passes `after_round`, then
+    rebuilds the closure summary from the world's own tick records —
+    the same shape an in-request resolution returns, so snapshots and
+    the dashboard never learn which clock closed the round. The seat
+    surfaces don't expose per-tick event counts, so the tick reads ride
+    the admin REST surface (the runner owns the admin token anyway).
+
+    Poll cadence follows the clock: coarse for real runs (60s ticks),
+    fine for tests (sub-second ticks) — never finer than 20ms."""
+    import httpx
+    import time as _time
+
+    poll_s = max(0.02, min(2.0, tick_seconds / 8.0))
+
+    def wait(after_round: int) -> dict:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        while True:
+            cur = httpx.get(f"{base}/rounds/current", headers=headers,
+                            timeout=10.0).json()
+            if cur.get("round_number", 0) > after_round:
+                break
+            _time.sleep(poll_s)
+        closed, k = cur["round_number"], cur["ticks_per_round"]
+        ticks, by_type, total = [], {}, 0
+        for n in range((closed - 1) * k + 1, closed * k + 1):
+            r = httpx.get(f"{base}/admin/ticks/{n}", headers=headers,
+                          timeout=10.0)
+            if r.status_code != 200:
+                continue      # an escape-hatch gap: count what exists
+            ticks.append(n)
+            for event in r.json().get("events") or []:
+                total += 1
+                kind = str(event.get("type", "unknown"))
+                by_type[kind] = by_type.get(kind, 0) + 1
+        return {"round_number": closed,
+                "ticks": ticks,
+                "events": total,
+                "events_by_type": by_type,
+                "next_round": closed + 1,
+                "closed_by": "world_clock"}
+
+    return wait
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--models", nargs="+", metavar="SLUG",
@@ -237,6 +289,16 @@ def main(argv=None) -> int:
                          "round nobody closes resolves this many seconds "
                          "after opening (0 = off; the server announces "
                          "deadline_epoch on its /rounds/events stream)")
+    ap.add_argument("--world-tick-seconds", type=float, default=0.0,
+                    metavar="SEC",
+                    help="arm the server's world clock (§9.2): the world "
+                         "ticks itself every SEC seconds — rounds close "
+                         "on tick multiples, not on consent. Seats still "
+                         "ready (recorded, never resolving) and the "
+                         "runner waits out each closure; a seat slower "
+                         "than a round returns to a world that moved "
+                         "(0 = off: readiness resolves in-request as "
+                         "before)")
     args = ap.parse_args(argv)
 
     if not args.models and not args.scripted:
@@ -247,6 +309,11 @@ def main(argv=None) -> int:
         # host's backstop — a seat that never shows costs one deadline
         # period, not a hung round). Launch-time only, like the port.
         os.environ["ECON_ROUND_DEADLINE_S"] = str(args.round_deadline_s)
+    if args.world_tick_seconds and args.world_tick_seconds > 0:
+        # Same ride for the world clock (§9.2): it arms in the server's
+        # lifespan and supersedes the backstop, so arming both means the
+        # clock wins (and this flag is the intended lever anyway).
+        os.environ["ECON_WORLD_TICK_SECONDS"] = str(args.world_tick_seconds)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -327,7 +394,7 @@ def main(argv=None) -> int:
             f"{out} already holds a world — pass --resume to continue it, "
             "or point --out at a fresh directory")
     started = _dt.datetime.now(_dt.timezone.utc)
-    bootstrap(out, args.names, dynasties)
+    admin_token = bootstrap(out, args.names, dynasties)
 
     # The world, in-process against the run DB (content pack + owned seats
     # + readiness gate), before the server ever starts.
@@ -442,14 +509,24 @@ def main(argv=None) -> int:
         snapshots = run_rounds(loops, args.rounds, out,
                                on_round=write_dash,
                                start_round=start_round,
-                               snapshots=prior_snaps)
+                               snapshots=prior_snaps,
+                               clock_wait=(clock_waiter(
+                                   base, admin_token,
+                                   args.world_tick_seconds)
+                                   if args.world_tick_seconds > 0
+                                   else None))
         elapsed = time.monotonic() - t0
     finally:
         if not args.keep_server:
             proc.send_signal(signal.SIGTERM)
             proc.wait(timeout=10)
 
-    write_dash(snapshots, status="complete" if len(snapshots) >= args.rounds
+    # Completion is the WORLD's counter (the last closure), not the
+    # snapshot count: a clocked world can close rounds under the
+    # harness's startup or dashboard rewrite, and a run that reached
+    # its target in fewer snapshots is complete, not extinct.
+    world_rounds = snapshots[-1]["round"] if snapshots else 0
+    write_dash(snapshots, status="complete" if world_rounds >= args.rounds
                else "extinct")
     (out / "snapshots.json").write_text(json.dumps(snapshots, indent=1))
 

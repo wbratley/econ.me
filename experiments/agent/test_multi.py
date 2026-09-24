@@ -728,3 +728,143 @@ def test_seed_script_gate_rejects_drifted_source():
     build — not at the seat's first tick three model-rounds later."""
     with pytest.raises(ValueError, match="seed script for House Alice"):
         _seed_world({"House Alice": "nope("})
+
+
+# ===========================================================================
+# Clock mode (§9.2): the world closes rounds on its own ticks
+# ===========================================================================
+
+def test_run_rounds_waits_for_the_world_clock(client, monkeypatch, tmp_path):
+    """Clock mode: consent is recorded but never resolves in-request
+    (ECON_WORLD_TICK_SECONDS armed server-side), so the runner parks on
+    clock_wait after the readies. Seats slower than a round are the
+    lever's point: the closure may be for a LATER round than the one
+    this iteration played — the snapshot is labeled with the round that
+    actually closed, and the run ends when the WORLD's counter reaches
+    N, not when N iterations pass."""
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")   # consent only
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")
+    loops = make_loops(client, [[CLEAN, CLEAN, CLEAN]] * 3, rounds_k=2)
+
+    closures = iter([
+        {"round_number": 1, "ticks": [1, 2], "events": 0,
+         "events_by_type": {}, "next_round": 2, "closed_by": "world_clock"},
+        # pretend the seats thought clean through round 2: the world
+        # closed 2 while they worked, and this wait catches round 3
+        {"round_number": 3, "ticks": [5, 6], "events": 0,
+         "events_by_type": {}, "next_round": 4, "closed_by": "world_clock"},
+    ])
+    calls = []
+
+    def clock_wait(after_round):
+        calls.append(after_round)
+        return next(closures)
+
+    snaps = run_rounds(loops, 3, tmp_path, clock_wait=clock_wait)
+    assert calls == [0, 1]          # parked after each ready-set
+    assert [s["round"] for s in snaps] == [1, 3]
+    # labeled by the round that actually closed — skipped numbers are
+    # real history (a slow seat's round resolved without them)
+    assert sorted(p.name for p in tmp_path.glob("round-*.json")) == \
+        ["round-01.json", "round-03.json"]
+    assert snaps[-1]["resolved"]["closed_by"] == "world_clock"
+
+
+def test_clock_wait_yields_to_in_request_resolution(client, monkeypatch,
+                                                    tmp_path):
+    """A server whose clock is NOT armed (or a mixed launch) still
+    resolves on the final ready; the wait callback must never fire —
+    the non-clock path stays bit-identical."""
+    loops = make_loops(client, [[CLEAN], [CLEAN], [CLEAN]], monkeypatch,
+                       rounds_k=2)
+
+    def never(after_round):
+        raise AssertionError("in-request resolution must preempt the wait")
+
+    snaps = run_rounds(loops, 1, tmp_path, clock_wait=never)
+    assert [s["round"] for s in snaps] == [1]
+    assert "closed_by" not in snaps[0]["resolved"]
+
+
+def test_clock_mode_total_extinction_never_waits(client, tmp_path):
+    """The extinction brake (§9.2) stops the CLOCK with the last dynasty;
+    the runner checks extinction BEFORE parking on clock_wait, or it
+    would sleep forever on a world that will never close another round."""
+    from econengine.models import Entity, EntityStatus
+
+    with Session(client["engine"]) as s:
+        for d in client["dynasties"]:
+            s.get(Entity, d.entity_id).status = EntityStatus.INCAPACITATED
+        s.commit()
+
+    loops = make_loops(client, [["-- never used"]] * 3)
+
+    def never(after_round):
+        raise AssertionError("clock_wait must not fire on a dead world")
+
+    assert run_rounds(loops, 2, tmp_path, clock_wait=never) == []
+
+
+def test_nim_run_clock_mode_end_to_end(tmp_path):
+    """--world-tick-seconds boots a real clocked world: the flag rides
+    the environment into the spawned server, consent is recorded but
+    never resolves, the clock ticks and closes rounds on tick
+    multiples, and the harness still lands one snapshot per closure —
+    rebuilt from the world's own tick records (closed_by proves the
+    clock_wait path, not an accidental in-request resolve). A fast
+    clock (0.1s ticks) makes a real 2-round run suite-speed."""
+    import json as _json
+    import socket
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    def script(name, lines):
+        p = tmp_path / name
+        p.write_text("\n".join(_json.dumps(l) for l in lines) + "\n")
+        return str(p)
+
+    out = tmp_path / "run"
+    files = [script("a.jsonl", ["ctx.state.note = 'one'",
+                                "ctx.state.note = 'two'"]),
+             script("b.jsonl", ["ctx.state.note = 'one'",
+                                "ctx.state.note = 'two'"]),
+             script("c.jsonl", ["ctx.state.note = 'one'",
+                                "ctx.state.note = 'two'"])]
+    r = subprocess.run(
+        [sys.executable, "-m", "experiments.agent.nim_run",
+         "--scripted", *files, "--scenario", "stone_age",
+         "--rounds", "2", "--ticks-per-round", "2",
+         "--world-tick-seconds", "0.1",
+         "--port", str(port), "--serve", "0", "--out", str(out)],
+        cwd=repo, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stderr[-2000:]
+
+    # Which rounds closed (and how many iterations it took) is
+    # wall-clock dependent — a 0.1s clock can close a round under the
+    # harness startup or the dashboard rewrite, exercising the skip
+    # path (seats slower than a round) for free. The invariants: every
+    # snapshot labeled by the round that actually closed, ticks rebuilt
+    # from the world's own records, the clock's fingerprint, and the
+    # target reached.
+    files_on_disk = sorted(p.name for p in out.glob("round-*.json"))
+    snaps = _json.loads((out / "snapshots.json").read_text())
+    assert len(files_on_disk) == len(snaps) >= 1
+    rounds_seen = [s["round"] for s in snaps]
+    assert rounds_seen == sorted(rounds_seen)
+    assert rounds_seen[-1] >= 2
+    for name, s in zip(files_on_disk, snaps):
+        assert f"round-{s['round']:02d}.json" == name
+        assert s["resolved"]["closed_by"] == "world_clock"
+        rr = s["round"]
+        assert s["resolved"]["ticks"] == \
+            list(range((rr - 1) * 2 + 1, rr * 2 + 1))
+    # the readies landed as consent, not resolution: the world closed
+    # both rounds itself
+    meta = _json.loads((out / "meta.json").read_text())
+    assert meta["status"] == "complete"
+    assert meta["round"] == rounds_seen[-1]
