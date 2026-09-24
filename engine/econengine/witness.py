@@ -25,6 +25,14 @@ OBSERVABLE_EVENT_TYPES: frozenset[str] = frozenset(
     {"say", "entity_incapacitated", "combat", "order_cancelled"})
 
 
+def observable_events(events: list[dict]) -> list[dict]:
+    """The public subset of a tick's events -- what a world-clock
+    broadcast may say out loud (game.md §9.1 public-facts doctrine:
+    the same vocabulary the seats already hear through the witness
+    feed, re-filtered here for the wire)."""
+    return [e for e in events if _observable(e)]
+
+
 def _observable(event: dict) -> bool:
     if event.get("type") not in OBSERVABLE_EVENT_TYPES:
         return False
