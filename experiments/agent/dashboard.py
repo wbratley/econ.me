@@ -12,13 +12,17 @@ wealth / money / prices / needs charts over
 rounds; a round-by-round activity table (attempts, refusals, the round's
 event mix); and per-dynasty strategy panels — the latest behaviour
 source with the sha trail of every rewrite, so "what is House Llama
-doing?" is a scroll, not a query.
+doing?" is a scroll, not a query. While the run is live (and the
+harness passed its world URL), a live panel rides the world's SSE
+stream: tick-by-tick says/fights/deaths between the round rewrites.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 import html
+import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -464,7 +468,7 @@ def _strategy(snapshots: list[dict]) -> str:
             f"<details open><summary><b>{_esc(name)}</b> "
             f"<span class=\"quiet\">({_esc(view.get('model', ''))})</span></summary>")
         parts.append('<div class="sha-trail">')
-        for snap in snapshots:
+        for i, snap in enumerate(snapshots):
             b = snap["dynasties"][name]["behaviour"]
             entry = snap["dynasties"][name].get("entry") or {}
             if entry.get("action") == "extinct":
@@ -472,9 +476,13 @@ def _strategy(snapshots: list[dict]) -> str:
             else:
                 cls = "sha-ok" if entry.get("accepted") else "sha-bad"
             changed = ""
-            if snap["round"] > 1:
-                prev = snapshots[snap["round"] - 2]["dynasties"][name][
-                    "behaviour"]["sha"]
+            if i:
+                # vs the previous snapshot IN THE LIST, not round
+                # arithmetic: under a world clock (§9.2) the world can
+                # close rounds the harness never snapshotted (a seat
+                # slower than its round), so rounds may skip — the last
+                # thing shown is still the right comparator.
+                prev = snapshots[i - 1]["dynasties"][name]["behaviour"]["sha"]
                 changed = " sha-new" if prev != b["sha"] else ""
             parts.append(f'<span class="{cls}{changed}" title="round '
                          f'{snap["round"]}">{_esc(b["sha"] or "—")}</span>')
@@ -502,6 +510,133 @@ def _strategy(snapshots: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # The page
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The live world panel (§9.2's audience)
+# ---------------------------------------------------------------------------
+
+# Client-side, literal except for three injected values (URL, name map,
+# ticks-per-round) — kept as a module-level template so the JS stays
+# readable without f-string brace-escaping.
+_LIVE_JS = """
+(function () {
+  var LIVE = __URL__, NAMES = __NAMES__, K = __K__;
+  var log = document.getElementById('lv-log');
+  var el = function (id) { return document.getElementById(id); };
+  function name(id) {
+    return !id ? '?' : (NAMES[id] || ('…' + String(id).slice(-6)));
+  }
+  function line(text, cls) {
+    var d = document.createElement('div');
+    d.className = 'lv-line' + (cls ? ' ' + cls : '');
+    d.textContent = text;
+    log.appendChild(d);
+    while (log.children.length > 160) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  }
+  function flash(cls) {
+    var p = document.getElementById('lv');
+    p.classList.remove('flash-combat', 'flash-death');
+    if (cls) { void p.offsetWidth; p.classList.add(cls); }
+  }
+  function setTick(t, hour) {
+    el('lv-tick').textContent = 'tick ' + t;
+    var h = (hour != null) ? hour : ((t - 1) % 24);
+    var day = Math.floor((t - 1) / 24) + 1;
+    el('lv-hour').textContent = 'day ' + day + ', h'
+      + String(h).padStart(2, '0') + (h < 6 || h >= 20 ? ' ☾' : ' ☀');
+    if (K) el('lv-round').textContent =
+      'round ' + (Math.floor((t - 1) / K) + 1);
+  }
+  function observable(e, t) {
+    var pre = 't' + t + ' · ';
+    if (e.type === 'say')
+      return line(pre + name(e.entity_id) + ': "'
+                   + String(e.text || '').slice(0, 160) + '"', 'lv-say');
+    if (e.type === 'combat') {
+      flash('flash-combat');
+      return line(pre + '⚔ ' + name(e.entity_id) + ' → '
+        + name(e.target_id) + (e.hit ? ' hit −' + e.damage
+        : (e.deterred ? ' deterred' : ' missed')), 'lv-combat');
+    }
+    if (e.type === 'entity_incapacitated') {
+      flash('flash-death');
+      return line(pre + '☠ ' + name(e.entity_id) + ' falls ('
+                   + (e.condition || '?') + ')', 'lv-death');
+    }
+    if (e.type === 'order_cancelled')
+      return line(pre + '✗ ' + name(e.entity_id) + "'s order bounced at "
+                   + (e.market || '?') + ' (' + (e.reason || '?') + ')',
+                   'lv-cancel');
+    line(pre + (e.type || 'event'), null);
+  }
+  var es = new EventSource(LIVE + '/rounds/events');
+  es.addEventListener('hello', function (m) {
+    var h = JSON.parse(m.data);
+    el('lv-stream').textContent = h.world_tick_seconds
+      ? 'clock ' + h.world_tick_seconds + 's/tick' : 'clock off';
+    if (h.ticks_run) setTick(h.ticks_run, null);
+  });
+  es.addEventListener('tick', function (m) {
+    var d = JSON.parse(m.data);
+    setTick(d.tick, d.hour);
+    (d.observables || []).forEach(function (e) { observable(e, d.tick); });
+    (d.closed && d.closed.eliminations || []).forEach(function (x) {
+      flash('flash-death');
+      line('☠ ' + name(x.user_id) + ' eliminated', 'lv-death');
+    });
+  });
+  es.addEventListener('round_closed', function (m) {
+    line('— round ' + JSON.parse(m.data).round_number + ' closed —',
+         'lv-round');
+  });
+  es.addEventListener('round_opened', function (m) {
+    el('lv-round').textContent = 'round ' + JSON.parse(m.data).round;
+  });
+  es.onopen = function () { el('lv-stream').className = 'quiet'; };
+  es.onerror = function () {
+    el('lv-stream').textContent = 'stream lost — reconnecting…';
+  };
+})();
+"""
+
+
+def _live_panel(meta: dict, snapshots: list[dict]) -> str:
+    """The between-rounds view: while the run is LIVE and the harness
+    gave the page a world URL, an EventSource on the world's SSE stream
+    (/rounds/events, same facts the seats hear, §9.1) drives a live
+    header — tick, day/hour with sun/moon, round — and a scrolling log
+    of what each tick broadcasts out loud: says, fights, deaths,
+    bounced orders, with combat and incapacity flashing the panel.
+    Under a world clock (§9.2) the world moves between rounds and the
+    dashboard moves with it; the aggregate sections stay exactly where
+    they always were (whole-page rewrites after every round). Drops
+    off the finished page — the stream belongs to a live world, and a
+    post-run artifact must stay self-contained. Entities render as
+    houses (the id→name map is built from the snapshots themselves);
+    eliminations stamp user ids, so the map carries both keys."""
+    if meta.get("status") != "live" or not meta.get("live_url"):
+        return ""
+    names: dict[str, str] = {}
+    for s in snapshots:
+        for house, v in s["dynasties"].items():
+            eid = (v.get("entry") or {}).get("entity")
+            if eid:
+                names[str(eid)] = house
+                # the run's own user-id scheme (nim_run: u-<slug(name)>)
+                names["u-" + re.sub(r"\W+", "-", house.lower()).strip("-")] = house
+    js = (_LIVE_JS
+          .replace("__URL__", json.dumps(str(meta["live_url"]).rstrip("/")))
+          .replace("__NAMES__", json.dumps(names))
+          .replace("__K__", str(int(meta.get("ticks_per_round") or 0))))
+    return ('\n<div id="lv" class="live-panel"><div class="live-head">'
+            '<span class="live-dot"></span><span class="live-t">live world</span>'
+            '<span id="lv-tick">tick –</span><span id="lv-hour">–</span>'
+            '<span id="lv-round">round –</span>'
+            '<span id="lv-stream" class="quiet">connecting…</span></div>'
+            '<div id="lv-log" class="live-log"></div></div>\n'
+            f"<script>{js}</script>")
+
 
 def build_dashboard(snapshots: list[dict], meta: dict) -> str:
     """Assemble the full HTML from per-round snapshots + run metadata."""
@@ -590,6 +725,26 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
            border-radius:5px;margin:8px 0 2px;max-width:640px;overflow:hidden}
       .pbar div{height:100%;background:#2563eb}
       .hsum-scroll{max-height:340px;overflow:auto;margin:6px 0}
+      .live-panel{border:1px solid #2a2f3a;border-radius:10px;
+           background:#141821;margin:14px 0;padding:10px 14px}
+      .live-head{display:flex;gap:16px;align-items:baseline;font-size:13px}
+      .live-t{color:#facc15;font-weight:600}
+      .live-dot{display:inline-block;width:9px;height:9px;border-radius:50%;
+           background:#facc15;animation:lv-pulse 2s infinite}
+      .live-log{margin-top:8px;max-height:300px;overflow-y:auto;
+           font:12.5px/1.6 ui-monospace,SFMono-Regular,monospace;color:#c7cdd9;
+           background:#0f1115;border:1px solid #232837;border-radius:8px;
+           padding:8px 10px}
+      .lv-line{white-space:pre-wrap}
+      .lv-say{color:#93c5fd}.lv-combat{color:#fbbf24}
+      .lv-death{color:#f87171;font-weight:600}
+      .lv-cancel{color:#8b93a3}
+      .lv-round{color:#34d399;margin:3px 0}
+      @keyframes lv-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+      @keyframes lv-flash-amber{0%{background:#3a2a10}100%{background:#141821}}
+      @keyframes lv-flash-red{0%{background:#3a1616}100%{background:#141821}}
+      .flash-combat{animation:lv-flash-amber 1.2s ease-out}
+      .flash-death{animation:lv-flash-red 2s ease-out}
       .hsum table.grid th{position:sticky;top:0;z-index:1}
       td.cond{color:#fbbf24;font-variant-numeric:tabular-nums}
       th.cond-h{color:#fbbf24}
@@ -612,6 +767,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
 <h1>{_esc(meta.get("title", "Dynasty run"))}</h1>
 <p class="meta">{houses}</p>
 {status}
+{_live_panel(meta, snapshots)}
 <p class="meta">{len(snapshots)} rounds · {_esc(meta.get("ticks_per_round", "?"))
 } ticks/round · ticks {_esc(snapshots[0]["ticks"][0] if snapshots else "")}–
 {_esc(snapshots[-1]["ticks"][-1] if snapshots else "")} ·

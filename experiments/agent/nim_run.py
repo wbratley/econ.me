@@ -502,6 +502,11 @@ def main(argv=None) -> int:
             }
             if status == "live":
                 meta["refresh_s"] = 10
+                # the live panel's EventSource target: the world server,
+                # same base the seats talk to (CORS is open, §9.1 — the
+                # stream is public facts). Dropped on the final rewrite —
+                # a finished page must stay self-contained.
+                meta["live_url"] = base
             _atomic_write(out / "dashboard.html",
                           build_dashboard(snaps, meta))
             _atomic_write(out / "meta.json", json.dumps(meta, indent=1))
