@@ -16,6 +16,17 @@
 -- post holds two, sells them at 4.00, and stands at 1.20 an egg --
 -- a hen pays her price back in four eggs (P5).
 --
+-- THE SHELF RESTOCKS ITSELF (run 46, lever 1): the post was a
+-- finite faucet -- it sold its last jerky early and never bought a
+-- meal back, so the world's only coin source went broke AND empty
+-- and the market died with it. Now the back room salts what the
+-- forest sells him: every 2 MEAT become 2 JERKY at his own shed
+-- (an OWNER facility no house can bind), and the jerky ask is
+-- anchored off the fills that stocked him -- twice the raw cost
+-- (the opening book quoted MEAT 1.00 / JERKY 2.00, the same 2:1:
+-- preservation is what a house pays for). The counter is a
+-- transform now, not a faucet.
+--
 -- It haggles like a person would:
 --   sold food            -> ask +5%          (demand is real, charge it)
 --   bought goods         -> bid -5%          (sellers are eager, pay less)
@@ -34,7 +45,8 @@
 -- haggling persists across ticks.
 --
 -- Vocabulary: std.* (engine), ctx.action.place_order / cancel_order,
--- ctx.events (the post's own fills and applied orders from last tick).
+-- ctx.events (the post's own fills, applied orders and salt batches
+-- from last tick).
 
 local S = ctx.state
 
@@ -99,11 +111,44 @@ for _, e in ipairs(ctx.events or {}) do
       S.ask[e.market] = math.min(S.ask[e.market] * 1.05, ASK_CAP)
     else                           -- we bought goods: supply, bid down
       S.bid[e.market] = math.max(S.bid[e.market] * 0.95, BID_FLOOR)
+      -- The shed's cost ledger: the price the counter actually PAID
+      -- for raw meat (the clearing price of the fill, at or under our
+      -- bid) is the jerky shelf's cost basis -- the anchor the ask
+      -- follows (below).
+      if e.market == "MEAT" and e.price then
+        S.cost_meat = tonumber(e.price)
+        S.ask.JERKY = r2(math.min(math.max((S.cost_meat or 1.00) * 2,
+                                           1.50), ASK_CAP))
+        S.quiet["sell_JERKY"] = 0  -- restocked at a known cost: fresh
+      end
     end
+  elseif e.type == "process_completed" and e.recipe == "SALT_MEAT"
+         and e.entity_id == ctx.entity.id then
+    -- A batch came off the rack: re-anchor the jerky ask off the
+    -- fills that stocked it (haggling may have walked it far from
+    -- cost while the meat was raw) and restart the quiet clock --
+    -- fresh stock is fresh news.
+    S.ask.JERKY = r2(math.min(math.max((S.cost_meat or 1.00) * 2,
+                                       1.50), ASK_CAP))
+    S.quiet["sell_JERKY"] = 0
   elseif e.type == "place_order" and e.status == "applied"
          and e.order_id then
     S.ids[e.params.side .. "_" .. e.params.symbol] = e.order_id
   end
+end
+
+-- 2b. The salt shed (run 46): bought MEAT is rotting inventory --
+--     0.30/tick, the post's own MEAT bid literally evaporates in a
+--     larder -- so it goes to the back room promptly: while raw meat
+--     covers a batch (2) and a rack stands free (capacity 2), salt.
+--     No labor, no fire, no daylight: the shed works the night shift.
+local salting = 0
+for _, p in ipairs(ctx.processes or {}) do
+  if p.recipe == "SALT_MEAT" then salting = salting + 1 end
+end
+while std.holding_qty("MEAT") >= 2 and salting < 2 do
+  ctx.action.start_process("SALT_MEAT")
+  salting = salting + 1
 end
 
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward

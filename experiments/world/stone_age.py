@@ -551,7 +551,11 @@ salted meat that never rots, so the shop always has food) -- it
 sells HENS (ask ~4: the larder's seed capital; a hen returns her
 price in four eggs sold back), and ONE WATERSKIN (ask ~6: a pelt's
 worth of carried river -- the price anchor for thirsty houses with
-coin and no wolf). The trader
+coin and no wolf). THE SHELF RESTOCKS ITSELF (run 46): what the
+forest sells him raw he salts at his own back-room shed -- 2 MEAT
+make 2 JERKY -- and the jerky ask follows the fills that stocked it
+(2x the raw cost), so the counter is a transform, not a finite
+faucet. The trader
 is a man who has done this a while, and it shows: his hearth never
 dies, he never speaks after dark, and what comes at him in the night
 he answers armed (he hits like a wolf and guards like one tooled up
@@ -653,6 +657,18 @@ def spawn_trading_post(session: Session) -> Entity:
     # His ground: the post stands at the post-place, where every
     # market trades (S4). Killable flesh, but only reachable on foot.
     places.move_entity(session, post, "POST")
+    # His back room (run 46): the salt shed, an OWNER facility on his
+    # own parcel -- no house can bind it, standing at the post is not
+    # salting at the post. Bought MEAT rots at 0.30/tick in any
+    # larder; here it becomes the never-rot shelf. Two racks (capacity
+    # 2) salt four meat at a time -- a modest refiller, not a jerky
+    # factory: the faucet stops dribbling, it does not become a fire
+    # hose.
+    shed = parcels.create_parcel(
+        session, "SALT_SHED", name="The post's salt shed",
+        place="POST", owner=post)
+    parcels.add_facility(
+        session, shed, "SALT_SHED", access="OWNER", capacity=2)
     return post
 
 
@@ -1450,6 +1466,26 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "MEAT": D("2"), "WOOD": D("1")},
         outputs={"JERKY": D("2")}, duration_ticks=5,
         requires_facility="FIRE", requires_facility_lit=True,
+    )
+    # The post's restock rung (run 46, lever 1): SALT_MEAT is the
+    # counter's own transform, in the back room no house can bind --
+    # an OWNER SALT_SHED facility on the post's parcel at the POST
+    # place. Two raw meat make two jerky, slowly, with neither labor
+    # (a BUSINESS issues none) nor fire (the shed salts indoors, day
+    # or night). Houses with labor and a lit fire still smoke their
+    # own -- SMOKE_MEAT beats it per wood and per hour -- but the
+    # point is not competition: run 46's post sold its last jerky at
+    # t80 and by t330 the world's only coin faucet was broke AND
+    # empty, and the market died with it. What the forest sells the
+    # post raw comes back preserved: the shelf refills, and the
+    # haggler prices it off the fills that stocked him.
+    production.create_recipe(
+        session, "SALT_MEAT", name="Salt Meat",
+        description="The post's salt shed: raw meat salted into jerky "
+                    "with time alone -- no labor, no fire -- but the shed "
+                    "is the post's own back room (no house can bind it).",
+        inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
+        duration_ticks=4, requires_facility="SALT_SHED",
     )
     # --- Eating: meals as decisions (run 19) --------------------------------
     # Conscious eating: the FOOD need drinks only SATIETY, and only EAT

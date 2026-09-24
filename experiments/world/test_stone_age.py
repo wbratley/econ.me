@@ -946,6 +946,77 @@ def test_post_dark_bids_freeze_instead_of_drifting(session):
     assert all(o.quantity == Decimal("1") for o in buys.values())
 
 
+def test_post_salts_its_meat_into_jerky(session):
+    """Run 46's finite faucet: the post sold its last jerky early and
+    the market died with the purse. The back room turns bought MEAT
+    into the never-rot shelf -- his own racks, no labor, no fire."""
+    create_content(session)
+    _no_wolves(session)
+    post = _post(session)
+    before = _hold(session, post.id, "JERKY")
+    markets.adjust_holding(session, post, "MEAT", Decimal("6"))
+    _run(session, 8)      # batches are 4 ticks, two racks -- 2 land
+    done = [e for e in _events(session, "process_completed")
+            if e["recipe"] == "SALT_MEAT"]
+    assert len(done) == 2                 # two racks, four meat, no more
+    for e in done:
+        assert Decimal(str(e["outputs"]["JERKY"])) == Decimal("2")
+    assert _hold(session, post.id, "JERKY") == before + Decimal("4")
+    # what decay did not eat is salted: nothing raw worth a rack
+    assert _hold(session, post.id, "MEAT") < Decimal("2")
+
+
+def test_the_salt_shed_binds_the_post_alone(session):
+    """The shed is the post's OWN back room: standing at the POST place
+    is not salting at the post. A house holding meat cannot bind an
+    OWNER facility -- restocking the counter is the merchant's edge."""
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Neighbor")
+    _at(session, house, "POST")
+    markets.adjust_holding(session, house, "MEAT", Decimal("4"))
+    with pytest.raises(ValueError, match="SALT_SHED"):
+        production.start_process(session, house, "SALT_MEAT")
+    post = _post(session)
+    markets.adjust_holding(session, post, "MEAT", Decimal("2"))
+    proc = production.start_process(session, post, "SALT_MEAT")
+    assert proc.recipe.code == "SALT_MEAT"
+
+
+def test_post_reanchors_jerky_off_its_meat_buys(session):
+    """The restock is PRICED off the post's own buy fills: the jerky
+    ask follows twice the raw cost the counter actually paid (the
+    opening book's 2:1 -- preservation is what a house pays for),
+    clamped to the honest band. Seeded prices isolate the rule from
+    the haggling its own tests already pin."""
+    create_content(session)
+    _no_wolves(session)
+    post, hunter = _post(session), _biz(session, "Hunter")
+    _at(session, hunter, "POST")
+    script = _post_script(session)
+    script.state = {
+        "ask": {"BERRIES": "1.25", "COOKED_MEAT": "1.50", "JERKY": "2.00",
+                "CHICKEN": "4.00", "WATERSKIN": "6.00", "BED": "5.00"},
+        "bid": {"BERRIES": "1.00", "MEAT": "0.85", "WOOD": "1.00",
+                "YARN": "2.00", "FLINT": "2.00", "PELT": "3.00",
+                "APPLES": "0.80", "EGGS": "1.20"},
+        "quiet": {}, "live": {}, "ids": {}, "answered": {},
+    }
+    markets.adjust_holding(session, hunter, "MEAT", Decimal("4"))
+    _run(session, 1)                    # t1: the seeded book stands
+    markets.place_order(session, hunter.id, "MEAT", "sell",
+                        Decimal("2"), Decimal("0.85"),
+                        next(a.id for a in hunter.accounts
+                             if a.currency == COIN))
+    _run(session, 1)                    # t2: the fill -- at 0.85
+    _run(session, 1)                    # t3: the post reads its fill
+    state = _post_script(session).state
+    assert state["cost_meat"] == pytest.approx(0.85)
+    assert Decimal(str(state["ask"]["JERKY"])) == Decimal("1.70")
+    ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
+    assert [o.limit_price for o in ask] == [Decimal("1.70")]
+
+
 def test_post_jerky_never_rots_and_feeds(session):
     """JERKY is the salted shelf: it does not decay, it feeds EAT_JERKY,
     and the post spawns stocking it -- late coin always has something
