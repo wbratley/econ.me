@@ -42,6 +42,7 @@ from . import capabilities as _capabilities
 from . import clock as _clock
 from . import statuses as _statuses
 from .models import Account, Entity, Holding, Script, ScriptType, Proposal, ProposalStatus, VoteChoice, ProposalType, Tick, WorldSetting
+from .models import PendingIntent
 from .models.entity import EntityType
 
 
@@ -1391,6 +1392,52 @@ def build_queries(session: Session, tick_number: int | None = None,
 
 
 SAY_TEXT_CAP = 256
+
+
+# ---------------------------------------------------------------------------
+# The direct-action outbox: intents from OUTSIDE any script
+# ---------------------------------------------------------------------------
+
+def queue_intent(session: Session, entity_id: str, intent_type: str,
+                 params: dict, priority: int = 100) -> "PendingIntent":
+    """Park a controller-submitted intent for the next tick's resolution
+    pass (the clock-world path for POST /intents and perform_action).
+    The row IS the contract: same resolver, same priority sort, same
+    per-tick budgets as script-queued intents — only the authoring
+    channel differs."""
+    import uuid
+    row = PendingIntent(
+        id=uuid.uuid4().hex,
+        entity_id=str(entity_id),
+        intent_type=str(intent_type),
+        params=dict(params),
+        priority=int(priority),
+        idempotency_key=uuid.uuid4().hex,
+    )
+    session.add(row)
+    return row
+
+
+def drain_pending_intents(session: Session) -> list[Intent]:
+    """Pop every pending direct-action row, oldest first, as resolvable
+    Intents. run_tick calls this ahead of the script-queued batch so the
+    stable priority sort keeps wall-time submission order among ties
+    (a direct say submitted between ticks outranks a script say queued
+    during it — first come, first heard)."""
+    rows = list(session.execute(
+        select(PendingIntent).order_by(PendingIntent.created_at,
+                                       PendingIntent.id)
+    ).scalars())
+    if not rows:
+        return []
+    for row in rows:
+        session.delete(row)
+    return [
+        Intent(entity_id=row.entity_id, intent_type=row.intent_type,
+               params=row.params, resource_ids=[],
+               priority=row.priority, idempotency_key=row.idempotency_key)
+        for row in rows
+    ]
 
 
 def resolve_intent(session: Session, intent: Intent,

@@ -21,11 +21,16 @@ World-visible facts (the round clock, market prices) are public to all
 authenticated players, as they are in-world: a market price is a posted
 fact.
 
-Writes go exclusively through the autonomy path: ``set_behaviour`` is the
-ownership-gated script swap (§6). Voting, transfers, production -- all of it
-is done by *writing the script that will do it at tick time*, never by
-acting out-of-band. The engine still owns the tick.
+Writes go through TWO channels now. The autonomy path (``set_behaviour``)
+remains the ownership-gated script swap (§6): voting, transfers,
+production -- all of it *can* be done by writing the script that will do
+it at tick time. ``perform_action`` is the direct channel: one action
+performed as the entity, authored by the controller (the seat's cycle,
+a machine client, eventually a human player) -- same resolver, same
+gates, same tick. The allowlist starts at ``say``. Either way the
+engine still owns the tick.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -43,7 +48,12 @@ from econengine.models import (
 )
 from econengine.models.order import Order, OrderSide, OrderStatus
 from econengine.services import ServerCapExceededError
+
+# The direct-channel allowlist: what a controller may perform as the
+# entity WITHOUT rewriting the behaviour script. Starts at the voice.
+PERFORMABLE_ACTIONS = {"say"}
 from econ.api.activity import activity_rows
+from econ.api.intents import submit_intent
 from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
@@ -452,6 +462,33 @@ def tool_set_behaviour(session: Session, user: User, args: dict[str, Any]) -> di
     }
 
 
+def tool_perform_action(session: Session, user: User, args: dict[str, Any]) -> dict:
+    """Perform ONE action directly as your entity — authored by you, not
+    by the behaviour script. Same resolver, same gates, same per-tick
+    budgets as script actions (one say per entity per tick holds across
+    both channels). Under the world clock it queues and lands at the
+    next tick (the event lands where every observer sees it); with the
+    clock off it resolves immediately. The allowlist starts at `say`:
+    the controller's voice — shout a price, warn of wolves, lie —\n    without rewriting the brain that runs the rest of the day."""
+    entity = _own_entity(session, user, args.get("entity_id", ""))
+    action = args.get("action", "")
+    if action not in PERFORMABLE_ACTIONS:
+        raise ToolError(
+            f"unknown action {action!r} — performable: "
+            f"{', '.join(sorted(PERFORMABLE_ACTIONS))}")
+    params = args.get("params") or {}
+    if not isinstance(params, dict):
+        raise ToolError("params must be an object")
+    if action == "say":
+        text = params.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ToolError("say requires params.text (non-empty string)")
+        if len(text) > scripting.SAY_TEXT_CAP:
+            raise ToolError(
+                f"say text exceeds {scripting.SAY_TEXT_CAP} characters")
+    return submit_intent(session, entity, action, params)
+
+
 def tool_dry_run_behaviour(session: Session, user: User,
                            args: dict[str, Any]) -> dict:
     """Test a candidate behaviour against the EXACT submit gate, without
@@ -607,6 +644,31 @@ TOOLS: list[Tool] = [
             "required": ["entity_id", "source"],
         },
         "handler": tool_set_behaviour,
+    },
+    {
+        "name": "perform_action",
+        "description": "Perform one action DIRECTLY as your entity — authored "
+                       "by you, not by the behaviour script: no rewrite needed "
+                       "to speak. Same resolver and gates as script actions "
+                       "(identity is structural; one say per entity per tick "
+                       "holds across both channels). Under the world clock it "
+                       "queues and lands at the next tick where every observer "
+                       "sees it; clock off, it resolves immediately. Allowlist: "
+                       "say — the controller's voice: params {text}.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "action": {"type": "string", "enum": ["say"]},
+                "params": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            },
+            "required": ["entity_id", "action", "params"],
+        },
+        "handler": tool_perform_action,
     },
     {
         "name": "dry_run_behaviour",

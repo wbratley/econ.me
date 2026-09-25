@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from econengine import scripting
 from econengine.models import Base, EntityType, Script, ScriptType
 from econengine.services import create_account, create_entity
 from econengine.tick import (
@@ -365,3 +366,48 @@ def test_no_ancestor_keeps_limping(world):
     assert solo.is_active and solo.consecutive_errors >= CRASH_REVERT_TICKS
     types = [e["type"] for e in run_tick(session).events]
     assert "script_reverted" not in types     # nothing to fall back to
+
+
+# ===========================================================================
+# The direct-action outbox: controller-authored intents drain into the
+# same resolution pass behaviour scripts feed
+# ===========================================================================
+
+def test_pending_intents_drain_into_the_tick(world):
+    session, alice, bob, cb, a, b, c = world
+    scripting.queue_intent(
+        session, alice.id, "transfer",
+        {"from_account_id": a.id, "to_account_id": b.id,
+         "amount": "100", "reference": "direct rent"})
+    session.commit()
+
+    tick = run_tick(session)
+
+    by_ref = {e["params"]["reference"]: e["status"] for e in tick.events}
+    assert by_ref["direct rent"] == "applied"
+    assert a.balance == Decimal("900")
+    assert b.balance == Decimal("100")
+    # the outbox is empty again -- drained means gone
+    assert scripting.drain_pending_intents(session) == []
+
+
+def test_direct_say_and_script_share_the_one_say_budget(world):
+    session, alice, bob, cb, a, b, c = world
+    make_script(session, "voice", 'ctx.action.say("the script speaks")', alice)
+    scripting.queue_intent(
+        session, alice.id, "say", {"text": "the controller speaks"})
+    session.commit()
+
+    tick = run_tick(session)
+
+    says = {e["params"]["text"]: e["status"]
+            for e in tick.events if e["type"] == "say"}
+    # both channels ATTEMPT (two events), but the budget holds: one say
+    # per entity per tick, whichever channel -- and wall-time FIFO picks
+    # the direct say (submitted between ticks, ahead of the script's
+    # same-tick utterance)
+    assert says == {"the controller speaks": "applied",
+                    "the script speaks": "rejected"}
+    assert [e for e in tick.events
+            if e["type"] == "say" and e["status"] == "rejected"][0][
+                "reason"] == "one say per tick"
