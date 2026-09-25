@@ -30,7 +30,8 @@ from experiments.agent.llm import (
     strip_think,
 )
 from experiments.agent.loop import (
-    AgentLoop, McpClient, McpError, _parse_patches, system_prompt,
+    AgentLoop, McpClient, McpError, _apply_edits, _closest_region,
+    _parse_patches, system_prompt,
     user_prompt,
 )
 from experiments.agent.run import run_cycles
@@ -344,6 +345,40 @@ def test_failed_patch_feeds_back_and_retries(client):
     assert "SEARCH not found" in model.calls[1]["user"]
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(3)"
+
+
+def test_missed_search_echoes_the_closest_region(client):
+    """Run 46's fatal authoring mode, answered: 4 of Harald's 7 dead
+    rounds quoted the script from MEMORY — and the old miss feedback
+    echoed the model's own words back, the exact wrong thing to copy.
+    The miss now shows the current behaviour's own lines around the
+    closest match, with the instruction to quote THEM verbatim."""
+    current = "-- the starter\nlocal meat = std.holding_qty(\"MEAT\")\n" \
+              "if satiety < 1.5 then\n  ctx.action.start_process(\"EAT_RAW\")\nend\n"
+    almost = "-- the starter\nlocal meat = std.holding_qty(\"MEAT\")\n" \
+             "if satiety < 1 then\n  ctx.action.start_process(\"EAT_RAW\")\nend\n"
+    patched, err = _apply_edits(current, [(almost, "x")])
+    assert patched is None
+    assert "SEARCH not found" in err
+    assert "verbatim" in err
+    # the SOURCE's own lines (1.5, not the misremembered 1), not the
+    # search's -- the anchor to copy next try
+    tail = err.split("reads")[1]
+    assert "if satiety < 1.5 then" in tail
+    assert "if satiety < 1 then" not in tail
+
+
+def test_closest_region_bounds_and_fabricated_fallback():
+    # a fabricated region (no line in common) still answers "what is
+    # there": the file's head, windowed
+    source = "\n".join(f"line {i}" for i in range(200))
+    region = _closest_region(source, "nothing like this at all")
+    assert "line 0" in region and "line 11" in region
+    assert "line 30" not in region            # windowed, not the whole file
+    # a long near-match stays capped: the echo rides the next prompt
+    needle = "\n".join(f"shared {i}" for i in range(60))
+    source2 = "pad\n" + needle + "\npad2"
+    assert len(_closest_region(source2, needle).splitlines()) <= 18
 
 
 def test_edit_marker_widths_parse_as_patches():

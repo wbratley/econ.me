@@ -36,6 +36,7 @@ player whose script is right readies up without gambling on a rewrite.
 from __future__ import annotations
 
 import datetime as _dt
+import difflib
 import hashlib
 import json
 import re
@@ -441,17 +442,48 @@ def _parse_patches(text: str) -> list[tuple[str, str]]:
     return [(m.group(1), m.group(2)) for m in _PATCH_RE.finditer(text)]
 
 
+def _closest_region(source: str, search: str,
+                     window: int = 12, cap: int = 18) -> str:
+    """The region of the current behaviour most like the missed SEARCH —
+    the anchor an author should quote verbatim on the next try.
+
+    Run 46 killed Harald this way: 4 of 7 dead rounds were SEARCH-miss
+    (the model quoted its own memory of the script, not the script),
+    and the old feedback showed only the MISSED text — the model's own
+    words echoed back, which is exactly the wrong thing to copy. This
+    shows the source's own lines: longest common line-run, widened to
+    a readable window. No common line at all (a fabricated region):
+    the file's head, still the honest answer to "what is there"."""
+    src_lines = source.splitlines()
+    matcher = difflib.SequenceMatcher(None, search.splitlines(),
+                                      src_lines, autojunk=False)
+    best = max(matcher.get_matching_blocks(), key=lambda b: b.size,
+               default=None)
+    if best is None or best.size == 0:
+        return "\n".join(src_lines[:window])
+    size = max(window, min(best.size + 4, cap))
+    start = max(0, best.b - (size - best.size) // 2)
+    return "\n".join(src_lines[start:start + size])
+
+
 def _apply_edits(source: str,
                  patches: list[tuple[str, str]]) -> tuple[str | None, str | None]:
     """Apply blocks in order, first occurrence each. Returns the patched
-    source, or (None, why) — `why` is feedback the model can act on."""
+    source, or (None, why) — `why` is feedback the model can act on:
+    on a miss it echoes the current behaviour's closest region, the
+    text to quote verbatim next try."""
     for i, (search, replace) in enumerate(patches, 1):
         if not search.strip():
             return None, f"block {i}: SEARCH is empty"
         if search not in source:
             head = " ".join(search.split())[:60]
-            return None, f"block {i}: SEARCH not found in the current " \
-                         f"behaviour: {head!r}"
+            region = _closest_region(source, search)
+            return None, (
+                f"block {i}: SEARCH not found in the current "
+                f"behaviour: {head!r}\n"
+                "the current behaviour's closest region reads "
+                "(copy THESE lines verbatim into SEARCH, whitespace "
+                "included):\n" + region)
         source = source.replace(search, replace, 1)
     return source, None
 
@@ -736,8 +768,7 @@ class AgentLoop:
                 patched, err = _apply_edits(current["source"], patches)
                 if err:
                     last_error = err
-                    feedback.append(f"patch did not apply: {err}. SEARCH must "
-                                    "match the current behaviour exactly")
+                    feedback.append(f"patch did not apply: {err}")
                     transcript.append(
                         {"platform": f"patch did not apply: {err}"})
                     continue
