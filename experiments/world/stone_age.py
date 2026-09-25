@@ -492,6 +492,11 @@ same.
    and jerky), cooked within a day;
    JERKY never spoils -- the deep pantry. (Eating is on the ladder now:
    hunger kills the careless before any tool matters.)
+2b. A BASKET OF FRAGMENTS BOILS: when no single kind covers its own
+   meal -- 0.8 berries + 0.7 apples + 0.6 meat starved a house whole
+   in run 46 -- FORAGE_POT boils half of each staple into a real meal
+   (~4 hours fed, and the boil makes raw meat safe). Thinner than the
+   right kind whole; thicker than starving on rot.
 2a. THE RIVER IS THE TAP: keep the cup full and fill a skin when one
    is had -- the dry larder (jerky, eggs) kills on the third day
    without it, and the river road passes the thicket. One PELT makes
@@ -1541,6 +1546,28 @@ def _create_recipes(session: Session) -> None:
                     "(0.2 water; the deep pantry is a dry one).",
         inputs={"JERKY": D("1")},
         outputs={"SATIETY": D("3.6"), "WATER": D("0.2")},
+        duration_ticks=0,
+    )
+    # The fragment meal (run 46, lever 3): the deadlock -- Lagertha
+    # starved holding a basket of 0.8 berries + 0.7 apples + 0.6 meat,
+    # every kind under its own meal's threshold, because meals are
+    # single-kind and the models never invent mixing. The pot dissolves
+    # it: half a basket of each staple, boiled, is a real meal --
+    # thinner per unit than eating the right kind whole (2.4 satiety
+    # per 1.5 units against the apple meal's 2.8 -- the density ladder
+    # keeps its point) but far better than starving beside a rotting
+    # basket. Boiled raw meat is safe: the worms die at a boil, which
+    # is the pot's small kindness over EAT_RAW.
+    production.create_recipe(
+        session, "FORAGE_POT", name="Forage Pot",
+        description="The fragment meal: half a basket of each staple -- "
+                    "berries, apples, raw meat -- boiled together when no "
+                    "single kind covers its own meal. Thinner than eating "
+                    "the right kind whole, thicker than starving: the "
+                    "basket that fits no recipe still feeds (and the boil "
+                    "makes raw meat safe).",
+        inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "MEAT": D("0.5")},
+        outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
         duration_ticks=0,
     )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
