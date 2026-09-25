@@ -400,6 +400,71 @@ def test_conscious_eating_makes_meals_decisions(session):
     assert _hold(session, w.id, "JERKY") == Decimal("2")
 
 
+def test_forage_pot_feeds_the_fragment_basket(session):
+    """Run 46's deadlock, dissolved: Lagertha starved holding 0.8
+    berries + 0.7 apples + 0.6 meat -- every kind under its own meal's
+    threshold, and no model invents mixing. The pot boils half of each
+    staple into a real meal: thinner per unit than the right kind whole
+    (the ladder keeps its point), safe where raw is not."""
+    create_content(session)
+    _no_wolves(session)
+    w = _biz(session, "Basketcase")   # no needs: SATIETY lands and stays
+    for sym, qty in (("BERRIES", "0.8"), ("APPLES", "0.7"), ("MEAT", "0.6")):
+        markets.adjust_holding(session, w, sym, Decimal(qty))
+    # no single-kind meal is affordable: the basket fits no recipe...
+    for code in ("EAT_BERRIES", "EAT_APPLES", "EAT_COOKED", "EAT_JERKY",
+                 "EAT_RAW"):
+        with pytest.raises(markets.InsufficientHoldingsError):
+            production.start_process(session, w, code)
+    # ...but the pot takes it: half of each staple, boiled
+    assert _act(session, w, "FORAGE_POT")
+    assert _hold(session, w.id, "BERRIES") == Decimal("0.3")
+    assert _hold(session, w.id, "APPLES") == Decimal("0.2")
+    assert _hold(session, w.id, "MEAT") == Decimal("0.1")
+    assert _hold(session, w.id, "SATIETY") == Decimal("2.4")
+    assert _hold(session, w.id, "WATER") == Decimal("0.4")
+    # the boil makes raw meat safe: no disease ever lands from the pot
+    # (unbranched recipe -- nothing to roll; EAT_RAW's table is the only
+    # meal that carries the risk)
+    assert _hold(session, w.id, "DISEASE") == Decimal("0")
+
+
+def test_the_starter_boils_the_fragment_basket(session):
+    """The lever has to be REACHABLE: models never invent the mixed
+    meal, so the inherited starter boils the pot itself when no single
+    kind covers its own recipe -- the exact run-46 basket feeds, and
+    the raw-meat last resort stays below the pot (2.4 safe beats 0.6
+    at one-in-four sick)."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Fragment")
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        script_type=ScriptType.BEHAVIOUR,
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        entity_id=seat.id,
+        timeout_ms=200,
+        state={},
+    ))
+    # strip the seed larder down to the run-46 deadlock basket
+    markets.adjust_holding(session, seat, "BERRIES",
+                           Decimal("0.8") - BERRY_BUFFER)
+    markets.adjust_holding(session, seat, "APPLES", Decimal("0.7"))
+    markets.adjust_holding(session, seat, "MEAT", Decimal("0.6"))
+    session.commit()
+    _run(session, 1)
+    # the pot boiled on the very first hungry tick: half of each staple
+    # eaten (the rest is decay's), 2.4 satiety landed and the hour's
+    # draw (0.5 + a tenth of what's left) left 1.71 -- the exact
+    # run-46 basket feeds instead of starving
+    assert _hold(session, seat.id, "SATIETY") == Decimal("1.71")
+    assert _hold(session, seat.id, "BERRIES") < Decimal("0.5")
+    assert _hold(session, seat.id, "APPLES") < Decimal("0.4")
+    assert _hold(session, seat.id, "MEAT") < Decimal("0.2")
+    assert _events(session, "script_error") == []
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+
+
 def test_the_clock_rations_labor_and_gates_the_dark(session):
     """The clock (run 18): LABOR auto-issues only in daylight (one
     labor-hour per daylight hour, none at night), and the dark refuses

@@ -54,8 +54,9 @@ local skin   = std.holding_qty("WATERSKIN")
 --    Meals are labor-free, instant, night-legal and place-free -- but
 --    they do not happen by themselves. Eat what spoils first (berries,
 --    then apples, then cooked); jerky never rots, so it is the deep
---    pantry; raw meat is the desperate last resort (a one-in-four
---    chance of disease).
+--    pantry; the pot boils a basket no single meal covers (run 46: a
+--    house starved holding 0.8+0.7+0.6); raw meat is the desperate
+--    last resort (a one-in-four chance of disease).
 local satiety = std.holding_qty("SATIETY")
 if satiety < 1.5 then
   if berries >= 2 then
@@ -66,6 +67,8 @@ if satiety < 1.5 then
     ctx.action.start_process("EAT_COOKED")
   elseif jerky >= 1 then
     ctx.action.start_process("EAT_JERKY")
+  elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5 then
+    ctx.action.start_process("FORAGE_POT")
   elseif meat >= 1 then
     ctx.action.start_process("EAT_RAW")
   end
