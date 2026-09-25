@@ -26,6 +26,9 @@ def client():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
+    # _test_engine: direct-drive the world (run_tick) on the same DB the
+    # TestClient wrote, for clock-armed queueing tests
+    app.state._test_engine = engine
 
     def override_get_session():
         with Session(engine) as session:
@@ -847,3 +850,43 @@ def test_grant_and_revoke_capability_via_api(client):
     agency_caps = client.get(f"/entities/{agency}",
                              headers=_auth("u-admin")).json()["capabilities"]
     assert "seize" not in agency_caps
+
+
+# ===========================================================================
+# Under the world clock the direct channel QUEUES: the intent lands at
+# the next tick's resolution pass, its event in the Tick row (where
+# every observer reads it) instead of resolving into the void between
+# ticks. Clock off: immediate, bit-identical to before (the tests above).
+# ===========================================================================
+
+def test_clock_armed_intents_queue_until_the_next_tick(client, monkeypatch):
+    from sqlalchemy import select
+    from econengine.models import Tick
+    from econengine.tick import run_tick
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    alice = _make_entity(client, "u-alice")
+
+    r = client.post("/intents", json=[
+        {"entity_id": alice["id"], "type": "say",
+         "params": {"text": "wolves at the thicket"}}],
+        headers=_auth("u-alice"))
+    assert r.status_code == 200, r.text
+    (out,) = r.json()
+    assert out["status"] == "queued"
+    assert out["params"]["text"] == "wolves at the thicket"
+
+    # nothing resolved yet: no ticks exist, the row just waits
+    with Session(app.state._test_engine) as s:
+        assert list(s.execute(select(Tick)).scalars()) == []
+
+    # the clock fires: the queued say rides the tick, applied and loud
+    with Session(app.state._test_engine) as s:
+        tick = run_tick(s)
+        s.commit()
+        events = list(tick.events or [])
+    says = [e for e in events if e["type"] == "say"]
+    assert [(e["status"], e["entity_id"]) for e in says] == [
+        ("applied", alice["id"])]
+    assert says[0]["params"]["text"] == "wolves at the thicket"
+    assert says[0]["loud"] is True

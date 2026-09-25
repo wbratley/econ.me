@@ -15,6 +15,7 @@ from .recipe import (
     RecipeInput, RecipeOutput, RecipePerTickInput, RecipeRequirement, RecipeUnlock,
 )
 from .process import Process, ProcessStatus
+from .intent import PendingIntent
 from .parcel import Parcel, Facility, Deposit
 from .place import Place
 from .spatial_edge import SpatialEdge
@@ -57,6 +58,7 @@ __all__ = [
     "RecipeRequirement",
     "RecipeUnlock",
     "Process",
+    "PendingIntent",
     "ProcessStatus",
     "Parcel",
     "Facility",

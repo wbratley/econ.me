@@ -122,7 +122,7 @@ def test_tools_list_exposes_the_player_surface(client):
     assert set(tools) == {
         "join", "my_entities", "entity_state", "entity_events",
         "get_behaviour", "get_script_libraries", "set_behaviour",
-        "dry_run_behaviour",
+        "perform_action", "dry_run_behaviour",
         "round_state", "set_ready", "epoch_state", "governance_current",
         "market_prices", "leaderboard", "world_catalog", "entity_activity",
         "world_activity", "world_map",
@@ -568,3 +568,66 @@ def test_dry_run_input_errors(client):
     result = call_tool(client, "dry_run_behaviour",
                        {"entity_id": eid, "source": "-- x"}, user="u-alice")
     assert result["isError"] and "fixed" in result["content"][0]["text"]
+
+
+# ===========================================================================
+# perform_action: the direct channel — one action as the entity,
+# authored by the controller, no script rewrite
+# ===========================================================================
+
+def test_perform_action_say_resolves_immediately_without_clock(client):
+    from sqlalchemy import select
+    from econengine.models import Tick
+    from econengine.tick import run_tick
+
+    joined = call_json(client, "join")
+    eid = joined["entity"]["id"]
+
+    out = call_json(client, "perform_action",
+                    {"entity_id": eid, "action": "say",
+                     "params": {"text": "the controller speaks"}})
+    assert out["status"] == "applied"
+    assert out["type"] == "say"
+
+    # clock off: it resolved between ticks (the §4.5 contract, unchanged)
+    with Session(app.state._test_engine) as s:
+        assert list(s.execute(select(Tick)).scalars()) == []
+
+
+def test_perform_action_queues_when_the_clock_is_armed(client, monkeypatch):
+    from econengine.tick import run_tick
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")
+    joined = call_json(client, "join")
+    eid = joined["entity"]["id"]
+
+    out = call_json(client, "perform_action",
+                    {"entity_id": eid, "action": "say",
+                     "params": {"text": "wolves at the thicket"}})
+    assert out["status"] == "queued"
+
+    with Session(app.state._test_engine) as s:
+        tick = run_tick(s)
+        s.commit()
+        events = list(tick.events or [])
+    says = [e for e in events if e["type"] == "say"]
+    assert [(e["status"], e["entity_id"]) for e in says] == [("applied", eid)]
+    assert says[0]["params"]["text"] == "wolves at the thicket"
+
+
+def test_perform_action_is_ownership_gated(client):
+    joined = call_json(client, "join", user="u-alice")
+    result = call_tool(client, "perform_action",
+                       {"entity_id": joined["entity"]["id"], "action": "say",
+                        "params": {"text": "hi"}}, user="u-bob")
+    assert result["isError"] is True
+    assert "not yours" in result["content"][0]["text"]
+
+
+def test_perform_action_allowlist_rejects_unlisted_actions(client):
+    joined = call_json(client, "join")
+    result = call_tool(client, "perform_action",
+                       {"entity_id": joined["entity"]["id"],
+                        "action": "place_order", "params": {}})
+    assert result["isError"] is True
+    assert "place_order" in result["content"][0]["text"]

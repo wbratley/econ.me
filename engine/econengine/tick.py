@@ -78,6 +78,7 @@ from .models import (
 from .scripting import (
     build_queries, get_world_libraries, resolve_intent, set_executing_tick,
 )
+from . import scripting
 
 # Votable data (world_settings): max total ms of Lua execution an entity's
 # tick-scripts (POLICY + BEHAVIOUR) may consume in a single tick. Missing/None
@@ -188,6 +189,14 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
             script.consecutive_errors = 0
             script.state = dict(result.state_updates)
             intents.extend(result.intents)
+
+    # Direct actions first: the outbox row a controller submitted between
+    # ticks (a machine client, a seat's perform_action, a future human's
+    # client) drains into the SAME pass — same resolver, same priority
+    # sort, same per-tick budgets (one say per entity per tick holds
+    # across both channels). Prepended so the stable sort keeps
+    # wall-time submission order among priority ties.
+    intents = scripting.drain_pending_intents(session) + intents
 
     intents.sort(key=lambda i: i.priority)  # stable: collection order breaks ties
 

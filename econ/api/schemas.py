@@ -823,7 +823,7 @@ class IntentResult(BaseModel):
     entity_id: str
     params: dict
     idempotency_key: str
-    status: str  # "applied" | "rejected"
+    status: str  # "applied" | "rejected" | "queued" (clock-armed)
     reason: Optional[str] = None
     order_id: Optional[str] = None    # present for place_order
     process_id: Optional[str] = None  # present for start_process
