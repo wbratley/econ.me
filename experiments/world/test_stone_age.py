@@ -465,6 +465,125 @@ def test_the_starter_boils_the_fragment_basket(session):
     assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
 
 
+def test_the_starter_fishes_the_bank_when_the_meat_shelf_thins(session):
+    """Run 47's lever, leg one: the world's meat never existed (the
+    pot sat cold, the post bid 5.00 into an empty market all day), so
+    the inherited floor now fishes while it stands at the bank with a
+    thin meat shelf -- the drink errand doubles as the catch."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 8)                 # hour 7, day 1: daylight at the bank
+    seat = _starter_seat(session, "Fisher")
+    _at(session, seat, "RIVER")
+    for sym in ("MEAT", "COOKED_MEAT", "JERKY"):
+        _set(session, seat, sym, 0)
+    _set(session, seat, "WATER", 4)     # the cup is full: fish, not drink
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)   # fed: the fish branch, not the meal
+    session.commit()
+    _run(session, 1)
+    assert any(e["entity_id"] == seat.id
+               and e.get("params", {}).get("recipe") == "FISH"
+               for e in _events(session, "start_process"))
+    assert _events(session, "script_error") == []
+
+
+def test_the_starter_hafts_the_spear_rung(session):
+    """Leg two: the floor's one rung of capital. A camp that has the
+    materials and wood to spare spends an afternoon hafting -- the
+    spear is the protein walk's key, held never spent."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 8)                 # hour 7: three honest hours fit
+    seat = _starter_seat(session, "Haft")
+    _set(session, seat, "FLINT", 1)
+    _set(session, seat, "WOOD", 6)      # two for the spear, the fire keeps its
+    _set(session, seat, "YARN", 1)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)   # the haft, not the meal
+    session.commit()
+    _run(session, 4)                     # a stoke may take a tick first
+    assert any(e["entity_id"] == seat.id
+               and e.get("params", {}).get("recipe") == "MAKE_SPEAR"
+               for e in _events(session, "start_process"))
+    assert _hold(session, seat.id, "SPEAR") == Decimal("1")
+    assert _events(session, "script_error") == []
+
+
+def test_the_starter_hunts_the_deep_forest_with_the_spear(session):
+    """Leg three: a speared house with a thin meat shelf walks the
+    deep forest's table -- the floor hunts meat INTO the world, which
+    is the whole lever (every run-46/47 death ran through the empty
+    protein shelf)."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 9)                 # hour 8: the circuit fits in the day
+    seat = _starter_seat(session, "Hunter")
+    _at(session, seat, "FOREST")
+    _set(session, seat, "SPEAR", 1)
+    for sym in ("MEAT", "COOKED_MEAT", "JERKY", "BERRIES", "APPLES"):
+        _set(session, seat, sym, 0)
+    _set(session, seat, "WOOD", 0)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)   # starving on purpose, not eating now
+    session.commit()
+    _run(session, 1)
+    assert any(e["entity_id"] == seat.id
+               and e.get("params", {}).get("recipe") == "HUNT_SPEAR"
+               for e in _events(session, "start_process"))
+    assert _events(session, "script_error") == []
+
+
+def test_a_fed_shelf_pauses_the_spear(session):
+    """The hunt is a NEED, not a habit: a full vegetarian shelf does
+    not spend the day walking -- the house goes back to gathering."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 9)
+    seat = _starter_seat(session, "Fed")
+    _at(session, seat, "FOREST")
+    _set(session, seat, "SPEAR", 1)
+    _set(session, seat, "BERRIES", 8)
+    for sym in ("MEAT", "COOKED_MEAT", "JERKY"):
+        _set(session, seat, sym, 0)
+    _set(session, seat, "WOOD", 0)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)   # fed: the walk is a gather, not a meal
+    session.commit()
+    _run(session, 3)                     # the 2h road to the thicket
+    assert not any(e["entity_id"] == seat.id
+                   and e.get("params", {}).get("recipe") == "HUNT_SPEAR"
+                   for e in _events(session, "start_process"))
+    assert any(e["entity_id"] == seat.id and e["place"] == "THICKET"
+               for e in _events(session, "travel_arrived"))
+
+
+def test_a_late_spear_does_not_walk_the_dark_road(session):
+    """The dusk discipline survives the new errand: at hour 17 the
+    hunt window is SHUT -- no HUNT_SPEAR starts, and the house prices
+    the walk home from where it stands (the forest is two hours, not
+    the thicket's one) and is firelit by dark."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 18)                # hour 17, day 1: window shut
+    seat = _starter_seat(session, "Late")
+    _at(session, seat, "FOREST")
+    _set(session, seat, "SPEAR", 1)
+    for sym in ("MEAT", "COOKED_MEAT", "JERKY", "BERRIES", "APPLES"):
+        _set(session, seat, sym, 0)
+    _set(session, seat, "WOOD", 0)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)
+    session.commit()
+    _run(session, 4)                     # the 2h road home lands at hour 19
+    assert not any(e["entity_id"] == seat.id
+                   and e.get("params", {}).get("recipe") == "HUNT_SPEAR"
+                   for e in _events(session, "start_process"))
+    assert any(e["entity_id"] == seat.id and e["place"] == "HEARTH"
+               for e in _events(session, "travel_arrived"))
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+
+
 def test_the_clock_rations_labor_and_gates_the_dark(session):
     """The clock (run 18): LABOR auto-issues only in daylight (one
     labor-hour per daylight hour, none at night), and the dark refuses
@@ -679,6 +798,31 @@ def _no_wolves(session):
         if e.name.startswith("Wolf Pack"):
             e.status = EntityStatus.INCAPACITATED
     session.commit()
+
+
+def _to_tick(session, n):
+    """Advance the world to tick N's boundary (ticks 1..N-1 run on the
+    way; a seat created after the call wakes with full buffers -- the
+    hunt tests want a chosen HOUR, not a fast-forwarded larder)."""
+    while production.next_tick_number(session) != n:
+        run_tick(session)
+        session.commit()
+
+
+def _starter_seat(session, name):
+    """A house running the pack's inherited STARTER, gate-packed the
+    way genesis installs it."""
+    seat = _seat(session, name)
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        script_type=ScriptType.BEHAVIOUR,
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        entity_id=seat.id,
+        timeout_ms=200,
+        state={},
+    ))
+    session.flush()
+    return seat
 
 
 def test_neglect_kills(session):
