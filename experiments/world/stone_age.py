@@ -504,7 +504,10 @@ same.
 3. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
 4. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
    or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
-   ~6 hours fed per strip) -> sell MEAT.
+   ~6 hours fed per strip) -> sell MEAT. The inherited floor hafts
+   this one itself and walks the deep-forest table when its meat
+   shelf thins -- the surplus over THAT is yours to manage: cook it
+   before it rots, smoke it, or sell it into the post's standing bid.
 4a. AXE (flint+wood+yarn, an afternoon): CHOP_WOOD = 3 certain logs an
    hour, four times the bare gather's wood -- the fire never wants again;
    and +2 ATK at the door, the half of a spear in a fist.

@@ -6,13 +6,20 @@
 -- fire pays both while it burns), EAT when the stomach runs low
 -- (eating is your decision now -- the engine no longer chews for you),
 -- gather whatever the thicket offers, and WALK between them -- an hour
--- each way, the road exposed place by place. It survives -- barely. It
--- never builds capital (no spear, no bag, no shelter, no clothes, not
--- even its own fire -- the commons stands) and spends nearly every tick
--- on the next meal or the next log: that is the point. The stone-age
--- seat is POOR, and this script shows the floor. A player who changes
--- nothing stays on the treadmill; every escape -- tools, clothes,
--- shelter, trade -- is their invention.
+-- each way, the road exposed place by place. It survives -- barely.
+-- Beyond the treadmill it owns exactly ONE rung of capital, the spear
+-- (run 47: the world never made meat -- the pot sat cold and the post
+-- bid 5.00 into an empty market all day; protein is the floor's
+-- business now): fish ride the drink errand at the bank, and a
+-- speared house walks the deep forest's table when the meat shelf
+-- thins. Everything else -- bag, axe, bow, shelter, clothes, even
+-- its own fire -- stays the player's invention: the floor remains
+-- POOR, and the spear is the floor's because without it the protein
+-- walk is a 55%-nothing gamble the floor does not take.
+-- It still spends nearly every tick on the next meal or the next
+-- log: that is the point. A player who changes nothing stays on the
+-- treadmill; every further escape -- tools, clothes, shelter, trade
+-- -- is theirs to add on top of the hunt.
 --
 -- The blocks are independent priorities, NOT one elseif chain: the
 -- fire-block's first branch ("no fire yet") must not swallow the gather
@@ -49,6 +56,11 @@ local jerky  = std.holding_qty("JERKY")
 local food   = berries + apples + cooked + jerky
 local water  = std.holding_qty("WATER") + std.holding_qty("SKINWATER")
 local skin   = std.holding_qty("WATERSKIN")
+local spear  = std.holding_qty("SPEAR")    -- the hunt's key (held, never spent)
+local flint  = std.holding_qty("FLINT")
+local yarn   = std.holding_qty("YARN")
+local protein = meat + cooked + jerky      -- the meat-family shelf (raw MEAT
+                                            -- rots fastest; the walk pays in it)
 
 -- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
 --    Meals are labor-free, instant, night-legal and place-free -- but
@@ -87,6 +99,12 @@ if place == river and skin >= 1 and std.holding_qty("SKINWATER") < 5 then
   ctx.action.start_process("FILL_SKIN")
 elseif place == river and water < 2 then
   ctx.action.start_process("DRINK")
+elseif place == river and protein < 3 and std.hour() < 15 then
+  -- Standing at the bank with a thin meat shelf: fish it (run 47's
+  -- lesson -- the world's meat never existed; the drink errand
+  -- doubles as the catch, certain-ish, and nothing here hunts YOU).
+  -- The deliberate protein walk is the spear's, below.
+  ctx.action.start_process("FISH")
 elseif water < 1 and not std.is_night() then
   ctx.action.travel(river)
 end
@@ -160,11 +178,24 @@ if hits < 20 and std.is_night() then
   end
 end
 
--- 2. Cooking: fire + 2 raw meat -> 2 safe food. The commons fire
+-- 2. Cooking: fire + 2 raw meat -> 2 safe food. Raw MEAT rots a
+--    third an hour -- a hunt not cooked on arrival is half-wasted,
+--    so the gate is the cooked shelf, not hunger. The commons fire
 --    cooks for anyone at the clearing (lit -- the starter stokes
 --    first; coals do not cook).
-if place == home and meat >= 2 and food < 4 then
+if place == home and meat >= 2 and cooked < 6 then
   ctx.action.start_process("COOK_MEAT")
+end
+
+-- 2b. The spear rung (run 47's lever: meat must exist, and the floor
+--     must make it). An afternoon's hafting when the woodpile can
+--     spare the two logs -- the floor's one piece of capital; the
+--     rest of the hunt ladder (bag, axe, bow, traps) stays the
+--     player's invention. At home, by day, early enough that three
+--     honest hours still end in light.
+if spear < 1 and flint >= 1 and wood >= 4 and yarn >= 1
+   and place == home and not std.is_night() and std.hour() < 15 then
+  ctx.action.start_process("MAKE_SPEAR")
 end
 
 -- 3. Everything else is gathering at the thicket: food first, then wood
@@ -180,10 +211,31 @@ end
 --    froze AT the thicket one road from their lit hearth; the floor
 --    no longer models that death). Home before dark, stoked, asleep:
 --    the watch is the reward for the commute's timing.
-local walk_home = world.distance_ticks(woods, home) or 1
+--    walk home is priced from WHERE THE HOUSE STANDS: the forest and
+--    the bank are two hours out, not one -- a house that leaves late
+--    freezes one road from its fire (run 37's twins). Same bar as
+--    always: no walk may LAND in the dark.
+local forest = "FOREST"           -- the spear game: the deep wood's table
+local walk_home = world.distance_ticks(place or home, home) or 1
 local dusk_closing = std.hour() + walk_home >= 19
+-- The protein walk: a speared house hunts the deep forest when the
+-- meat shelf thins (protein < 3: one landed hunt retires the errand)
+-- and the day is young enough for the whole circuit -- out by the
+-- valley road, two honest hours of hunt, home before the dark; the
+-- window closes at hour 13 (a late start is a dark road home). The
+-- berry flood pauses it: a full vegetarian shelf does not need the
+-- spear. Bare-handed the floor stays home -- the thicket's table
+-- feeds better than a hungry gamble.
+local hunting = spear >= 1 and protein < 3 and food < 6
+   and std.hour() < 13 and not std.running_recipe("HUNT_SPEAR")
 if not std.is_night() then
-  if (food < 8 or wood < 6) and not dusk_closing
+  if hunting then
+    if place ~= forest then
+      ctx.action.travel(forest)
+    else
+      ctx.action.start_process("HUNT_SPEAR")
+    end
+  elseif (food < 8 or wood < 6) and not dusk_closing
      and not std.running_recipe("GATHER") then
     if place ~= woods then
       ctx.action.travel(woods)
