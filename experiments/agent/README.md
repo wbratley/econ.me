@@ -207,6 +207,23 @@ sends `reasoning_effort: low` — ~9× cheaper and faster, well inside
 the budget; `ECON_DEEPSEEK_REASONING` overrides (medium/high/…, or
 empty to take the API default).
 
+**Launch-window policy (run 47's lesson):** the gate silently decided
+a whole run — Ivar authored nothing for rounds 1–16 (launched 17:36
+Beijing peak) and the tuned starter carried him; a "clock alone" run
+was secretly "clock + billing." Never let it ride: for any run with a
+deepseek seat, choose ONE of —
+
+- **launch inside the window**: weekdays 16:30–00:30 UTC (00:30–08:30
+  Beijing — an evening/overnight launch; a 9.6h run started at the
+  open still spills ~1.6h past the close), or ANY time on a weekend
+  (all-day off-peak since 2026-08-23 — the clean answer for long
+  clocked runs);
+- **`ECON_DEEPSEEK_WINDOW=any`** for a weekday sprint — ~2× the token
+  cost, and the launch plan says so;
+- **keep the gate as the seat's documented HANDICAP** — an authoring
+  blackout window by design: write it into the run's one-lever spec so
+  the postmortem reads it as design, not accident.
+
 Local llama.cpp seats: a `llama:` prefix in `--models` (e.g.
 `--models llama:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`) seats a
 `llama serve` on this box — the same streamed OpenAI-dialect client
