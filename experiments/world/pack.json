@@ -27,7 +27,7 @@
  },
  "engine_std": "f1a7fad89397b98f",
  "lua": {
-  "boar.lua": "bbfa4bbab5817fb6",
+  "boar.lua": "db7e6f24c21403a0",
   "clerk.lua": "999bf6c106578846",
   "miner.lua": "3d985d09a4275581",
   "pack.lua": "4f68c575e7a8057b",

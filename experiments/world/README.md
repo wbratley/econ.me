@@ -266,7 +266,7 @@ rides under the THIRST threshold (grant 0.5, decay 0.05, equilibrium
 jerky-and-egg larder that never walks to the river, dries out and
 dies on day three: **thirst targets the rich**. Cup + skin ≈ two dry
 days net of meal credits — the river is a rhythm, not a treadmill,
-and its road now runs past the thicket (THICKET–RIVER 2h: the gather
+and its road now runs past the thicket (THICKET–RIVER 1h: the gather
 commute drinks, and the boar — which never touches the fire-ground —
 reaches the tap on its own road). The beasts drink too: wolves run
 the post road to the bank, boars the thicket road; their programs
