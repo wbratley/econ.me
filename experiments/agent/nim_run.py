@@ -43,6 +43,7 @@ bounded by --max-attempts): 10 rounds ≈ 30-45 calls total.
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime as _dt
 import json
 import os
@@ -128,6 +129,58 @@ def serve_run(out: Path, port: int) -> bool:
     return True
 
 
+def start_lan_sidecar(out: Path, port: int) -> "subprocess.Popen | None":
+    """The LAN dashboard sidecar: a stdlib http.server on 0.0.0.0:<port>
+    serving the run's out dir (index.html symlinked to the dashboard),
+    spawned as a CHILD of the runner so it is reaped when the run ends.
+    Run 46/47's lesson: hand-launched `setsid` sidecars never die on
+    their own, and the next launch then serves the previous run's
+    "complete" page on the same URL — the port is bind-checked up
+    front and a held port is a loud warning, not a run-killer: a stale
+    sidecar (`ss -tlnH "sport = :<port>"` finds it; kill it) means
+    watching continues on --serve / the file, observability must not
+    take the world down with it."""
+    import socket
+
+    probe = socket.socket()
+    try:
+        probe.bind(("0.0.0.0", port))
+    except OSError as exc:
+        print(f"lan sidecar: NOT serving on {port} ({exc}) — a stale "
+              f"sidecar may hold it: ss -tlnH 'sport = :{port}', then "
+              "kill it and relaunch")
+        return None
+    finally:
+        probe.close()
+
+    link = out / "index.html"
+    if not link.exists() or link.is_symlink():   # refresh like ln -sfn
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to("dashboard.html")
+
+    log = open(out / "side.log", "w")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(port),
+         "--bind", "0.0.0.0"],
+        cwd=str(out), stdout=log, stderr=subprocess.STDOUT)
+    print(f"lan sidecar: http://0.0.0.0:{port}/ -> {out} "
+          "(dies with the run)")
+    return proc
+
+
+def stop_lan_sidecar(proc: "subprocess.Popen | None") -> None:
+    """Reap the sidecar: TERM, wait, kill. Idempotent (atexit fires it
+    again after the normal-exit call; a poll()'d proc is a no-op)."""
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
     """Fresh DB, one admin + one user per dynasty, in-process (the OAuth
     surface is for humans; a harness mints directly). Must run BEFORE any
@@ -172,7 +225,7 @@ def spawn_server(port: int, log_path: Path) -> subprocess.Popen:
     log = open(log_path, "w")
     proc = subprocess.Popen(
         [".venv/bin/python", "-m", "uvicorn", "econ.api.main:app",
-         "--port", str(port)],
+         "--host", "0.0.0.0", "--port", str(port)],
         env=env, stdout=log, stderr=subprocess.STDOUT, cwd=os.getcwd())
     import httpx
 
@@ -262,6 +315,14 @@ def main(argv=None) -> int:
     ap.add_argument("--serve", type=int, default=8090, metavar="PORT",
                     help="live dashboard: serve the out dir here "
                          "(0 disables; nginx on the same dir works too)")
+    ap.add_argument("--lan-port", type=int, default=0, metavar="PORT",
+                    help="LAN dashboard sidecar: stdlib http.server on "
+                         "0.0.0.0:PORT serving the out dir, spawned and "
+                         "REAPED by the runner (0 disables) — unlike "
+                         "hand-launched sidecars it cannot outlive the "
+                         "run; the live panel derives its stream host "
+                         "from the page's hostname, so LAN browsers get "
+                         "the per-tick pulse too")
     ap.add_argument("--out", default="/tmp/nim-run")
     ap.add_argument("--resume", action="store_true",
                     help="continue an interrupted run in --out: keep its "
@@ -465,6 +526,15 @@ def main(argv=None) -> int:
             print(f"dashboard: http://127.0.0.1:{args.serve}/ "
                   "(live — rewritten after every round)")
 
+    # the LAN sidecar starts LAST (run 47's launch order lesson: it
+    # serves whatever is in the out dir, so the warming-up placeholder
+    # and the first rewrite must already be there) and dies with the
+    # run — atexit is the belt for the exception paths, the normal-exit
+    # stop below is the suspenders.
+    lan = start_lan_sidecar(out, args.lan_port) if args.lan_port else None
+    if lan is not None:
+        atexit.register(stop_lan_sidecar, lan)
+
     try:
         loops = []
         # the diary defaults ON for NIM runs (one short extra call per
@@ -502,10 +572,11 @@ def main(argv=None) -> int:
             }
             if status == "live":
                 meta["refresh_s"] = 10
-                # the live panel's EventSource target: the world server,
-                # same base the seats talk to (CORS is open, §9.1 — the
-                # stream is public facts). Dropped on the final rewrite —
-                # a finished page must stay self-contained.
+                # the live panel's stream target: the world server —
+                # only its PORT is used (CORS is open, §9.1 — the stream
+                # is public facts); the browser supplies the hostname, so
+                # a page served on the LAN pulses too. Dropped on the
+                # final rewrite — a finished page must stay self-contained.
                 meta["live_url"] = base
             _atomic_write(out / "dashboard.html",
                           build_dashboard(snaps, meta))
@@ -540,6 +611,8 @@ def main(argv=None) -> int:
     print(f"dashboard: {out}/dashboard.html"
           + (f" (was http://127.0.0.1:{args.serve}/)" if args.serve else ""))
     print(f"snapshots: {out}/round-*.json, journals: {out}/journal-*.jsonl")
+    if lan is not None:
+        stop_lan_sidecar(lan)      # the final artifact is on disk; no zombie
     return 0
 
 

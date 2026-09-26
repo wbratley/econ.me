@@ -10,6 +10,7 @@ snapshots alone.
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from decimal import Decimal
 
@@ -336,6 +337,67 @@ def test_serve_run_hands_out_the_dashboard(tmp_path):
                      timeout=5.0).status_code == 200
     assert httpx.get("http://127.0.0.1:8977/nope.json",
                      timeout=5.0).status_code == 404
+
+
+def _free_lan_port() -> int:
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def test_lan_sidecar_serves_and_dies_with_the_run(tmp_path):
+    # run 46/47's zombie lesson: hand-launched `setsid` sidecars outlive
+    # their runs and the next launch serves the OLD run's "complete"
+    # page. The runner-spawned sidecar is a child process, reaped on
+    # stop — and it serves the out dir on 0.0.0.0 with the dashboard
+    # symlinked in as index.html.
+    from experiments.agent.nim_run import (start_lan_sidecar,
+                                           stop_lan_sidecar)
+    import httpx
+
+    (tmp_path / "dashboard.html").write_text("<h1>lan</h1>")
+    port = _free_lan_port()
+    proc = start_lan_sidecar(tmp_path, port)
+    assert proc is not None
+    assert (tmp_path / "index.html").is_symlink()
+    served = None
+    for _ in range(50):            # the child needs a beat to bind
+        try:
+            r = httpx.get(f"http://127.0.0.1:{port}/", timeout=1.0)
+            if r.status_code == 200:
+                served = r.text
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    assert served == "<h1>lan</h1>"          # `/` -> index.html symlink
+    stop_lan_sidecar(proc)
+    assert proc.poll() is not None            # no zombie survives the run
+    stop_lan_sidecar(proc)                    # idempotent: atexit refires it
+
+
+def test_lan_sidecar_warns_instead_of_dying_on_a_held_port(tmp_path, capsys):
+    # a held port is a stale sidecar from a previous run — the launch
+    # must say so loudly (with the fix command) and keep going: the
+    # world must not die for observability's sake.
+    import socket
+    from experiments.agent.nim_run import start_lan_sidecar
+
+    port = _free_lan_port()
+    holder = socket.socket()
+    holder.bind(("0.0.0.0", port))
+    holder.listen(1)
+    try:
+        assert start_lan_sidecar(tmp_path, port) is None
+        out = capsys.readouterr().out
+        assert "NOT serving" in out and str(port) in out
+        assert "sport = :%d" % port in out      # the diagnostic + the fix
+        assert not (tmp_path / "side.log").exists()
+    finally:
+        holder.close()
 
 
 def test_diary_rides_the_snapshots_to_the_dashboard(client, monkeypatch, tmp_path):
@@ -893,12 +955,18 @@ def test_live_panel_streams_the_world_clock(client, monkeypatch, tmp_path):
     stream — the between-rounds view (§9.2): ticks, hours, rounds, and
     the observable events each tick broadcasts, with houses rendered by
     name (the id map is built from the snapshots themselves, entity ids
-    AND the run's user-id scheme for eliminations)."""
+    AND the run's user-id scheme for eliminations). The stream target
+    keeps only the world server's PORT from the meta — the browser
+    supplies scheme + hostname, so a page served on the LAN sidecar
+    pulses against the same world instead of freezing (run 47)."""
     loops = make_loops(client, [[CLEAN, CLEAN2]] * 3, monkeypatch, rounds_k=2)
     snapshots = run_rounds(loops, 2, tmp_path)
     html = build_dashboard(snapshots, _live_meta("live"))
-    # the stream target: the world server, not the static harness port
-    assert '"http://127.0.0.1:8925"' in html
+    # the stream target: the world server's port + the page's hostname —
+    # NOT the harness's loopback URL (LAN browsers can't use that)
+    assert 'var PORT = "8925", NAMES = ' in html
+    assert "location.hostname" in html
+    assert '"http://127.0.0.1:8925"' not in html
     assert "new EventSource(LIVE + '/rounds/events')" in html
     # the handlers: tick events (header + observables + eliminations)
     # and the round-closure divider
@@ -912,7 +980,6 @@ def test_live_panel_streams_the_world_clock(client, monkeypatch, tmp_path):
     assert '"u-house-one": "House One"' in html
     assert "flash-combat" in html and "flash-death" in html
     # ticks_per_round rides the meta so the header can derive the round
-    assert "var LIVE = \"http://127.0.0.1:8925\", NAMES = " in html
     assert ", K = 2;" in html
 
 
