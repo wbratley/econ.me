@@ -306,6 +306,14 @@ def main(argv=None) -> int:
     ap.add_argument("--edit-mode", action="store_true",
                     help="models may answer with SEARCH/REPLACE edit blocks "
                          "or KEEP instead of a full rewrite")
+    ap.add_argument("--rewrite-seats", nargs="+", default=None,
+                    metavar="NAME",
+                    help="force whole-file rewrite mode for these seats "
+                         "even under --edit-mode: the seat never sees the "
+                         "edit-block vocabulary (run 47: nemotron's SEARCH "
+                         "blocks missed the source 4 times in 18 rounds "
+                         "despite #199's fuzzy anchor — a rewrite seat "
+                         "trades token cost for fidelity)")
     ap.add_argument("--diary", action="store_true",
                     help="strategy diary per house per round even in a "
                          "scripted run (fixtures must interleave them)")
@@ -541,17 +549,24 @@ def main(argv=None) -> int:
         # house per round, inside the same parallel window) and OFF for
         # scripted rehearsals (legacy fixtures carry one line per round)
         diary = args.diary or (not args.no_diary and not args.scripted)
+        rewrite = set(args.rewrite_seats or ())
         for d, model in zip(dynasties, models):
             lp = AgentLoop(
                 McpClient(http_transport(base, d.token)),
                 model,
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
                 journal_path=str(out / f"journal-{slug(d.name)}.jsonl"),
-                edit_mode=args.edit_mode, diary=diary, manual=manual,
+                # per-seat override: a listed seat authors whole-file
+                # rewrites even when the run is in edit mode (fidelity
+                # over token cost, where SEARCH blocks keep missing)
+                edit_mode=args.edit_mode and d.name not in rewrite,
+                diary=diary, manual=manual,
                 catalog=catalog, trace_dir=str(out), seat=d.name)
             loops.append((d, lp))
 
-        print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}' for d in dynasties)}")
+        print(f"dynasties: {', '.join(f'{d.name} = {d.model_name}'
+                                     + (' [rewrite]' if d.name in rewrite else '')
+                                     for d in dynasties)}")
         t0 = time.monotonic()
 
         def write_dash(snaps: list[dict], status: str = "live") -> None:

@@ -647,6 +647,52 @@ def test_run_rounds_resumes_with_prior_snapshots(client, monkeypatch, tmp_path):
         ["round-01.json", "round-02.json"]
 
 
+def test_rewrite_seats_override_edit_mode_end_to_end(tmp_path):
+    """Run 47's Harald lever: --rewrite-seats forces whole-file
+    rewrites for the named seat even under --edit-mode (nemotron's
+    SEARCH blocks missed the source 4 times in 18 rounds despite
+    #199's anchor). The named seat's journal rounds carry
+    edit_mode False; the others True; the launch line says so."""
+    import json as _json
+    import socket
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    def script(name, lines):
+        p = tmp_path / name
+        p.write_text("\n".join(_json.dumps(l) for l in lines) + "\n")
+        return str(p)
+
+    a = [script("w1.jsonl", ["ctx.state.note = 'one'",
+                             "ctx.state.note = 'two'"]),
+         script("w2.jsonl", ["ctx.state.note = 'one'",
+                             "ctx.state.note = 'two'"])]
+    out = tmp_path / "run"
+    r = subprocess.run(
+        [sys.executable, "-m", "experiments.agent.nim_run",
+         "--scripted", *a, "--names", "House A", "House B",
+         "--scenario", "stone_age", "--rounds", "2",
+         "--ticks-per-round", "2", "--port", str(port), "--serve", "0",
+         "--out", str(out), "--edit-mode",
+         "--rewrite-seats", "House B"],
+        cwd=repo, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert "House B = w2.jsonl [rewrite]" in r.stdout
+    assert "House A = w1.jsonl" in r.stdout
+    assert "House A = w1.jsonl [rewrite]" not in r.stdout
+    modes = {}
+    for j in out.glob("journal-*.jsonl"):
+        first = _json.loads(j.read_text().splitlines()[0])
+        modes[first["entity"] and j.name] = first["edit_mode"]
+    assert modes["journal-house-a.jsonl"] is True
+    assert modes["journal-house-b.jsonl"] is False
+
+
 def test_nim_run_resume_end_to_end(tmp_path):
     """The actual reboot path: run the CLI scripted offline, let it
     finish rounds 1-2, then a second process --resume's the same out
