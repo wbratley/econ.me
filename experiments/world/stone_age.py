@@ -403,7 +403,9 @@ water is a rhythm, not a bank.
 THE NIGHT HAS TEETH: wolves are creatures -- entities with stats,
 health (HITS) and hunger, the same physics as you. They hunt in the
 dark, guided by sound: EVERY say at night tells a listening pack where
-you are. A lit hearth (WARMTH >= 1) turns a wolf at the door; a spear
+you are. A burning campfire (the FIRE where you stand, lit) or a
+carried torch turns a wolf at the door -- the fire that went dark
+protects no one; a spear
 (+3 ATTACK) or clothes (+1 DEFENSE) prices into the fight: hit% =
 50 + 5 x (ATTACK - DEFENSE), damage = max(1, ATK - DEF). A landed
 bite feeds the wolf (it tears flesh); a kill is a carcass: MEAT is
@@ -429,8 +431,9 @@ never meets a tusk; the spear duel is a coin toss that can kill you.
 Boars breed from day 3, every third day, never more than two alive.
 Speech is free by day. At night it has a price.
 
-A seated body is warm and a warm body (WARMTH >= 1) turns a wolf at
-the door: the fire that feeds you guards you. A fed
+A lit campfire guards the ground it lights, and a burning torch
+its carrier: the fire that feeds you guards you -- UNTIL IT GOES
+OUT (keep it stoked: the wall is fuel, not warmth). A fed
 entity slowly heals its conditions (~0.95/tick); conditions fade 5%/tick
 on their own too, but thresholds are thresholds -- the catalog says
 where each one kills.
@@ -680,6 +683,17 @@ def spawn_trading_post(session: Session) -> Entity:
         place="POST", owner=post)
     parcels.add_facility(
         session, shed, "SALT_SHED", access="OWNER", capacity=2)
+    # His hearth never dies (the manual's word, now literal): a
+    # standing fire on his own ground, genesis-lit, never burning
+    # down. Run 47's wall was a WARMTH holding; the wall is firelight
+    # now, and his is real -- wolves are still turned at his door.
+    hearth = parcels.create_parcel(
+        session, "POST_FIRE", name="The post's hearth",
+        place="POST", owner=post)
+    parcels.add_facility(
+        session, hearth, "FIRE", access="OWNER", capacity=1,
+        fuel=Decimal("999999"), fuel_capacity=Decimal("999999"),
+        fuel_burn_per_tick=Decimal("0"))
     return post
 
 
@@ -1084,10 +1098,13 @@ def _create_combat(session: Session) -> None:
     like the spear, and the day hunt it opens never meets a tusk."""
     combat.set_rules(session, {
         "night_only": True,
-        # WARMTH: the lit hearth at the door. LIT: a carried flame —
-        # the register condition (a burning torch turns a wolf while it
-        # burns; the brand you are WALKING on is spent before the check).
-        "deterrence": {"WARMTH": 1, "LIT": 1},
+        # Run 47's rebalance: the wall is FIRELIGHT now. WARMTH >= 1
+        # deterred 73/73 attacks -- sleepers bank warmth by fires that
+        # have since gone out, and the packs starved at the door of
+        # dark camps. FIRESIDE: the place you stand at hosts a burning
+        # FIRE (the commons hearth, the post's own); LIT: a carried
+        # flame. A dark camp is a camp that can be bitten.
+        "deterrence": {"FIRESIDE": 1, "LIT": 1},
         "weapons": {"SPEAR": 3, "AXE": 2, "BOW": 3},
         "armor": {"CLOTHES": 1},
         "loot": {"*": 1, "MEAT": 3},
@@ -1096,8 +1113,9 @@ def _create_combat(session: Session) -> None:
         "base_hit": 50, "per_point": 5,
         # P4, sleep: a tired body (FATIGUE held at/above 5 -- the end
         # of the second sleepless night) fights at -1/-1: the sleepy
-        # are prey (a sleeper holds little WARMTH, so deterrence does
-        # not cover them), and prowling all night now costs the beast.
+        # are prey (deterrence is firelight now -- a dark camp's
+        # sleepers have nothing), and prowling all night costs the
+        # beast.
         "stat_penalties": {"FATIGUE": {"floor": str(FATIGUE_IMPAIRED_FLOOR),
                                         "ATTACK": -1, "DEFENSE": -1}},
         # P4, sleep: an attack on a sleeper wakes them -- any resolved
@@ -1114,6 +1132,12 @@ def _create_combat(session: Session) -> None:
         "LIT": {"holding": {"LIT_TORCH": str(LIT_TORCH_FLOOR)}},
         "EMBER": {"lit_within_ticks": EMBER_TICKS, "after": "LIT"},
         "LOUD": {"loud_events_within_ticks": 1},
+        # The camp-fire condition (run 47): active while the place you
+        # stand at hosts a burning FIRE facility. Deterrence reads it,
+        # scripts can too -- "the camp is dark" is a named, queryable
+        # fact of the world now.
+        "FIRESIDE": {"place_facility_fuel": {"facility_type": "FIRE",
+                                               "min_fuel": "1"}},
     })
     # The dark road (P2): night travel refuses you without LIT, halts a
     # journey whose flame dies mid-road for EMBER_TICKS, strands it if no

@@ -1472,13 +1472,13 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     assert session.execute(select(Script).where(
         Script.entity_id == w.id)).scalars().first() is not None
     # the trader is a man, not a building: killable flesh (innate HITS),
-    # armed and careful (4/4), with hands -- and the world keeps his
-    # hearth lit, so wolves are turned at his door
+    # armed and careful (4/4), with hands -- and his hearth never dies
+    # (a real genesis-lit FIRE at the post-place), so wolves are turned
+    # at his door (run 47's wall was a WARMTH holding; his is firelight)
     post = [e for e in session.execute(select(Entity)).scalars()
             if e.name == "Trading Post"][0]
     assert combat.is_creature(session, post.id) is True
     assert combat.get_stats(session, post.id)["DEFENSE"] == Decimal("4")
-    markets.adjust_holding(session, post, "WARMTH", Decimal("1"))
     _at(session, w, "POST")   # a wolf at the door bites (S4: up close)
     ev = combat.resolve_attack(session, w.id, post.id, 21)
     assert ev.get("deterred") is True and not ev.get("hit")
@@ -1498,6 +1498,41 @@ def test_wolves_are_creatures_with_stats_and_health(session):
     assert spawns.apply_on_round(session, 10) == []  # both at their caps
 
 
+def test_the_wall_is_firelight_not_warmth(session):
+    """Run 47's rebalance: 73/73 wolf attacks on houses deterred, 0
+    damage, all ten packs starved -- WARMTH >= 1 turned packs even at
+    DARK camps (sleepers bank warmth by fires that have gone out).
+    The wall is the burning fire where you stand: lit camp deters,
+    dark camp is biteable however warm the body, and a carried torch
+    holds the dark off."""
+    from econengine import combat
+    create_content(session)
+    house = _seat(session, "Sleeper")
+    wolf = next(e for e in session.execute(select(Entity)).scalars()
+                if e.name.startswith("Wolf Pack"))
+    _at(session, wolf, "HEARTH")   # up close (direct engine calls: no
+    #                             wolf Lua ever runs -- _no_wolves would
+    #                             only incapacitate the attacker)
+    # a lit commons fire turns the pack -- with a COLD body (warmth 0):
+    # warmth is no longer the wall
+    markets.adjust_holding(
+        session, house, "WARMTH", -_hold(session, house.id, "WARMTH"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)
+    assert ev.get("deterred") is True and not ev.get("hit")
+    # the fire goes dark: a warm body (warmth 5) at a dark camp is
+    # BITEABLE -- the banked heat of a fire that was is nothing to a
+    # wolf (this is the exact run-47 shape that made the wall a bug)
+    _commons_fire(session)[1].fuel = Decimal("0")
+    session.flush()
+    markets.adjust_holding(session, house, "WARMTH", Decimal("5"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 2)
+    assert not ev.get("deterred")
+    # and the carried flame holds the dark off: LIT is the other wall
+    markets.adjust_holding(session, house, "LIT_TORCH", Decimal("0.5"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 3)
+    assert ev.get("deterred") is True and not ev.get("hit")
+
+
 def test_combat_between_entities(session):
     """Fighting is between creatures: a lit hearth turns the wolf at the
     door (a loud miss), a spear prices into the fight, and a kill
@@ -1510,7 +1545,8 @@ def test_combat_between_entities(session):
                 if e.name.startswith("Wolf Pack"))
     _at(session, wolf, "HEARTH")   # S4: hunting is up close -- the wolf
     #                             comes to the house's door for this test
-    # firelight: a warm house cannot be bitten (the miss is loud)
+    # firelight: the burning commons fire turns the wolf at the door
+    # (a loud miss) -- banked body warmth means nothing now
     markets.adjust_holding(session, house, "WARMTH", Decimal("5"))
     ev = combat.resolve_attack(session, wolf.id, house.id, 1)
     assert ev["deterred"] is True and ev["hit"] is False
@@ -1518,6 +1554,8 @@ def test_combat_between_entities(session):
     # the fire dies; the hunt is on. Unarmed house vs wolf: 4 v 1.
     # (One attack per (attacker, defender, tick) is the honest cadence --
     # the RNG seed is the triple -- so the hunt spans the dark hours.)
+    _commons_fire(session)[1].fuel = Decimal("0")
+    session.flush()
     markets.adjust_holding(session, house, "WARMTH", -_hold(session, house.id, "WARMTH"))
     night_hours = [d * 24 + h for d in range(9) for h in (1, 2, 3, 4, 5, 21, 22, 23)]
     hits = 0
@@ -1567,6 +1605,24 @@ def spawns_spawn(session, name):
     return stone_age.make_wolf(session, name)
 
 
+def test_kin_get_no_wall_at_a_dark_doorstep(session):
+    """The firelight wall's sharp edge (run 47's rebalance): at a DARK
+    place, body warmth turns NOTHING -- not even another pack. Two
+    wolves co-placed where no fire burns can bite each other (the
+    packs' old accidental warmth wall made kin un-biteable; dark
+    doorsteps now cull the weak and the winner eats)."""
+    from econengine import combat
+    create_content(session)
+    w1, w2 = [e for e in session.execute(select(Entity)).scalars()
+              if e.name.startswith("Wolf Pack")][:2]
+    _at(session, w1, "THICKET")      # no FIRE facility there: dark ground
+    _at(session, w2, "THICKET")
+    markets.adjust_holding(session, w1, "WARMTH", Decimal("6"))  # warm body
+    ev = combat.resolve_attack(session, w2.id, w1.id, 22)          # night
+    assert not ev.get("deterred")
+    assert ev.get("hit") in (True, False)     # the roll happens -- no wall
+
+
 def test_wolves_live_off_the_land(session):
     """Run 26's census: denned packs starved once the houses slept out
     of reach -- the human table (EAT_RAW at 0.6 satiety a strip) cannot
@@ -1603,6 +1659,15 @@ def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
     wolf = next(e for e in session.execute(select(Entity)).scalars()
                 if e.name.startswith("Wolf Pack"))
     assert wolf.place.key == "FOREST"
+    # isolate ONE pack's raid: the sibling pack is scenery here (the
+    # firelight wall's sharp edge -- a co-raiding sibling at a DARK
+    # doorstep is no longer turned by body warmth, packs cull each
+    # other in the dark now; that behavior has its own test below)
+    from econengine.models import EntityStatus
+    for e in session.execute(select(Entity)).scalars():
+        if e.name.startswith("Wolf Pack") and e.id != wolf.id:
+            e.status = EntityStatus.INCAPACITATED
+    session.flush()
     # hungry (an empty stomach keeps granting HUNGER): the raid walk
     # begins at dusk -- three hours of road, walked while the light
     # lasts. Run-44's gate change: the raid road opens only to a
@@ -1645,6 +1710,15 @@ def test_the_raid_holds_the_doorstep_and_bites_in_the_dark(session):
     wolf = next(e for e in session.execute(select(Entity)).scalars()
                 if e.name.startswith("Wolf Pack"))
     assert wolf.place.key == "FOREST"
+    # isolate ONE pack's raid (the sibling is scenery: under the
+    # firelight wall a co-raiding sibling at a DARK doorstep is no
+    # longer turned by body warmth -- packs cull each other in the
+    # dark now, and that behavior has its own test)
+    from econengine.models import EntityStatus
+    for e in session.execute(select(Entity)).scalars():
+        if e.name.startswith("Wolf Pack") and e.id != wolf.id:
+            e.status = EntityStatus.INCAPACITATED
+    session.flush()
     # the run-44/45 shaping (a decision that is not a race): a full
     # stomach keeps the cup topped, a nearly-dry cup runs its errand
     # at first light (home by noon -- the dusk window stays free)
