@@ -75,7 +75,7 @@ end
 -- The graze: grub the thicket by day (the same loot table the houses
 -- work -- one roll an hour; whatever turns up, roots and all). The
 -- boar's one errand is water (P3): the river road runs past the
--- thicket, two hours -- it drinks where the valley drinks, and it
+-- thicket, an hour -- it drinks where the valley drinks, and it
 -- never needs the fire-ground to do it. It is still not a predator:
 -- the walk is a walk, the browse is the business.
 if water < 1 and not std.is_night() and ctx.entity.place ~= river then

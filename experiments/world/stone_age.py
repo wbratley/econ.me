@@ -74,7 +74,7 @@ speech is free by day, priced at night.
 
 THE MAP (S4, docs/spatial.md): the world has places, and they are
 hours apart. Seats wake at the Hearth clearing (the fire-ground: the
-commons fire stands there); the berry thicket is 1h (gather/chop), the river 2h
+commons fire stands there); the berry thicket is 1h (gather/chop), the river 1h
 (FISH: certain-ish meat, no wolves), the flint scrape 2h (certain
 flint), the deep forest 3h (the hunts, and the wolves' dens), the
 trading post 1h, down the valley -- an easy walk (the forest and
@@ -138,7 +138,7 @@ nearly dry (0.2) -- so the day-1 berry-grazer rides under the thirst
 equilibrium while the run-36 shape (a fed jerky-and-egg larder that
 never walks to the river) dries out and dies on day 3: THIRST targets
 the rich, which is the point of the relief/pressure alternation. The
-river road runs past the thicket (2h -- the gather commute drinks),
+river road runs past the thicket (1h -- the gather commute drinks),
 and FISH and DRINK share a walk. The beasts drink too -- wolves run
 the post road to the bank, boars the thicket road; the river is the
 one place every body in the world must visit. No engine surfaces new
@@ -295,7 +295,7 @@ EAT_RAW_DISEASE_WEIGHT = Decimal("25")   # out of 100 per raw meal
 # --- Water (P3, ROADMAP.md) -----------------------------------------------
 # Thirst is the larder's counterweight: preservation is DRY, and the
 # world's best diets (jerky, eggs -- run 36's survivor) hydrate least.
-# The tap is the river (free, two hours out -- the FISH walk doubles as
+# The tap is the river (free, an hour out -- the FISH walk doubles as
 # the water walk); the waterskin turns a dead wolf into portable
 # capacity (1 PELT -> 8 carried hours). The cup everyone carries free
 # (4) plus a skin (8) is ~2 dry days -- the river is a rhythm, not a
@@ -395,7 +395,7 @@ drink's worth (0.6), cooked a little more, but jerky eats dry (0.2)
 -- so the wet diet of day 1 never kills, while a rich dry larder
 (jerky, eggs) dries you out: THIRST's equilibrium rides above its
 death threshold, cup and skin buy about two dry days, and a third
-day without the river is the last. The river is two hours out and
+day without the river is the last. The river is an hour out and
 its road runs past the thicket: drink when you fish, fill on the
 gather road home. The skin seeps a little (0.02/hour) -- carried
 water is a rhythm, not a bank.
@@ -442,7 +442,7 @@ where each one kills.
 THE WORLD HAS PLACES, AND THEY ARE HOURS APART. You wake at the
 Hearth clearing (the fire-ground: safe nights, fires made and tended
 there). The Berry thicket is one hour's walk (berries, wood, yarn);
-the river two (FISH: meat without wolves; DRINK: the world's tap) --
+the river one (FISH: meat without wolves; DRINK: the world's tap) --
 and its road runs past the thicket, so the gather commute drinks;
 the Flint scrape two
 (certain flint); the Deep forest two by the valley road, three by
@@ -739,7 +739,7 @@ def _create_map(session: Session) -> None:
     priced by the ROAD (edge cost_ticks), not the template.
 
     Topology, hours from the hearth: thicket 1 (the commute for food
-    and wood), river 2 (fish: meat without wolves), flint scrape 2
+    and wood), river 1 (fish: meat without wolves), flint scrape 2
     (certain flint), deep forest 3 (the hunts and the wolves' range),
     trading post 1, down the valley (run 26's census: four hours made
     the coin cost the day -- the post was a trip houses died taking;
@@ -755,7 +755,7 @@ def _create_map(session: Session) -> None:
         ("THICKET", "THICKET", "Berry thicket",
          "An hour out: berries, wood, yarn -- the subsistence walk."),
         ("RIVER", "RIVER", "The river",
-         "Two hours out: fish from the bank, meat without wolves."),
+         "An hour out: fish from the bank, meat without wolves."),
         ("FLINT", "FLINT", "Flint scrape",
          "Two hours out: the ground gives certain flint to anyone who "
          "digs."),
@@ -771,11 +771,18 @@ def _create_map(session: Session) -> None:
                             region_id="home-valley", description=description)
     for a, b, cost in (
         ("HEARTH", "THICKET", 1),
-        ("HEARTH", "RIVER", 2),
+        ("HEARTH", "RIVER", 1),
         # The river road runs past the thicket (P3): the gather commute
         # drinks -- and the boar, which never walks to the fire-ground,
-        # still reaches the tap. Two hours, the valley's other road.
-        ("THICKET", "RIVER", 2),
+        # still reaches the tap. River proximity (run 40's parked lever,
+        # shipped for run 48): both residential roads dropped 2h -> 1h
+        # -- the river pilgrimage stopped pricing a gather day (run 39:
+        # the daylight hour itself was the binding constraint), and the
+        # FISH walk (the protein tap) became an errand, not a half-day.
+        # The gradient by distance to the river: hearth and thicket 1h
+        # (riverside life), the post 2h, flint and forest 3h (the
+        # interior) -- settlement value walks with the water.
+        ("THICKET", "RIVER", 1),
         ("HEARTH", "FLINT", 2),
         ("HEARTH", "FOREST", 3),
         ("THICKET", "FOREST", 2),

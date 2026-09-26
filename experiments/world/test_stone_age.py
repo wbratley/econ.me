@@ -1309,12 +1309,16 @@ def test_post_jerky_never_rots_and_feeds(session):
 
 def test_the_map_six_places_nine_roads(session):
     """docs/spatial.md S4's stone-age map, as content rows: the hearth
-    (start), thicket 1h, river and flint scrape 2h, deep forest 3h,
+    (start), thicket 1h, river 1h, flint scrape 2h, deep forest 3h,
     post 1h down the valley (run 26's census: at four hours the post
     was a trip houses died taking -- two starved at its counter) --
-    the forest and river roads stay the long ways round. P3 adds the
-    river road past the thicket: the gather commute drinks, and the
-    boar reaches the tap without the fire-ground."""
+    the forest road stays the long way round. P3 adds the river road
+    past the thicket: the gather commute drinks, and the boar reaches
+    the tap without the fire-ground. River proximity (run 40's
+    parked lever, shipped for run 48): both residential river roads
+    dropped 2h -> 1h -- the pilgrimage stopped pricing a gather day,
+    and the FISH walk became an errand. The gradient by distance to
+    the river: riverside life 1h, the post 2h, the interior 3h."""
     from econengine import edges, places as places_mod
     create_content(session)
     keys = {p.key: p for p in places_mod.list_places(session)}
@@ -1325,22 +1329,30 @@ def test_the_map_six_places_nine_roads(session):
              for e in edges.list_edges(session)}
     assert roads == {
         ("HEARTH", "THICKET"): 1,
-        ("HEARTH", "RIVER"): 2,
+        ("HEARTH", "RIVER"): 1,
         ("HEARTH", "FLINT"): 2,
         ("HEARTH", "FOREST"): 3,
         ("THICKET", "FOREST"): 2,
         ("FOREST", "POST"): 1,
         ("RIVER", "POST"): 2,
         ("HEARTH", "POST"): 1,
-        ("THICKET", "RIVER"): 2,
+        ("THICKET", "RIVER"): 1,
     }
     hearth, post = keys["HEARTH"], keys["POST"]
     assert edges.distance_ticks(session, hearth, post) == 1
     # the valley road shortens the forest to 2h through the post
     assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 2
-    # P3: the thicket is 2h from the river -- the gather road drinks
+    # river proximity: the residential roads are an hour, the post
+    # road stays a commitment, and the interior (flint, forest) sits
+    # 3h from the bank -- settlement value walks with the water
     assert edges.distance_ticks(
-        session, keys["THICKET"], keys["RIVER"]) == 2
+        session, keys["THICKET"], keys["RIVER"]) == 1
+    assert edges.distance_ticks(
+        session, keys["POST"], keys["RIVER"]) == 2
+    assert edges.distance_ticks(
+        session, keys["FLINT"], keys["RIVER"]) == 3
+    assert edges.distance_ticks(
+        session, keys["FOREST"], keys["RIVER"]) == 3
     # the walk itself is a recipe, priced by the road not the template
     walk = production.get_recipe(session, "TRAVEL_WALK")
     assert walk is not None and walk.duration_ticks == 1
@@ -2344,6 +2356,39 @@ def test_the_starter_drinks_at_the_river(session):
     session.commit()
     _run(session, 1)
     assert _hold(session, seat.id, "WATER") > Decimal("3")   # drank its fill
+
+
+def test_the_near_river_makes_the_drink_errand_a_morning_stroll(session):
+    """River proximity (run 40's parked lever, shipped for run 48): the
+    residential river roads dropped 2h -> 1h, so the water walk stops
+    pricing a gather day (run 39: the daylight hour itself was the
+    binding constraint -- 2h out, drink, 2h home was 5 of 14 hours).
+    A dry-cupped house at the hearth walks, drinks, and holds a full
+    cup by mid-morning: the bank is an errand, not a pilgrimage."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Riverside")
+    _at(session, seat, "HEARTH")
+    session.add(Script(
+        name=f"starter-behaviour-{seat.id}",
+        source=stone_age._gate_pack_script(stone_age.STARTER),
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=seat.id, timeout_ms=200, state={}))
+    # dawn first (tick 1 is hour 01 -- the starter sleeps the dark out)
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        _run(session, 1)
+    markets.adjust_holding(
+        session, seat, "WATER", -_hold(session, seat.id, "WATER"))
+    markets.adjust_holding(session, seat, "WATER", Decimal("0.5"))
+    markets.adjust_holding(session, seat, "SATIETY", Decimal("4"))
+    markets.adjust_holding(session, seat, "WOOD", Decimal("6"))
+    session.commit()
+    _run(session, 3)          # hour ~6: walk (1h), drink (instant), fed
+    walks = {e["to"] for e in _events(session, "travel")
+             if e.get("status") == "applied" and e["entity_id"] == seat.id}
+    assert "RIVER" in walks                   # the errand rides to the bank
+    assert _hold(session, seat.id, "WATER") > Decimal("3")   # cup full
 
 
 def test_the_beasts_walk_to_water(session):

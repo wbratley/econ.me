@@ -271,9 +271,9 @@ existing uses.
   hop — the road at night is a risk profile, computed from the same
   rows.
 - The pack (`experiments/world/stone_age.py`) authors the map: hearth
-  clearing (start), berry thicket (1h), river (2h, fish), flint
+  clearing (start), berry thicket (1h), river (1h, fish), flint
   scrape (2h), deep forest (3h, spear game, wolf range), trading post
-  (4h). Recipes gain presence kinds (gather at THICKET, hunt at
+  (1h). Recipes gain presence kinds (gather at THICKET, hunt at
   FOREST, tend at HEARTH); the post's market becomes placed. The
   starter script learns to walk.
 
@@ -397,9 +397,9 @@ census*: routes chosen, risks priced, a house that moves for flint.
   one still hears the whole world. The catalog renders the map
   (`places` + `roads` with hours) and a threat's home in its line.
   The stone_age pack authors the map: six places (hearth clearing,
-  berry thicket 1h, river 2h, flint scrape 2h, deep forest 3h,
-  trading post 4h — by the wolfy forest road or the quiet river one),
-  seven walk roads, the `TRAVEL_WALK` template; presence gates bind
+  berry thicket 1h, river 1h, flint scrape 2h, deep forest 3h,
+  trading post 1h — by the wolfy forest road or the quiet river one),
+  nine walk roads, the `TRAVEL_WALK` template; presence gates bind
   work to places (gather/chop at THICKET, hunt at FOREST, fire at
   HEARTH, DIG_FLINT at FLINT, FISH at RIVER — fish come out as MEAT,
   a second kitchen not a second pantry); every market trades AT the
