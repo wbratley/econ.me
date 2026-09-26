@@ -584,6 +584,57 @@ def test_a_late_spear_does_not_walk_the_dark_road(session):
     assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
 
 
+def test_the_rancher_basket_boils_the_egg_pot(session):
+    """Run 47, Lagertha's death: four hens lay ~9.6 satiety a day
+    against a 12-a-day stomach -- ranching eaten whole could not
+    out-climb the draw. The egg pot stretches the flock: the exact
+    run-47 rancher basket (fragments + eggs, no meat) boils as thick
+    as the hunted meal."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _starter_seat(session, "Rancher")
+    markets.adjust_holding(session, seat, "BERRIES",
+                           Decimal("0.8") - BERRY_BUFFER)
+    markets.adjust_holding(session, seat, "APPLES", Decimal("0.7"))
+    markets.adjust_holding(session, seat, "EGGS", Decimal("0.6"))
+    _set(session, seat, "MEAT", 0)
+    session.commit()
+    _run(session, 1)
+    pots = [e for e in _events(session, "start_process")
+            if e["entity_id"] == seat.id
+            and e.get("params", {}).get("recipe")
+            in ("FORAGE_POT", "FORAGE_POT_EGGS")]
+    assert pots and pots[0].get("params", {}).get("recipe") == "FORAGE_POT_EGGS"
+    assert _hold(session, seat.id, "SATIETY") == Decimal("1.71")
+    assert _hold(session, seat.id, "EGGS") < Decimal("0.2")
+    assert _events(session, "script_error") == []
+    assert session.get(Entity, seat.id).status == EntityStatus.ACTIVE
+
+
+def test_the_pot_takes_the_meat_leg_first(session):
+    """Meat outranks eggs at the pot: the spear's kill feeds the boil
+    before the flock's laying does (the egg leg is the SHORT -- the
+    rancher's substitute, not the preference)."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _starter_seat(session, "Both")
+    markets.adjust_holding(session, seat, "BERRIES",
+                           Decimal("0.8") - BERRY_BUFFER)
+    markets.adjust_holding(session, seat, "APPLES", Decimal("0.7"))
+    markets.adjust_holding(session, seat, "MEAT", Decimal("0.6"))
+    markets.adjust_holding(session, seat, "EGGS", Decimal("0.6"))
+    session.commit()
+    _run(session, 1)
+    pots = [e for e in _events(session, "start_process")
+            if e["entity_id"] == seat.id
+            and e.get("params", {}).get("recipe")
+            in ("FORAGE_POT", "FORAGE_POT_EGGS")]
+    assert pots and pots[0].get("params", {}).get("recipe") == "FORAGE_POT"
+    # untouched by the meal: 0.57 = 0.6 less the egg's own week-keeping
+    # decay (5%/tick) -- the boil spent the MEAT leg, not the flock's
+    assert _hold(session, seat.id, "EGGS") == Decimal("0.57")
+
+
 def test_the_clock_rations_labor_and_gates_the_dark(session):
     """The clock (run 18): LABOR auto-issues only in daylight (one
     labor-hour per daylight hour, none at night), and the dark refuses
