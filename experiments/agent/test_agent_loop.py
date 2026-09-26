@@ -138,6 +138,21 @@ def test_first_cycle_joins_and_accepts_clean_rewrite(client):
     # a single-candidate accepted round journals the choice but not a
     # reply head — forensics only where there was a choice to get wrong
     assert entry["extractor"]["n"] == 1 and entry["reply_head"] is None
+
+
+def test_the_journal_records_the_authoring_mode(client):
+    """Run 47's forensics gap: which mode a round ran under had to be
+    inferred from refusal strings (SEARCH-miss vs syntax). The mode is
+    now a journal field — the per-seat rewrite override (run 48's
+    nemotron lever) is visible per round after the fact."""
+    lp, _ = loop(client, [CLEAN])
+    entry = lp.cycle()
+    assert entry["action"] == "rewrite" and entry["edit_mode"] is False
+    lp_edit = loop(client, [CLEAN], edit_mode=True)[0]
+    lp_edit.mcp.call("set_behaviour",
+                     {"entity_id": lp_edit.ensure_entity(), "source": CLEAN})
+    entry2 = lp_edit.cycle()
+    assert entry2["edit_mode"] is True
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == CLEAN
 

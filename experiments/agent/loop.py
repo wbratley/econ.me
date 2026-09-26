@@ -906,6 +906,9 @@ class AgentLoop:
             "accepted": accepted,
             "kept_old": not accepted,
             "action": action,
+            "edit_mode": self.edit_mode,   # run-47 forensics: SEARCH-miss
+                                            # rounds were inferred from
+                                            # refusal strings; now a field
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],
