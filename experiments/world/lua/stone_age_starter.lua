@@ -61,6 +61,7 @@ local flint  = std.holding_qty("FLINT")
 local yarn   = std.holding_qty("YARN")
 local protein = meat + cooked + jerky      -- the meat-family shelf (raw MEAT
                                             -- rots fastest; the walk pays in it)
+local eggs   = std.holding_qty("EGGS")     -- the flock's wage (keeps near a week)
 
 -- 0. Eat: the stomach empties 0.5/hour plus a tenth of what's left.
 --    Meals are labor-free, instant, night-legal and place-free -- but
@@ -81,6 +82,11 @@ if satiety < 1.5 then
     ctx.action.start_process("EAT_JERKY")
   elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5 then
     ctx.action.start_process("FORAGE_POT")
+  elseif berries >= 0.5 and apples >= 0.5 and eggs >= 0.5 then
+    -- the rancher's pot: an egg takes the meat leg's place (run 47:
+    -- a flock could not out-climb the stomach eaten whole, but half
+    -- an egg boils as thick as a hunted meal)
+    ctx.action.start_process("FORAGE_POT_EGGS")
   elseif meat >= 1 then
     ctx.action.start_process("EAT_RAW")
   end

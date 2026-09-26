@@ -496,7 +496,10 @@ same.
    meal -- 0.8 berries + 0.7 apples + 0.6 meat starved a house whole
    in run 46 -- FORAGE_POT boils half of each staple into a real meal
    (~4 hours fed, and the boil makes raw meat safe). Thinner than the
-   right kind whole; thicker than starving on rot.
+   right kind whole; thicker than starving on rot. EGGS take the meat
+   leg's place when the flock is had and the spear is not (run 47:
+   ranching alone could not out-climb the stomach -- the pot is what
+   makes a flock feed).
 2a. THE RIVER IS THE TAP: keep the cup full and fill a skin when one
    is had -- the dry larder (jerky, eggs) kills on the third day
    without it, and the river road passes the thicket. One PELT makes
@@ -1570,6 +1573,23 @@ def _create_recipes(session: Session) -> None:
                     "basket that fits no recipe still feeds (and the boil "
                     "makes raw meat safe).",
         inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "MEAT": D("0.5")},
+        outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
+        duration_ticks=0,
+    )
+    # The rancher's pot (run 47, Lagertha's lever): the same fragment
+    # meal with an EGG where the meat leg is short. Four hens lay
+    # ~9.6 satiety a day against a 12-a-day stomach -- ranching alone
+    # could not out-climb the draw and the series' best author starved
+    # holding a flock. The pot stretches the flock: fragments plus half
+    # an egg boil as thick as a hunted meal, and a pen under a camp
+    # feeds the pot as well as a spear does.
+    production.create_recipe(
+        session, "FORAGE_POT_EGGS", name="Forage Pot (Eggs)",
+        description="The rancher's fragment meal: the same half-basket "
+                    "of berries and apples, an egg where the meat is "
+                    "short. A flock feeds the pot as well as a spear "
+                    "does.",
+        inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "EGGS": D("0.5")},
         outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
         duration_ticks=0,
     )
