@@ -23,6 +23,7 @@ import datetime as _dt
 import html
 import json
 import re
+import urllib.parse
 from decimal import Decimal
 from pathlib import Path
 
@@ -520,7 +521,15 @@ def _strategy(snapshots: list[dict]) -> str:
 # readable without f-string brace-escaping.
 _LIVE_JS = """
 (function () {
-  var LIVE = __URL__, NAMES = __NAMES__, K = __K__;
+  var PORT = __PORT__, NAMES = __NAMES__, K = __K__;
+  // The stream target follows the PAGE's hostname, not the harness's:
+  // a LAN browser on http://192.168.x.y:8130/ must reach the world SSE
+  // at 192.168.x.y:8925 — 127.0.0.1 only pulses for a browser on the
+  // host itself (run 47: the LAN panel stayed frozen all day). Only
+  // the world server's PORT comes from the meta; scheme + host ride
+  // location (an empty port means the world sat on :80/:443).
+  var LIVE = location.protocol + '//' + location.hostname
+           + (PORT ? ':' + PORT : '');
   var log = document.getElementById('lv-log');
   var el = function (id) { return document.getElementById(id); };
   function name(id) {
@@ -617,6 +626,11 @@ def _live_panel(meta: dict, snapshots: list[dict]) -> str:
     eliminations stamp user ids, so the map carries both keys."""
     if meta.get("status") != "live" or not meta.get("live_url"):
         return ""
+    # only the PORT of the harness's world URL survives into the page:
+    # the browser resolves the host (see _LIVE_JS) so served-from-any-
+    # device views pulse against the same world.
+    parsed = urllib.parse.urlparse(str(meta["live_url"]))
+    port = parsed.port or ""
     names: dict[str, str] = {}
     for s in snapshots:
         for house, v in s["dynasties"].items():
@@ -626,7 +640,7 @@ def _live_panel(meta: dict, snapshots: list[dict]) -> str:
                 # the run's own user-id scheme (nim_run: u-<slug(name)>)
                 names["u-" + re.sub(r"\W+", "-", house.lower()).strip("-")] = house
     js = (_LIVE_JS
-          .replace("__URL__", json.dumps(str(meta["live_url"]).rstrip("/")))
+          .replace("__PORT__", json.dumps(str(port)))
           .replace("__NAMES__", json.dumps(names))
           .replace("__K__", str(int(meta.get("ticks_per_round") or 0))))
     return ('\n<div id="lv" class="live-panel"><div class="live-head">'

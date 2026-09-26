@@ -132,6 +132,14 @@ echo nvapi-... > ~/.nim_api_key            # first line of this file
 # 3) watch it live — the out dir is served while the run is on
 #    (--serve PORT, default 8090; 0 disables):
 xdg-open http://127.0.0.1:8090/
+
+# 4) watch it from the LAN — the same out dir on 0.0.0.0, spawned and
+#    REAPED by the runner (a hand-launched sidecar outlives its run and
+#    the next launch then serves the previous run's "complete" page):
+#    add  --lan-port 8130  to the run above, then from any device:
+#    http://<this-host>:8130/  — the live per-tick panel derives its
+#    stream host from the page's hostname, so the pulse follows the
+#    viewer's route to the world server (which binds 0.0.0.0 too).
 ```
 
 The live page is the dashboard itself: rewritten atomically after every
