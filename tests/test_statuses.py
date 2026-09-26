@@ -57,6 +57,21 @@ def _persis_events(session, number, events):
     session.flush()
 
 
+def _placed_fire(session, place_key="CAMP", fuel="3"):
+    """A place with a FIRE facility on it (the camp-fire shape: parcel
+    on a place, facility with a burning stock)."""
+    from econengine import edges, parcels, places as places_mod
+    places_mod.create_place(session, place_key, kind=place_key,
+                             name=place_key.title(), region_id="r")
+    parcel = parcels.create_parcel(session, "GROUND", name="ground",
+                                   place=place_key)
+    fac = parcels.add_facility(
+        session, parcel, "FIRE", access="PLACE", capacity=1,
+        fuel=Decimal(fuel), fuel_capacity=Decimal("12"),
+        fuel_burn_per_tick=Decimal("1"))
+    return fac
+
+
 # --- derivations ------------------------------------------------------------
 
 
@@ -309,3 +324,43 @@ def test_the_lua_query_seam_answers_conditions_and_carriers(session):
     q = build_queries(session, tick_number=5)
     assert q["conditions"](who.id) == ["LIT", "EMBER", "LOUD"]
     assert q["carriers"]("LOUD") == [{"entity_id": who.id, "strength": 1}]
+
+
+def test_place_facility_fuel_reads_the_camp_fire(session):
+    """Run 47's wall fix: FIRESIDE is active while the place you stand
+    at hosts a FIRE with fuel -- the camp fire, not the body's banked
+    warmth (sleepers at dark camps deterred 73/73 attacks before).
+    Unplaced entities never carry it; fuel at the floor still lights;
+    the floor is honored; other facility types do not."""
+    from econengine import places as places_mod
+    from econengine.models import Entity
+
+    statuses.set_rules(session, {
+        "FIRESIDE": {"place_facility_fuel": {"facility_type": "FIRE",
+                                              "min_fuel": "1"}},
+    })
+    fire = _placed_fire(session, "CAMP", fuel="3")
+    who = _entity(session, "Camper")
+    # unplaced: no camp, no firelight
+    assert "FIRESIDE" not in statuses.active_conditions(session, who, 1)
+    # standing at the camp: the fire is burning
+    places_mod.move_entity(session, who, "CAMP")
+    assert "FIRESIDE" in statuses.active_conditions(session, who, 1)
+    # the fire burns to the floor and dies: the camp is dark
+    fire.fuel = Decimal("0")
+    session.flush()
+    assert "FIRESIDE" not in statuses.active_conditions(session, who, 2)
+    # exactly at the floor still lights; below it does not
+    fire.fuel = Decimal("1")
+    session.flush()
+    assert "FIRESIDE" in statuses.active_conditions(session, who, 3)
+    fire.fuel = Decimal("0.5")
+    session.flush()
+    assert "FIRESIDE" not in statuses.active_conditions(session, who, 4)
+    # another place's fire does not reach here
+    fire.fuel = Decimal("3")
+    _placed_fire(session, "OTHER", fuel="9")
+    places_mod.move_entity(session, who, "OTHER")
+    assert "FIRESIDE" in statuses.active_conditions(session, who, 5)
+    places_mod.move_entity(session, who, "CAMP")
+    assert "FIRESIDE" in statuses.active_conditions(session, who, 6)

@@ -19,6 +19,10 @@ world declares derives, on demand, from state the engine already keeps:
   ``loud``-marked events in the last N persisted ticks. Loudness is an
   ACT, marked at write time by whoever emits the event (speech, a
   torchlit night departure); the register grades it by count.
+- ``place_facility_fuel`` — {facility_type, min_fuel}: active while the
+  entity's current place hosts a facility of the type with fuel at or
+  above the floor (FIRESIDE: the camp's fire is burning where you
+  stand — firelight, not the memory of it).
 
 Held condition-goods (the COND-* family) join the register by name
 (symbol) automatically — one read shows every active condition, from
@@ -36,7 +40,7 @@ read anyone's (the beacon doctrine: queryable facts, not deliveries).
 import json
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import Entity, EntityStatus, Good, Holding, Tick, WorldSetting
@@ -98,6 +102,22 @@ def _held_condition_goods(session: Session) -> set[str]:
     ).scalars())
 
 
+def _place_facility_lit(session: Session, place_id: str,
+                        facility_type: str, min_fuel: Decimal) -> bool:
+    """Does this place host a facility of the type with fuel at/above
+    the floor? The camp-fire read: whatever parcel owns it, a burning
+    fire lights the ground it stands on (a wolf at the door does not
+    read deeds -- firelight is firelight)."""
+    from .models import Facility, Parcel
+    return session.execute(
+        select(func.count(Facility.id))
+        .join(Parcel, Facility.parcel_id == Parcel.id)
+        .where(Parcel.place_id == place_id,
+               Facility.facility_type == facility_type,
+               Facility.fuel >= min_fuel)
+    ).scalar_one() > 0
+
+
 def _derived(session: Session, entity: Entity, holdings: dict[str, Decimal],
              tick_number: int) -> list[str]:
     """The register's derived half, in declaration order. ``holdings`` is
@@ -124,6 +144,15 @@ def _derived(session: Session, entity: Entity, holdings: dict[str, Decimal],
                 afloors = ((get_rules(session).get(after) or {}).get("holding"))
                 if afloors and _meets_floors(holdings, afloors):
                     out.append(name)
+            continue
+        hearth = spec.get("place_facility_fuel")
+        if hearth is not None:
+            ftype = str(hearth.get("facility_type", "")).upper()
+            floor = Decimal(str(hearth.get("min_fuel", "1")))
+            if (ftype and entity.location_place_id is not None
+                    and _place_facility_lit(
+                        session, entity.location_place_id, ftype, floor)):
+                out.append(name)
             continue
         # loud_events_within_ticks: answered by the events scan
         # (graded per entity); unknown derivation types: never active
