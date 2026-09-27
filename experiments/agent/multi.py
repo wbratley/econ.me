@@ -166,7 +166,7 @@ class RoundSnapshot:
     # Each condition's kill line (world_catalog's incapacitates_at,
     # #213): the level at which the holder is incapacitated. The
     # dashboard draws its condition meters against these — a climb
-    # reads as a bar filling toward the line. Conditions without one
+    # reads as a health bar draining. Conditions without one
     # (or a world that predates the field) simply render no meter.
     kill_lines: dict[str, str] = field(default_factory=dict)
     # The rendered audit-trail tail (§15.3): this round's readable world

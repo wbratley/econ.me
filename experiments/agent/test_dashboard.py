@@ -120,14 +120,16 @@ def _snap_with_kill_lines() -> dict:
 
 def test_condition_meters_draw_against_the_kill_line():
     h = build_dashboard([_snap_with_kill_lines()], {"title": "t"})
-    # WARMTH 0.5 of 3.0 = 17%: green, below the alarm band
+    # the bar is FULLNESS: WARMTH 0.5 of 3.0 = 17% climbed, so the bar
+    # is 83% full and green — below the alarm band
     assert 'class="meter m-ok"' in h
     assert "WARMTH 0.50 / 3.00" in h
-    # THIRST 2.0 of 7.5 = 27%: amber — the same 25% band the #213
-    # alarm reads, so the reader's colour matches the seat's prompt
+    assert 'width:83.3%' in h
+    # THIRST 2.0 of 7.5 = 27% climbed: amber (the same 25% band the
+    # #213 alarm reads) with 73% of the bar left
     assert 'class="meter m-warn"' in h
     assert "THIRST 2.00 / 7.50" in h
-    assert 'width:26.7%' in h
+    assert 'width:73.3%' in h
     assert 'title="THIRST 2.00 of kill line 7.50 (26.67%)' in h
     # the ledger grid washes the same climb as cell heat
     assert 'class="num cond heat-warn">2.00' in h
