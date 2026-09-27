@@ -163,6 +163,12 @@ class RoundSnapshot:
     # of the holder, not inventory. The dashboard splits these out of
     # the holdings breakdown.
     conditions: list[str] = field(default_factory=list)
+    # Each condition's kill line (world_catalog's incapacitates_at,
+    # #213): the level at which the holder is incapacitated. The
+    # dashboard draws its condition meters against these — a climb
+    # reads as a bar filling toward the line. Conditions without one
+    # (or a world that predates the field) simply render no meter.
+    kill_lines: dict[str, str] = field(default_factory=dict)
     # The rendered audit-trail tail (§15.3): this round's readable world
     # log — the unattributed public facts, plus each dynasty's own events
     # as prose. Bounded by the round's own ticks; the dashboard renders
@@ -184,6 +190,7 @@ class RoundSnapshot:
             "dynasties": self.dynasties,
             "activity": self.activity,
             "conditions": self.conditions,
+            "kill_lines": self.kill_lines,
             "world_map": self.world_map,
         }
 
@@ -222,12 +229,13 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
               entries: dict[str, dict]) -> RoundSnapshot:
     market = mcps[0][1].call("market_prices")
     try:
-        conditions = sorted(
-            g["symbol"] for g in
-            mcps[0][1].call("world_catalog").get("goods", [])
-            if g.get("condition"))
+        catalog = mcps[0][1].call("world_catalog").get("goods", [])
+        conditions = sorted(g["symbol"] for g in catalog if g.get("condition"))
+        kill_lines = {g["symbol"]: g["incapacitates_at"] for g in catalog
+                      if g.get("condition") and g.get("incapacitates_at")}
     except McpError:
         conditions = []
+        kill_lines = {}
     # The audit-trail tail (§15.3): this round's rendered world log, read
     # back through the very surfaces that serve it (GET /activity and
     # entity_activity are the same render). Bounded by the round's own
@@ -265,6 +273,7 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
         events_by_type=resolved.get("events_by_type", {}),
         taken_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         conditions=conditions,
+        kill_lines=kill_lines,
         dynasties={d.name: _dynasty_view(mcp, d, entries.get(d.name))
                    for d, mcp in mcps},
         activity={"world": world, "dynasties": dyn_activity},

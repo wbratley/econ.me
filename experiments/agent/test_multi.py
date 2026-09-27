@@ -509,6 +509,11 @@ def test_snapshot_carries_the_audit_trail_tail(client, monkeypatch, tmp_path):
     snap = snapshots[0]
     assert set(snap["activity"]) == {"world", "dynasties"}
     assert set(snap["activity"]["dynasties"]) == set(NAMES)
+    # kill lines ride the same catalog read as the conditions list (#213):
+    # every incapacitating condition carries a numeric line — HUNGER and
+    # DISREPAIR in this frontier — and non-conditions never appear
+    assert set(snap["kill_lines"]) == set(snap["conditions"])
+    assert all(Decimal(v) > 0 for v in snap["kill_lines"].values())
     # the frontier world feeds LABOR each tick: the world log must say
     # so in prose (the 3a catalog names render — "Labor")
     world_text = " | ".join(r["text"] for r in snap["activity"]["world"])

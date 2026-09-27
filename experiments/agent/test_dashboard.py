@@ -105,3 +105,38 @@ def test_build_dashboard_live_wires_the_stream():
     assert "EventSource" in h and "__chatLine" in h
     # the live script routes says into the board AND the feeds
     assert "data-feed" in h and "chatLine" in h
+
+
+def _snap_with_kill_lines() -> dict:
+    """The stone-age shape: conditions with numeric kill lines (#213)
+    riding the snapshot — one healthy, one riding the alarm band."""
+    snap = _snap()
+    snap["conditions"] = ["WARMTH", "THIRST"]
+    snap["kill_lines"] = {"WARMTH": "3.0", "THIRST": "7.5"}
+    snap["dynasties"]["House Alpha"]["holdings"] += [
+        {"symbol": "THIRST", "quantity": "2.0"}]
+    return snap
+
+
+def test_condition_meters_draw_against_the_kill_line():
+    h = build_dashboard([_snap_with_kill_lines()], {"title": "t"})
+    # WARMTH 0.5 of 3.0 = 17%: green, below the alarm band
+    assert 'class="meter m-ok"' in h
+    assert "WARMTH 0.50 / 3.00" in h
+    # THIRST 2.0 of 7.5 = 27%: amber — the same 25% band the #213
+    # alarm reads, so the reader's colour matches the seat's prompt
+    assert 'class="meter m-warn"' in h
+    assert "THIRST 2.00 / 7.50" in h
+    assert 'width:26.7%' in h
+    assert 'title="THIRST 2.00 of kill line 7.50 (26.67%)' in h
+    # the ledger grid washes the same climb as cell heat
+    assert 'class="num cond heat-warn">2.00' in h
+
+
+def test_condition_meters_stay_quiet_without_kill_lines():
+    """A world (or a resumed pre-#213 snapshot) without kill lines
+    renders exactly as before: no meters, no heat, no crash."""
+    h = build_dashboard([_snap()], {"title": "t"})
+    assert '<div class="meter' not in h and "num cond heat-" not in h
+    # the old amber number cells still render
+    assert 'class="num cond">0.50' in h or 'num cond">0.50' in h
