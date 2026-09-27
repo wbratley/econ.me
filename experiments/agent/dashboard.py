@@ -44,6 +44,70 @@ def _fmt(d: Decimal) -> str:
     return f"{q:,}"
 
 
+# --- condition meters -------------------------------------------------
+#
+# #213 gave the world's conditions a numeric kill line and the alarm a
+# 25% trip point; these give the same climb to the reader. A condition
+# bar fills 0 -> incapacitates_at and takes its colour from the same
+# fraction the alarm reads: green is genuinely "the platform is
+# silent" territory, amber+ is the alarm band, red is dying now.
+
+def _cond_fraction(level: Decimal, kill: str) -> Decimal | None:
+    """level / kill line as a fraction — None when the line is absent
+    or unparsable (the bar simply does not draw)."""
+    try:
+        k = Decimal(str(kill))
+    except Exception:
+        return None
+    if k <= 0:
+        return None
+    return level / k
+
+
+def _cond_band(frac: Decimal) -> str:
+    if frac >= Decimal("0.75"):
+        return "crit"
+    if frac >= Decimal("0.50"):
+        return "hot"
+    if frac >= Decimal("0.25"):
+        return "warn"
+    return "ok"
+
+
+def _cond_bars(held: dict, kill_lines: dict) -> str:
+    """The state card's meter stack: one bar per condition that carries
+    a kill line, held level filling toward the line. A zero level draws
+    too — an empty green bar reads as full health, which is the scan
+    the reader wants (who is LOW)."""
+    rows = []
+    for sym in sorted(kill_lines):
+        frac = _cond_fraction(held.get(sym, Decimal("0")), kill_lines[sym])
+        if frac is None:
+            continue
+        q = held.get(sym, Decimal("0"))
+        kill = Decimal(str(kill_lines[sym]))
+        band = _cond_band(frac)
+        pct = min(max(frac, Decimal("0")), Decimal("1")) * 100
+        title = (f"{_esc(sym)} {_fmt(q)} of kill line {_fmt(kill)} "
+                 f"({_fmt(frac * 100)}%) — incapacitation at 100%")
+        rows.append(
+            f'<div class="meter m-{band}" title="{title}">'
+            f'<div class="meter-fill" style="width:{pct:.1f}%"></div>'
+            f'<span class="meter-lab">{_esc(sym)} {_fmt(q)} / {_fmt(kill)}'
+            "</span></div>")
+    return ("".join(rows) and '<div class="condmeters">' + "".join(rows)
+            + "</div>") or ""
+
+
+def _heat_cell_class(sym: str, q: Decimal, kill_lines: dict) -> str:
+    """The ledger grids' cell colouring: same bands, as a background
+    wash on the number, so the round-by-round climb reads as heat."""
+    if q == 0:
+        return ""
+    frac = _cond_fraction(q, kill_lines.get(sym))
+    return f" heat-{_cond_band(frac)}" if frac is not None else ""
+
+
 def _hms(seconds) -> str:
     """75 -> '1:15', 3725 -> '1:02:05' — the run clock, for the header."""
     if seconds is None:
@@ -325,6 +389,9 @@ def _house_summaries(snapshots: list[dict]) -> str:
     if not names:
         return ""
     conditions = sorted({c for s in snapshots for c in s.get("conditions", [])})
+    # kill lines are static per world; the newest snapshot's copy serves
+    # every row (resumed pre-#213 runs simply carry none — no wash).
+    kl = (snapshots[-1].get("kill_lines") or {}) if snapshots else {}
 
     def held(view: dict) -> dict[str, Decimal]:
         return {h["symbol"]: Decimal(h["quantity"])
@@ -367,6 +434,7 @@ def _house_summaries(snapshots: list[dict]) -> str:
             for sym in cond_syms:
                 q = h.get(sym, Decimal("0"))
                 cls = "num cond" if q != 0 else "num cond quiet"
+                cls += _heat_cell_class(sym, q, kl)
                 cell = _fmt(q) if q != 0 else "·"
                 row.append(f'<td class="{cls}">{cell}</td>')
             parts.append("".join(row) + "</tr>")
@@ -571,6 +639,7 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
                 for h in view.get("holdings", [])}
 
     conditions = sorted({c for s in snapshots for c in s.get("conditions", [])})
+    kl = (snapshots[-1].get("kill_lines") or {}) if snapshots else {}
     h = held(last)
     money = dynasty_money(last)
     food = next((fd.get("satisfaction") for fd in last.get("needs", [])
@@ -606,7 +675,9 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
              + (f' · at <b>{_esc(place)}</b>' if place else "")
              + '</p><p>' + chips
              + (f' <span class="quiet">conditions:</span> {condchips}'
-                if condchips else "") + "</p></div>",
+                if condchips else "") + "</p>"
+             + _cond_bars(h, kl)
+             + "</div>",
              '<div class="hsum-scroll"><table class="grid">',
              '<tr><th>Round</th><th>Money</th>'
              + "".join(f"<th>{_esc(s)}</th>" for s in commodity)
@@ -621,7 +692,8 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
             row.append(f'<td class="num">{_fmt(q) if q else "·"}</td>')
         for sym in cond_syms:
             q = hh.get(sym, Decimal("0"))
-            row.append(f'<td class="num cond">{_fmt(q) if q else "·"}</td>')
+            row.append(f'<td class="num cond{_heat_cell_class(sym, q, kl)}">'
+                       f'{_fmt(q) if q else "·"}</td>')
         parts.append("".join(row) + "</tr>")
     parts.append("</table></div>")
 
@@ -1042,6 +1114,23 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
            margin:2px 4px 2px 0;font:12px ui-monospace,monospace;
            color:#c7cdd9}
       .chip.cond{color:#fbbf24;border-color:#3a2a10}
+      .condmeters{margin:8px 0 2px}
+      .meter{position:relative;height:20px;background:#171a21;
+           border:1px solid #2a2f3a;border-radius:6px;margin:4px 0;
+           max-width:420px;overflow:hidden}
+      .meter-fill{height:100%}
+      .m-ok .meter-fill{background:#15803d}
+      .m-warn .meter-fill{background:#b45309}
+      .m-hot .meter-fill{background:#c2410c}
+      .m-crit .meter-fill{background:#b91c1c}
+      .m-crit{border-color:#7f1d1d;box-shadow:0 0 0 1px #7f1d1d55}
+      .meter-lab{position:absolute;inset:0;display:flex;align-items:center;
+           justify-content:center;font:11.5px ui-monospace,monospace;
+           color:#e5e7eb;text-shadow:0 1px 2px #000d;pointer-events:none}
+      td.heat-ok{background:rgba(21,128,61,.12)}
+      td.heat-warn{background:rgba(180,83,9,.18)}
+      td.heat-hot{background:rgba(194,65,12,.26)}
+      td.heat-crit{background:rgba(185,28,28,.34)}
       .card{background:#141821;border:1px solid #2a2f3a;border-radius:10px;
            padding:12px 16px;margin:10px 0;max-width:920px}
       .card h3{margin:0 0 8px}
