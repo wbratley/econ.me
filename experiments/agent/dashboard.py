@@ -918,18 +918,18 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
         f'<div id="pane-h{i}" class="tabpane">{_house_tab(snapshots, n)}</div>'
         for i, n in enumerate(names))
 
-    # live-run header: when meta carries a status, the page says where
-    # the run is and (while live) reloads itself, so a served dashboard
-    # watched in a browser advances round by round on its own.
-    refresh = (f'<meta http-equiv="refresh" content="{int(meta["refresh_s"])}">'
-               if meta.get("refresh_s") else "")
+    # live-run header: while live the SSE stream keeps the square and
+    # the house feeds current between rounds — the page does NOT reload
+    # itself anymore (the 10s meta refresh fought the reader for the
+    # scroll bar; aggregates refresh on a manual reload, liveness rides
+    # the stream).
     status = ""
     if meta.get("status") == "live":
         status = (f'<p class="meta"><span class="live">● LIVE</span> '
                   f'round {meta.get("round", len(snapshots))} of '
                   f'{meta.get("rounds_total", "?")} · '
-                  f'elapsed {_hms(meta.get("elapsed_s"))} · page refreshes '
-                  f'every {int(meta["refresh_s"])}s</p>')
+                  f'elapsed {_hms(meta.get("elapsed_s"))} · live via SSE,'
+                  ' reload for the aggregates</p>')
     elif meta.get("status") == "complete":
         status = (f'<p class="meta"><span class="done">✓ complete</span> '
                   f'{len(snapshots)} rounds in '
@@ -1056,7 +1056,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       .fl-death{color:#f87171}.fl-quiet{color:#8b93a3}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
-{refresh}<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
+<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
 </head><body>
 <h1>{_esc(meta.get("title", "Dynasty run"))}</h1>
 <p class="meta">{houses}</p>

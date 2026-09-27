@@ -586,7 +586,6 @@ def main(argv=None) -> int:
                 "status": status,
             }
             if status == "live":
-                meta["refresh_s"] = 10
                 # the live panel's stream target: the world server —
                 # only its PORT is used (CORS is open, §9.1 — the stream
                 # is public facts); the browser supplies the hostname, so

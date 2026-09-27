@@ -437,12 +437,13 @@ def test_dashboard_tells_the_story(client, monkeypatch, tmp_path):
     assert "(no data)" in page            # prices with zero trades: quiet, not broken
     assert 'http-equiv="refresh"' not in page   # a finished run never reloads
     # live header: mid-run meta carries a status the page wears as a
-    # badge + auto-refresh, so a served dashboard advances on its own
+    # badge; liveness rides the SSE stream — the page never reloads
+    # itself (the reader keeps their scroll and their place)
     live = build_dashboard(snapshots, {
         "title": "live run", "ticks_per_round": 2, "generated": "now",
         "status": "live", "round": 1, "rounds_total": 2,
         "elapsed_s": 75, "refresh_s": 10})
-    assert 'http-equiv="refresh" content="10"' in live
+    assert 'http-equiv="refresh"' not in live   # legacy meta key: ignored
     assert "LIVE" in live and "round 1 of 2" in live and "1:15" in live
     # run clock: average pace and (while live) an ETA off that pace
     assert "avg 1:15/round" in live and "ETA" in live
@@ -984,13 +985,12 @@ def test_nim_run_clock_mode_end_to_end(tmp_path):
 
 def _live_meta(status, **extra):
     """The meta nim_run's write_dash would carry for a 2-of-4 round run
-    at the given status (live_url + refresh only while live, exactly
-    as write_dash adds them)."""
+    at the given status (live_url only while live, exactly as write_dash
+    adds it)."""
     meta = {"title": "live run", "ticks_per_round": 2, "generated": "now",
             "status": status, "round": 2, "rounds_total": 4,
             "elapsed_s": 30.0}
     if status == "live":
-        meta["refresh_s"] = 10     # the LIVE header reads it
         meta["live_url"] = "http://127.0.0.1:8925/"
     meta.update(extra)
     return meta
