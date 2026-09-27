@@ -59,8 +59,20 @@ It is also the payoff of the scripting arc (docs/scripting.md):
    behaviour is resubmitted as a rollback and the fault fed back; only a
    first-round submission (nothing to fall back on) accepts with the
    warning riding forward
-4. **journal** — one JSONL line per cycle (attempts, accepted,
-   warnings, source sha, model, and — on a refused round — the head of
+4. **voice** — the reply may OPEN with one `SAY: <text>` line (≤256
+   chars, truncated at the cap client-side): peeled BEFORE the action
+   channel is read — so SAY+KEEP keeps the behaviour AND speaks — and
+   performed directly as the entity via the `perform_action` channel
+   (#200's allowlist: the controller's voice, not the script's; one
+   say per entity per tick across both channels). Fires even on a
+   refused round: the words were said whatever happened to the
+   script. Best-effort — a refused say journals (`say_status`:
+   `applied`/`queued`/`refused: …`) and never kills the round. The
+   last reply is the word of record: a corrected reply without a SAY
+   line retracts it
+5. **journal** — one JSONL line per cycle (attempts, accepted,
+   warnings, source sha, model, say + say_status, and — on a refused
+   round — the head of
    the last raw reply: failed attempts stopped evaporating; on an
    accepted round whose extraction had a choice to make, a 200-char
    reply head plus the extractor's decision — candidate count, winner
