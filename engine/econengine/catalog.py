@@ -246,6 +246,13 @@ def catalog_state(session: Session) -> dict:
                 # condition good sheds quantity as recovery/relapse and
                 # carries held modifiers -- consumers (snapshots,
                 # dashboards) split it out of commodity holdings.
+                # The kill line as its own number too (run 48's lever 3:
+                # the agent loop's condition alarm reads it without
+                # parsing the effect prose). None for goods that never
+                # incapacitate.
+                "incapacitates_at": (str(g.incapacitates_at)
+                                     if g.incapacitates_at is not None
+                                     else None),
                 "effect": good_effect(g, needs_by_condition),
             }
             for g in goods
