@@ -113,6 +113,22 @@ def system_prompt(libraries: dict, entity_id: str, edit_mode: bool = False,
             "  must change, never for a local fix\n"
             "- the single line KEEP, to carry the current behaviour forward\n"
             "  unchanged")
+    # The controller's voice (#200's perform_action, wired to the seat):
+    # rides BOTH grammars, stated as an optional opening line — the one
+    # channel of agency that does not ride the script.
+    reply_rules += (
+        "\n\nYour reply may also OPEN with one spoken line, before any\n"
+        "KEEP, edit blocks, or code:\n\n"
+        "    SAY: up to 256 characters of speech\n\n"
+        "The SAY line is performed directly as your entity — the\n"
+        "controller's voice, not the script's (one say per entity per\n"
+        "tick; if the behaviour script also speaks that tick, the earlier\n"
+        "submit wins). Speech is loud: every body at your place hears it\n"
+        "next tick — including what hunts in the dark. Use it for what\n"
+        "the running brain cannot say this round: a standing offer, a\n"
+        "warning, a boast, a truth or a lie. A reply of SAY + KEEP keeps\n"
+        "the behaviour AND speaks. A SAY line anywhere but the opening\n"
+        "line is not a say; it is action text.")
     text = f"""\
 You are the mind of entity {entity_id} in a batched simulated economy. You
 do NOT act tick by tick: your whole agency is one Lua BEHAVIOUR script
@@ -442,6 +458,36 @@ def _parse_patches(text: str) -> list[tuple[str, str]]:
     return [(m.group(1), m.group(2)) for m in _PATCH_RE.finditer(text)]
 
 
+# The controller's voice (#200's perform_action allowlist, wired to the
+# seats): a reply may OPEN with one spoken line, peeled before the
+# action channel is read. The engine's own say cap, imported so the
+# client can never drift from the server's refusal edge.
+from econengine.scripting import SAY_TEXT_CAP as _SAY_CAP
+_SAY_RE = re.compile(r"^SAY:[ \t]*(\S.*)$")
+
+
+def _peel_say(body: str) -> tuple[str | None, str]:
+    """Split the reply's opening SAY: line off the action text.
+
+    Only the FIRST line counts: a SAY: deeper in the reply is inside
+    the action (usually code), and the parser must never eat code.
+    Returns (say_text_or_None, rest). An overlong line is truncated
+    to the engine cap -- the voice must not die on a length refusal
+    the client could see coming. "SAY:" with nothing after it is not
+    a say (and stays in the action text, where the action channel's
+    own refusals will name it)."""
+    lines = body.splitlines()
+    if not lines:
+        return None, body
+    m = _SAY_RE.match(lines[0].strip())
+    if not m:
+        return None, body
+    say = m.group(1).strip()
+    if len(say) > _SAY_CAP:
+        say = say[:_SAY_CAP]
+    return say, "\n".join(lines[1:]).lstrip("\n")
+
+
 def _closest_region(source: str, search: str,
                      window: int = 12, cap: int = 18) -> str:
     """The region of the current behaviour most like the missed SEARCH —
@@ -705,6 +751,8 @@ class AgentLoop:
 
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action, raw, extractor = "", "rewrite", "", None
+        say_line, say_status = None, None   # the controller's voice, if
+        # any reply this round opened with one (the last reply wins)
         sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
                                 manual=self.manual, catalog=self.catalog)
         transcript: list[dict] = []      # prompts + replies + platform
@@ -735,7 +783,16 @@ class AgentLoop:
             # 44K-think round; the slot wall is the failure class). The
             # code is the reply of record — deliberation is not.
             body = strip_think(raw)
-            transcript.append({"user": usr_text, "reply": body})
+            # The voice is peeled BEFORE the action channel is read, so
+            # SAY: + KEEP keeps the behaviour AND speaks, and a SAY line
+            # can never leak into a patch or the script source. Each
+            # attempt's reply replaces the round's say (a corrected
+            # reply is the word of record; one without a SAY line
+            # retracts it). The diary embeds the think-peeled reply
+            # verbatim, say line included.
+            full = body
+            say_line, body = _peel_say(body)
+            transcript.append({"user": usr_text, "reply": full})
 
             # action 1: KEEP — carry the behaviour forward verbatim, no
             # submission at all. Readying up without gambling a rewrite.
@@ -867,6 +924,21 @@ class AgentLoop:
                     transcript.append(
                         {"platform": f"submission refused by lint: {last_error}"})
 
+        # The voice is submitted after the action settles, BEFORE the
+        # diary: the words were said this round whatever happened to the
+        # script (a refused round still spoke — the reply existed). Best
+        # effort, like the diary: a refused say must never kill the
+        # round; it journals and moves on.
+        if say_line:
+            try:
+                res = self.mcp.call(
+                    "perform_action",
+                    {"entity_id": eid, "action": "say",
+                     "params": {"text": say_line}})
+                say_status = str((res or {}).get("status") or "spoken")
+            except McpError as exc:
+                say_status = f"refused: {exc}"
+
         # The strategy diary: one extra short call, same mind, after the
         # decision stands. Failure degrades to silence — the diary must
         # never be the reason a round dies.
@@ -909,6 +981,8 @@ class AgentLoop:
             "edit_mode": self.edit_mode,   # run-47 forensics: SEARCH-miss
                                             # rounds were inferred from
                                             # refusal strings; now a field
+            "say": say_line,
+            "say_status": say_status,   # spoken/queued, or refused: ...
             "refusal": last_error,
             "warnings": warnings,
             "source_sha": hashlib.sha256(source.encode()).hexdigest()[:16],

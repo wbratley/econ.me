@@ -52,6 +52,12 @@ Reply with exactly one of:
   Each SEARCH must match exactly, whitespace included; blocks apply in
   order. (Edit blocks are only available when the driver runs with
   `--edit-mode`.)
+- **A `SAY:` line** (optional, always the OPENING line, never both
+  mid-reply and never inside code) — up to 256 characters of speech,
+  performed directly as your entity: the controller's voice, not the
+  script's. Loud — every body at your place hears it next tick,
+  including what hunts in the dark. `SAY:` + `KEEP` keeps the
+  behaviour AND speaks.
 
 In `assisted` mode an **empty** response or `OK` approves the embedded
 draft verbatim; anything else replaces it.

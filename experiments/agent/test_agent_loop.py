@@ -31,7 +31,7 @@ from experiments.agent.llm import (
 )
 from experiments.agent.loop import (
     AgentLoop, McpClient, McpError, _apply_edits, _closest_region,
-    _parse_patches, system_prompt,
+    _parse_patches, _peel_say, system_prompt,
     user_prompt,
 )
 from experiments.agent.run import run_cycles
@@ -480,6 +480,103 @@ def test_system_prompt_offers_the_three_actions(client):
     # edits first: blocks are offered before the whole-script rewrite
     assert (prompt_edit.index("<<<<<<< SEARCH")
             < prompt_edit.index("complete Lua source"))
+
+
+# ===========================================================================
+# The controller's voice — SAY rides the reply (lever 11)
+# ===========================================================================
+
+def test_peel_say_reads_the_opening_line_only():
+    # none: the body is untouched
+    say, rest = _peel_say("KEEP")
+    assert say is None and rest == "KEEP"
+    say, rest = _peel_say(CLEAN)
+    assert say is None and rest == CLEAN
+    # SAY + KEEP: the voice peels off, the action channel sees bare KEEP
+    say, rest = _peel_say("SAY: fish at the bank, come trade\nKEEP")
+    assert say == "fish at the bank, come trade"
+    assert rest == "KEEP"
+    # SAY + script: the rest is the script, whole
+    say, rest = _peel_say(f"SAY: hold the fire\n{CLEAN}")
+    assert say == "hold the fire" and rest == CLEAN
+    # leading whitespace on the line is tolerated (the word, not the column)
+    say, _ = _peel_say("  SAY: firelit\nKEEP")
+    assert say == "firelit"
+
+
+def test_peel_say_ignores_deep_lines_and_empty_text():
+    # a SAY deeper in the reply is action text (usually code) — the
+    # parser must never eat into the script
+    body = f"{CLEAN}\nSAY: not the voice"
+    say, rest = _peel_say(body)
+    assert say is None and rest == body
+    # empty after the colon is not a say — it stays action text
+    say, rest = _peel_say("SAY:\nKEEP")
+    assert say is None and rest == "SAY:\nKEEP"
+
+
+def test_peel_say_truncates_to_the_engine_cap():
+    long = "x" * 600
+    say, rest = _peel_say(f"SAY: {long}\nKEEP")
+    assert len(say) == 256 and say == "x" * 256
+    assert rest == "KEEP"           # the truncation must not eat the action
+
+
+def test_the_voice_speaks_on_an_accepted_rewrite(client):
+    """The say rides the round's reply: performed directly via the
+    perform_action channel (#200 substrate), journaled beside the
+    script it shared the reply with."""
+    lp, _ = loop(client, [f"SAY: boar at the thicket, mind your fire\n{CLEAN}"])
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["action"] == "rewrite"
+    assert entry["say"] == "boar at the thicket, mind your fire"
+    assert entry["say_status"] == "applied"   # clock off: immediate
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN     # the script is the script, say apart
+
+
+def test_say_plus_keep_speaks_without_touching_the_behaviour(client):
+    """The one channel of agency that does not ride the script: a KEEP
+    round that still speaks — set_behaviour is never called."""
+    lp, _ = loop(client, ["SAY: holding the fire tonight\nKEEP"])
+    good = lp.mcp.call("set_behaviour",
+                       {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert entry["action"] == "keep" and entry["kept_old"]
+    assert entry["say"] == "holding the fire tonight"
+    assert entry["say_status"] == "applied"
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["id"] == good["id"] and got["source"] == "-- healthy"
+
+
+def test_a_refused_round_still_spoke(client):
+    """The words were said whatever happened to the script: a round that
+    never lands a submission still fires the voice (run reality —
+    lint refusals are the common round, not the exception)."""
+    lp, model = loop(client, ["SAY: I will fix it\nnot lua at all", CLEAN])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
+    entry = lp.cycle()
+    assert entry["accepted"]          # second attempt lands
+    assert entry["attempts"] == 2
+    # the LAST reply is the word of record: attempt 2 had no SAY line
+    assert entry["say"] is None and entry["say_status"] is None
+    # now a round where every reply is refused — the voice still fires
+    lp2, _ = loop(client, ["SAY: the wolves are circling\nstill not lua"] * 3)
+    lp2.mcp.call("set_behaviour",
+                 {"entity_id": lp2.ensure_entity(), "source": "-- healthy"})
+    entry2 = lp2.cycle()
+    assert not entry2["accepted"]
+    assert entry2["say"] == "the wolves are circling"
+    assert entry2["say_status"] == "applied"
+
+
+def test_system_prompt_offers_the_voice_in_both_grammars(client):
+    for edit in (False, True):
+        prompt = system_prompt({"std": {"source": "-- std"}}, "e1",
+                               edit_mode=edit)
+        assert "SAY: up to 256 characters of speech" in prompt
+        assert "controller's voice" in prompt
 
 
 class FlakyProvider:
