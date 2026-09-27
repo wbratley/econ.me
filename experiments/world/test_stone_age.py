@@ -1243,6 +1243,72 @@ def test_the_salt_shed_binds_the_post_alone(session):
     assert proc.recipe.code == "SALT_MEAT"
 
 
+def test_the_caravan_restocks_a_bare_shelf(session):
+    """Run 48's faucet death: three runs straight the food shelf went
+    EMPTY mid-game while coin piled at a starving counter -- the houses
+    kept their meat, the shed had nothing to salt, and coin could not
+    become calories at ANY price. The famine rung: a bare never-rot
+    shelf and an idle back room send the runner -- two logs, two jerky
+    -- and the batch is priced one rung UP the ladder (dear calories
+    in a hungry world)."""
+    create_content(session)
+    _no_wolves(session)
+    post = _post(session)
+    markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
+    markets.adjust_holding(session, post, "WOOD", Decimal("4"))
+    _run(session, 8)      # caravan is 6 ticks from a bare shelf
+    done = [e for e in _events(session, "process_completed")
+            if e["recipe"] == "RESTOCK_CARAVAN"]
+    assert len(done) == 1
+    assert Decimal(str(done[0]["outputs"]["JERKY"])) == Decimal("2")
+    assert _hold(session, post.id, "JERKY") == Decimal("2")  # never rots
+    # the ladder: 2.00 + one famine rung
+    state = _post_script(session).state
+    assert state["caravans"] == 1
+    assert Decimal(str(state["ask"]["JERKY"])) == Decimal("2.75")
+    ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
+    assert [o.limit_price for o in ask] == [Decimal("2.75")]
+
+
+def test_the_caravan_waits_for_the_cheaper_rung(session):
+    """The caravan is the LAST resort: meat the forest sells is salted
+    first (4 ticks, no wood), and while racks are busy no runner
+    leaves -- the hills feed the counter only what the forest will
+    not."""
+    create_content(session)
+    _no_wolves(session)
+    post = _post(session)
+    markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
+    markets.adjust_holding(session, post, "WOOD", Decimal("4"))
+    markets.adjust_holding(session, post, "MEAT", Decimal("4"))
+    _run(session, 2)
+    started = [e for e in _events(session, "start_process")
+               if e.get("params", {}).get("recipe")
+               in ("SALT_MEAT", "RESTOCK_CARAVAN")]
+    recipes = [e["params"]["recipe"] for e in started]
+    assert recipes.count("SALT_MEAT") == 2      # both racks busy
+    assert "RESTOCK_CARAVAN" not in recipes     # the runner waits
+    assert _hold(session, post.id, "WOOD") == Decimal("4")  # crates unspent
+
+
+def test_the_caravan_binds_the_post_alone(session):
+    """The famine rung is the merchant's edge too: a house at the POST
+    place with logs in hand cannot bind the OWNER shed -- houses buy
+    the dear calories, they do not import them."""
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Neighbor")
+    _at(session, house, "POST")
+    markets.adjust_holding(session, house, "WOOD", Decimal("4"))
+    with pytest.raises(ValueError, match="SALT_SHED"):
+        production.start_process(session, house, "RESTOCK_CARAVAN")
+    post = _post(session)
+    markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
+    markets.adjust_holding(session, post, "WOOD", Decimal("2"))
+    proc = production.start_process(session, post, "RESTOCK_CARAVAN")
+    assert proc.recipe.code == "RESTOCK_CARAVAN"
+
+
 def test_post_reanchors_jerky_off_its_meat_buys(session):
     """The restock is PRICED off the post's own buy fills: the jerky
     ask follows twice the raw cost the counter actually paid (the

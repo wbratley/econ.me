@@ -27,6 +27,21 @@
 -- preservation is what a house pays for). The counter is a
 -- transform now, not a faucet.
 --
+-- THE FAMINE RUNG (run 48, lever 2): three runs straight the shelf
+-- went bare anyway -- the houses kept their meat for their own
+-- bellies, the shed had nothing to salt, and coin could not become
+-- calories at ANY price (28.32 idle coin at a starving counter).
+-- When the never-rot staple is gone and the back room is idle, the
+-- post sends a TRADE CARAVAN: two logs for crates and fuel, a
+-- runner over the hills, two jerky back -- still a transform (the
+-- wood is bought with coin houses paid for food), but priced on a
+-- LADDER: every caravan's completion walks the jerky ask one rung
+-- up (+0.75, clamped to the band) -- dear calories in a hungry
+-- world -- while real supply (a MEAT fill, a salt batch) anchors it
+-- back down. The ladder climbs in famine and resets when the
+-- forest flows; between rungs the quiet drift eases it toward
+-- trade. Late coin always has something to buy, at SOME price.
+--
 -- It haggles like a person would:
 --   sold food            -> ask +5%          (demand is real, charge it)
 --   bought goods         -> bid -5%          (sellers are eager, pay less)
@@ -131,6 +146,18 @@ for _, e in ipairs(ctx.events or {}) do
     S.ask.JERKY = r2(math.min(math.max((S.cost_meat or 1.00) * 2,
                                        1.50), ASK_CAP))
     S.quiet["sell_JERKY"] = 0
+  elseif e.type == "process_completed" and e.recipe == "RESTOCK_CARAVAN"
+         and e.entity_id == ctx.entity.id then
+    -- The runner is back (run 48's famine rung): this batch starts a
+    -- rung higher -- famine pricing, honest because caravans only
+    -- leave a BARE shelf (the demand was proven by selling it bare).
+    -- The SALT_MEAT anchor (above) walks the ask back down when real
+    -- meat returns; quiet drift eases it toward trade between rungs.
+    S.caravans = (S.caravans or 0) + 1
+    S.ask.JERKY = r2(math.min(math.max(S.ask.JERKY + 0.75,
+                                       (S.cost_meat or 1.00) * 2),
+                               ASK_CAP))
+    S.quiet["sell_JERKY"] = 0
   elseif e.type == "place_order" and e.status == "applied"
          and e.order_id then
     S.ids[e.params.side .. "_" .. e.params.symbol] = e.order_id
@@ -149,6 +176,23 @@ end
 while std.holding_qty("MEAT") >= 2 and salting < 2 do
   ctx.action.start_process("SALT_MEAT")
   salting = salting + 1
+end
+
+-- 2c. The famine rung (run 48, lever 2): the never-rot staple is
+--     GONE, the shed has no meat worth a rack and no batch out, and
+--     the crates are on hand -- send the runner over the hills. The
+--     last resort, in order: salt what the forest sells first (the
+--     cheaper rung -- 4 ticks, no wood), caravan only what the
+--     forest will not. Two logs come back as two jerky, priced one
+--     rung up (see the completion handler above).
+local caravan_out = false
+for _, p in ipairs(ctx.processes or {}) do
+  if p.recipe == "RESTOCK_CARAVAN" then caravan_out = true end
+end
+if std.holding_qty("JERKY") == 0 and salting == 0
+   and std.holding_qty("MEAT") < 2 and not caravan_out
+   and std.holding_qty("WOOD") >= 2 then
+  ctx.action.start_process("RESTOCK_CARAVAN")
 end
 
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward
