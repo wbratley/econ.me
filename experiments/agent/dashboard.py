@@ -6,15 +6,18 @@ whole story is there. Data view doctrine follows the platform's: every
 number is what the dynasties themselves could see on their own MCP
 surface (§13 parity), which is exactly what `multi.run_rounds` snapshots.
 
-Sections: final standings; the map — places, roads, and who stands
+Sections: the square (a chat board — every spoken line, live), one
+tab per house (state card, holdings ledger, their feed), and the
+world tab — final standings; the map — places, roads, and who stands
 where, round by round; per-house holdings &amp; conditions by round;
 wealth / money / prices / needs charts over
 rounds; a round-by-round activity table (attempts, refusals, the round's
 event mix); and per-dynasty strategy panels — the latest behaviour
 source with the sha trail of every rewrite, so "what is House Llama
-doing?" is a scroll, not a query. While the run is live (and the
-harness passed its world URL), a live panel rides the world's SSE
-stream: tick-by-tick says/fights/deaths between the round rewrites.
+doing?" is a tab, not a query. While the run is live (and the
+harness passed its world URL), the SSE stream appends says, fights,
+deaths and bounced orders to the square and the house feeds between
+the round rewrites.
 """
 
 from __future__ import annotations
@@ -513,6 +516,197 @@ def _strategy(snapshots: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# The chat board + the tabs (v2: the square, the houses, the world)
+# ---------------------------------------------------------------------------
+
+def _chat_history(snapshots: list[dict]) -> list[dict]:
+    """The say ledger: every spoken line, once, attributed. The world
+    log carries each say twice over — the speaker's own row plus a
+    "(heard)" row in every witness's log (§15.6) — so the board
+    dedupes on (tick, text) and attributes from the own row when one
+    exists. The post's merchant bark never has an own row (no dynasty
+    journals it): a say whose text opens with POST: is the counter
+    speaking. Ascending, capped at the last 400 lines."""
+    seen: set[tuple[int, str]] = set()
+    out: list[dict] = []
+    for snap in snapshots:
+        act = snap.get("activity") or {}
+        rows: list[tuple[int, str, str, bool]] = []
+        own: dict[tuple[int, str], str] = {}
+        for house, rlist in (act.get("dynasties") or {}).items():
+            for r in (rlist or []):
+                if "says:" not in r["text"]:
+                    continue
+                heard = bool(r.get("witnessed"))
+                rows.append((r["tick"], house, r["text"], heard))
+                if not heard:
+                    own[(r["tick"], r["text"])] = house
+        for tick, house, text, heard in rows:
+            key = (tick, text)
+            if key in seen:
+                continue
+            speaker = ("" if heard else house) or own.get(key, "")
+            m = re.match(r'says: "(.*)"$', text, re.S)
+            body = m.group(1) if m else text
+            if not speaker:
+                speaker = "POST" if body.startswith("POST") else "—"
+            seen.add(key)
+            out.append({"t": tick, "who": speaker, "text": body,
+                        "k": "say"})
+    out.sort(key=lambda r: r["t"])
+    return out[-400:]
+
+
+def _house_tab(snapshots: list[dict], name: str) -> str:
+    """One house, one tab: the state card (what they hold, where they
+    stand, how they burn), the per-round holdings ledger, and the
+    house's own feed — its doings plus what it heard (§15.6), oldest
+    at top so the live tail appends in reading order."""
+    last = snapshots[-1]["dynasties"][name]
+    lb = last.get("leaderboard") or {}
+    eid = str((last.get("entry") or {}).get("entity") or "")
+
+    def held(view: dict) -> dict[str, Decimal]:
+        return {h["symbol"]: Decimal(h["quantity"])
+                for h in view.get("holdings", [])}
+
+    conditions = sorted({c for s in snapshots for c in s.get("conditions", [])})
+    h = held(last)
+    money = dynasty_money(last)
+    food = next((fd.get("satisfaction") for fd in last.get("needs", [])
+                 if fd.get("need") == "FOOD"), None)
+    place = ""
+    for s in reversed(snapshots):
+        wm = s.get("world_map") or {}
+        row = next((x for x in wm.get("entities", [])
+                    if x.get("name") == name), None)
+        if row:
+            place = str(row.get("place") or "")
+            break
+    inv = sorted((s, q) for s, q in h.items()
+                 if q != 0 and s not in conditions and s != "COIN")
+    conds = sorted((s, q) for s, q in h.items()
+                   if q != 0 and s in conditions)
+    chips = " ".join(f'<span class="chip">{_fmt(q)} {_esc(s)}</span>'
+                     for s, q in inv) or '<span class="quiet">empty</span>'
+    condchips = (" ".join(f'<span class="chip cond">{_esc(s)} {_fmt(q)}</span>'
+                          for s, q in conds))
+
+    commodity = sorted({sym for s in snapshots
+                        for sym, q in held(s["dynasties"][name]).items()
+                        if sym not in conditions and sym != "COIN" and q != 0})
+    cond_syms = sorted({sym for s in snapshots
+                        for sym, q in held(s["dynasties"][name]).items()
+                        if sym in conditions and q != 0})
+    parts = [f'<div class="card"><h3>{_esc(name)} '
+             f'<span class="quiet">{_esc(last.get("model", ""))}</span></h3>'
+             f'<p>status <b>{_esc(lb.get("status", "?"))}</b>'
+             f' · money <b class="num">{_fmt(money)}</b>'
+             + (f' · FOOD <b>{food}</b>' if food is not None else "")
+             + (f' · at <b>{_esc(place)}</b>' if place else "")
+             + '</p><p>' + chips
+             + (f' <span class="quiet">conditions:</span> {condchips}'
+                if condchips else "") + "</p></div>",
+             '<div class="hsum-scroll"><table class="grid">',
+             '<tr><th>Round</th><th>Money</th>'
+             + "".join(f"<th>{_esc(s)}</th>" for s in commodity)
+             + "".join(f'<th class="cond-h">{_esc(s)}</th>' for s in cond_syms)
+             + "</tr>"]
+    for snap in snapshots:
+        hh = held(snap["dynasties"][name])
+        row = [f"<tr><td>{snap['round']}</td>",
+               f'<td class="num">{_fmt(dynasty_money(snap["dynasties"][name]))}</td>']
+        for sym in commodity:
+            q = hh.get(sym, Decimal("0"))
+            row.append(f'<td class="num">{_fmt(q) if q else "·"}</td>')
+        for sym in cond_syms:
+            q = hh.get(sym, Decimal("0"))
+            row.append(f'<td class="num cond">{_fmt(q) if q else "·"}</td>')
+        parts.append("".join(row) + "</tr>")
+    parts.append("</table></div>")
+
+    feed: list[tuple[int, str, bool]] = []
+    for snap in snapshots:
+        for r in ((snap.get("activity") or {}).get("dynasties")
+                  or {}).get(name) or []:
+            feed.append((r["tick"], r["text"], bool(r.get("witnessed"))))
+    feed.sort(key=lambda t: t[0])
+    feed = feed[-400:]
+    feed_html = "".join(
+        f'<div class="feed-line{" fl-heard" if hrd else ""}">'
+        f"t{t} · {_esc(x)}</div>" for t, x, hrd in feed
+    ) or '<div class="feed-line quiet">a quiet house</div>'
+    attr = f' data-feed="{_esc(eid)}"' if eid else ""
+    parts.append('<h3>Their round — own doings and what they heard</h3>'
+                 f'<div class="feed"{attr}>{feed_html}</div>')
+    return "".join(parts)
+
+
+# Client-side, literal except for two injected values (the seeded chat
+# history and the speaker→colour map) — a module-level template so the
+# JS stays readable without f-string brace-escaping. It runs on every
+# page (live or finished): the board renders the embedded history, and
+# the live script (when present) appends through window.__chatLine.
+_CHAT_JS = """
+(function () {
+  var CHAT = __CHAT__;
+  var COLORS = __COLORS__;
+  var board = document.getElementById('chat-log');
+  if (!board) return;
+  function stamp(t) {
+    var h = (t - 1) % 24, d = Math.floor((t - 1) / 24) + 1;
+    return 'd' + d + ' h' + String(h).padStart(2, '0');
+  }
+  function line(o) {
+    var near = board.scrollHeight - board.scrollTop
+             - board.clientHeight < 60;
+    var d = document.createElement('div');
+    d.className = 'chat-line ' + (o.kind || 'say');
+    var s = document.createElement('span');
+    s.className = 'chat-stamp';
+    s.textContent = stamp(o.t || 0);
+    d.appendChild(s);
+    if (o.who) {
+      var w = document.createElement('span');
+      w.className = 'chat-who ' + (COLORS[o.who] || 'cx');
+      w.textContent = o.who;
+      d.appendChild(w);
+    }
+    var x = document.createElement('span');
+    x.className = 'chat-text';
+    x.textContent = o.text || '';
+    d.appendChild(x);
+    board.appendChild(d);
+    while (board.children.length > 400) board.removeChild(board.firstChild);
+    if (near) board.scrollTop = board.scrollHeight;
+  }
+  window.__chatLine = line;
+  CHAT.forEach(function (c) { line(c); });
+})();
+(function () {
+  // The page rewrites itself every round while live — the reader's
+  // place in it must survive the rewrite (localStorage, not the URL,
+  // so the artifact stays portable).
+  function activate(id, save) {
+    document.querySelectorAll('.tab').forEach(function (b) {
+      b.classList.toggle('on', b.getAttribute('data-tab') === id); });
+    document.querySelectorAll('.tabpane').forEach(function (p) {
+      p.classList.toggle('on', p.id === 'pane-' + id); });
+    if (save) { try { localStorage.setItem('econtab', id); } catch (e) {} }
+  }
+  var tabs = document.querySelectorAll('.tab');
+  Array.prototype.forEach.call(tabs, function (b) {
+    b.onclick = function () { activate(b.getAttribute('data-tab'), true); };
+  });
+  var saved = null;
+  try { saved = localStorage.getItem('econtab'); } catch (e) {}
+  if (!(saved && document.getElementById('pane-' + saved))) saved = 'chat';
+  activate(saved, false);
+})();
+"""
+
+
+# ---------------------------------------------------------------------------
 # The live world panel (§9.2's audience)
 # ---------------------------------------------------------------------------
 
@@ -530,18 +724,34 @@ _LIVE_JS = """
   // location (an empty port means the world sat on :80/:443).
   var LIVE = location.protocol + '//' + location.hostname
            + (PORT ? ':' + PORT : '');
-  var log = document.getElementById('lv-log');
   var el = function (id) { return document.getElementById(id); };
+  var chat = window.__chatLine || function () {};
+  var SEEN = {};
+  var cur = 0;
   function name(id) {
     return !id ? '?' : (NAMES[id] || ('…' + String(id).slice(-6)));
   }
-  function line(text, cls) {
-    var d = document.createElement('div');
-    d.className = 'lv-line' + (cls ? ' ' + cls : '');
-    d.textContent = text;
-    log.appendChild(d);
-    while (log.children.length > 160) log.removeChild(log.firstChild);
-    log.scrollTop = log.scrollHeight;
+  // The two live surfaces: the chat board (Chat tab) and the per-house
+  // feeds (House tabs). Both autoscroll only when the reader is already
+  // at the bottom — scrolling up to read pins the view.
+  function push(box, div) {
+    var near = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    box.appendChild(div);
+    while (box.children.length > 400) box.removeChild(box.firstChild);
+    if (near) box.scrollTop = box.scrollHeight;
+  }
+  function chatLine(t, who, text, kind) {
+    chat({ t: t, who: who, text: text, kind: kind });
+  }
+  function feed(ids, text, cls) {
+    Array.prototype.slice.call(
+      document.querySelectorAll('[data-feed]')).forEach(function (f) {
+        if (ids.indexOf(f.getAttribute('data-feed')) < 0) return;
+        var d = document.createElement('div');
+        d.className = 'feed-line' + (cls ? ' ' + cls : '');
+        d.textContent = text;
+        push(f, d);
+      });
   }
   function flash(cls) {
     var p = document.getElementById('lv');
@@ -558,26 +768,40 @@ _LIVE_JS = """
       'round ' + (Math.floor((t - 1) / K) + 1);
   }
   function observable(e, t) {
-    var pre = 't' + t + ' · ';
-    if (e.type === 'say')
-      return line(pre + name(e.entity_id) + ': "'
-                   + String(e.text || '').slice(0, 160) + '"', 'lv-say');
+    cur = t;
+    if (e.type === 'say') {
+      var txt = String(e.text || '').slice(0, 300);
+      var key = t + '\\u0000' + txt;   // dedupe vs embedded history
+      if (SEEN[key]) return;
+      SEEN[key] = 1;
+      chatLine(t, name(e.entity_id), txt, 'say');
+      feed([e.entity_id], 'said: "' + txt + '"', 'fl-say');
+      return;
+    }
     if (e.type === 'combat') {
       flash('flash-combat');
-      return line(pre + '⚔ ' + name(e.entity_id) + ' → '
-        + name(e.target_id) + (e.hit ? ' hit −' + e.damage
-        : (e.deterred ? ' deterred' : ' missed')), 'lv-combat');
+      var c = '⚔ ' + name(e.entity_id) + ' → ' + name(e.target_id)
+        + (e.hit ? ' hit −' + e.damage : (e.deterred ? ' deterred'
+        : ' missed'));
+      chatLine(t, '', c, 'combat');
+      feed([e.entity_id, e.target_id], c, 'fl-combat');
+      return;
     }
     if (e.type === 'entity_incapacitated') {
       flash('flash-death');
-      return line(pre + '☠ ' + name(e.entity_id) + ' falls ('
-                   + (e.condition || '?') + ')', 'lv-death');
+      var d = '☠ ' + name(e.entity_id) + ' falls ('
+        + (e.condition || '?') + ')';
+      chatLine(t, '', d, 'death');
+      feed([e.entity_id], d, 'fl-death');
+      return;
     }
-    if (e.type === 'order_cancelled')
-      return line(pre + '✗ ' + name(e.entity_id) + "'s order bounced at "
-                   + (e.market || '?') + ' (' + (e.reason || '?') + ')',
-                   'lv-cancel');
-    line(pre + (e.type || 'event'), null);
+    if (e.type === 'order_cancelled') {
+      var o = '✗ ' + name(e.entity_id) + "'s order bounced at "
+        + (e.market || '?') + ' (' + (e.reason || '?') + ')';
+      chatLine(t, '', o, 'quiet');
+      feed([e.entity_id], o, 'fl-quiet');
+      return;
+    }
   }
   var es = new EventSource(LIVE + '/rounds/events');
   es.addEventListener('hello', function (m) {
@@ -592,12 +816,12 @@ _LIVE_JS = """
     (d.observables || []).forEach(function (e) { observable(e, d.tick); });
     (d.closed && d.closed.eliminations || []).forEach(function (x) {
       flash('flash-death');
-      line('☠ ' + name(x.user_id) + ' eliminated', 'lv-death');
+      chatLine(cur, '', '☠ ' + name(x.user_id) + ' eliminated', 'death');
     });
   });
   es.addEventListener('round_closed', function (m) {
-    line('— round ' + JSON.parse(m.data).round_number + ' closed —',
-         'lv-round');
+    chatLine(cur, '', '— round '
+      + JSON.parse(m.data).round_number + ' closed —', 'round');
   });
   es.addEventListener('round_opened', function (m) {
     el('lv-round').textContent = 'round ' + JSON.parse(m.data).round;
@@ -647,8 +871,7 @@ def _live_panel(meta: dict, snapshots: list[dict]) -> str:
             '<span class="live-dot"></span><span class="live-t">live world</span>'
             '<span id="lv-tick">tick –</span><span id="lv-hour">–</span>'
             '<span id="lv-round">round –</span>'
-            '<span id="lv-stream" class="quiet">connecting…</span></div>'
-            '<div id="lv-log" class="live-log"></div></div>\n'
+            '<span id="lv-stream" class="quiet">connecting…</span></div></div>\n'
             f"<script>{js}</script>")
 
 
@@ -676,6 +899,24 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
     houses = " · ".join(
         f"{_esc(n)} ({_esc(snapshots[-1]['dynasties'][n].get('model', ''))})"
         for n in names)
+
+    # the tabbed surface (v2): the square first, one tab per house,
+    # the world last — nothing from the old page is lost, it just
+    # stops being a scroll.
+    chat_js = (_CHAT_JS
+               .replace("__CHAT__", json.dumps(_chat_history(snapshots))
+                        .replace("</", "<\\/"))
+               .replace("__COLORS__", json.dumps(
+                   {n: f"c{i % 6}" for i, n in enumerate(names)})))
+    tabbar = ('<div class="tabs">'
+              '<button class="tab" data-tab="chat">💬 the square</button>'
+              + "".join(f'<button class="tab" data-tab="h{i}">{_esc(n)}</button>'
+                        for i, n in enumerate(names))
+              + '<button class="tab" data-tab="world">🌍 the world</button>'
+              '</div>')
+    house_panes = "".join(
+        f'<div id="pane-h{i}" class="tabpane">{_house_tab(snapshots, n)}</div>'
+        for i, n in enumerate(names))
 
     # live-run header: when meta carries a status, the page says where
     # the run is and (while live) reloads itself, so a served dashboard
@@ -774,6 +1015,45 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
            text-align:center;color:#c7cdd9}
       i.lg{display:inline-block;width:9px;height:9px;border-radius:2px;
            margin:0 7px 0 1px;background:#4b5563}
+      .tabs{display:flex;gap:6px;flex-wrap:wrap;position:sticky;top:0;
+           z-index:9;background:#0f1115;padding:10px 0 8px;
+           border-bottom:1px solid #2a2f3a}
+      .tab{background:#171a21;border:1px solid #2a2f3a;border-radius:9px;
+           color:#c7cdd9;font-size:13px;padding:5px 14px;cursor:pointer}
+      .tab.on{background:#1d2330;color:#facc15;border-color:#4b5563}
+      .tabpane{display:none;padding-top:4px}
+      .tabpane.on{display:block}
+      .chat-log{max-width:880px;max-height:72vh;overflow-y:auto;
+           background:#0f1115;border:1px solid #232837;border-radius:10px;
+           padding:12px 14px;font-size:13.5px}
+      .chat-line{margin:7px 0;display:flex;gap:10px;align-items:baseline}
+      .chat-stamp{font:11px ui-monospace,monospace;color:#4b5563;
+           min-width:60px;text-align:right;flex:0 0 auto}
+      .chat-who{font-weight:600;flex:0 0 auto}
+      .chat-text{white-space:pre-wrap}
+      .chat-line.combat .chat-text{color:#fbbf24}
+      .chat-line.death .chat-text{color:#f87171;font-weight:600}
+      .chat-line.quiet .chat-text{color:#8b93a3}
+      .chat-line.round .chat-text{color:#34d399}
+      .c0{color:#93c5fd}.c1{color:#6ee7b7}.c2{color:#f9a8d4}.c3{color:#fcd34d}
+      .c4{color:#a5b4fc}.c5{color:#fdba74}.cx{color:#e5e7eb}
+      .chip{display:inline-block;background:#171a21;
+           border:1px solid #2a2f3a;border-radius:9px;padding:2px 9px;
+           margin:2px 4px 2px 0;font:12px ui-monospace,monospace;
+           color:#c7cdd9}
+      .chip.cond{color:#fbbf24;border-color:#3a2a10}
+      .card{background:#141821;border:1px solid #2a2f3a;border-radius:10px;
+           padding:12px 16px;margin:10px 0;max-width:920px}
+      .card h3{margin:0 0 8px}
+      .card p{margin:6px 0}
+      .feed{max-width:920px;max-height:60vh;overflow-y:auto;
+           background:#0f1115;border:1px solid #232837;border-radius:10px;
+           padding:10px 12px;font:12.5px/1.7 ui-monospace,monospace;
+           color:#c7cdd9}
+      .feed-line{white-space:pre-wrap}
+      .fl-heard{color:#8b93a3}
+      .fl-say{color:#93c5fd}.fl-combat{color:#fbbf24}
+      .fl-death{color:#f87171}.fl-quiet{color:#8b93a3}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
 {refresh}<title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
@@ -782,6 +1062,18 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
 <p class="meta">{houses}</p>
 {status}
 {_live_panel(meta, snapshots)}
+{tabbar}
+<div id="pane-chat" class="tabpane">
+<h2>The square — everything said out loud</h2>
+<p class="quiet">Spoken lines live here: the seats' controller voice
+(SAY:, #208), the post's merchant bark, and what the world broadcasts
+in the open — fights, falls, bounced orders, rounds closing. Newest at
+the bottom; while the run is live the stream appends between
+refreshes.</p>
+<div id="chat-log" class="chat-log"></div>
+</div>
+{house_panes}
+<div id="pane-world" class="tabpane">
 <p class="meta">{len(snapshots)} rounds · {_esc(meta.get("ticks_per_round", "?"))
 } ticks/round · ticks {_esc(snapshots[0]["ticks"][0] if snapshots else "")}–
 {_esc(snapshots[-1]["ticks"][-1] if snapshots else "")} ·
@@ -796,6 +1088,8 @@ generated {_esc(meta.get("generated", ""))}</p>
 {_activity(snapshots)}
 {_world_log(snapshots)}
 {_strategy(snapshots)}
+</div>
+<script>{chat_js}</script>
 </body></html>"""
 
 
