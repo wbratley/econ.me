@@ -48,9 +48,10 @@ def _fmt(d: Decimal) -> str:
 #
 # #213 gave the world's conditions a numeric kill line and the alarm a
 # 25% trip point; these give the same climb to the reader. A condition
-# bar fills 0 -> incapacitates_at and takes its colour from the same
-# fraction the alarm reads: green is genuinely "the platform is
-# silent" territory, amber+ is the alarm band, red is dying now.
+# meter reads as FULLNESS — the fill is the health left before the
+# kill line — with its colour taken from the same fraction the alarm
+# reads: a full green bar is genuinely "the platform is silent"
+# territory, amber+ is the alarm band, red is dying now.
 
 def _cond_fraction(level: Decimal, kill: str) -> Decimal | None:
     """level / kill line as a fraction — None when the line is absent
@@ -76,9 +77,11 @@ def _cond_band(frac: Decimal) -> str:
 
 def _cond_bars(held: dict, kill_lines: dict) -> str:
     """The state card's meter stack: one bar per condition that carries
-    a kill line, held level filling toward the line. A zero level draws
-    too — an empty green bar reads as full health, which is the scan
-    the reader wants (who is LOW)."""
+    a kill line, drawn as FULLNESS — the bar is the health left before
+    the line, so a full bar is a fed house and an empty bar is a house
+    dying now (the scan is 'who is LOW'). Colour rides the danger
+    fraction — the same bands the #213 alarm reads — so the bar drains
+    green -> amber -> orange -> red as the level climbs."""
     rows = []
     for sym in sorted(kill_lines):
         frac = _cond_fraction(held.get(sym, Decimal("0")), kill_lines[sym])
@@ -87,9 +90,10 @@ def _cond_bars(held: dict, kill_lines: dict) -> str:
         q = held.get(sym, Decimal("0"))
         kill = Decimal(str(kill_lines[sym]))
         band = _cond_band(frac)
-        pct = min(max(frac, Decimal("0")), Decimal("1")) * 100
+        pct = (Decimal("1") - min(max(frac, Decimal("0")), Decimal("1"))) * 100
         title = (f"{_esc(sym)} {_fmt(q)} of kill line {_fmt(kill)} "
-                 f"({_fmt(frac * 100)}%) — incapacitation at 100%")
+                 f"({_fmt(frac * 100)}%) — {_fmt(Decimal("100") - pct)}% "
+                 "headroom; the bar empties as it climbs, dies at 0")
         rows.append(
             f'<div class="meter m-{band}" title="{title}">'
             f'<div class="meter-fill" style="width:{pct:.1f}%"></div>'
