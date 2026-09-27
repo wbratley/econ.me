@@ -2036,7 +2036,11 @@ def test_the_pen_serves_the_whole_flock_for_one_labor(session):
     _at(session, house, "HEARTH")           # the pen is built on the camp
     camp = _camp(session, house)
     markets.adjust_holding(session, house, "WOOD", Decimal("3"))
-    assert _act_day(session, house, "MAKE_PEN", parcel_id=camp.id)
+    # no parcel_id -- the run-48 lesson: seats cannot observe their
+    # parcel id, and five explicit-less MAKE_PEN calls bounced across a
+    # whole run while the builder auto-bind's facility twin worked.
+    # The pen rises on the camp the engine already knows is yours.
+    assert _act_day(session, house, "MAKE_PEN")
     _run(session, 3)
     assert parcels.facility_capacity(session, camp.id, "PEN") >= 1
     # four hens penned: one hour, four eggs

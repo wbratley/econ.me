@@ -264,6 +264,61 @@ def test_facility_recipe_when_all_facilities_reserved(session):
         start_process(session, alice, "TEND_FIRE")
 
 
+# --- builder auto-bind (run 48: five MAKE_PEN "must be bound to a parcel
+# you control (pass its parcel_id)" refusals -- the seat stood at its
+# hearth with the wood in hand and starved holding the flock) ---
+
+def _builder_world(session):
+    from econengine.parcels import create_parcel
+    alice = create_entity(session, "Alice", EntityType.INDIVIDUAL)
+    adjust_holding(session, alice, "TIMBER", Decimal("10"))
+    camp = create_parcel(session, "CAMP", owner=alice)
+    create_recipe(session, "BUILD_SHED", inputs={"TIMBER": Decimal("1")},
+                  outputs={}, duration_ticks=1, builds_facility="SHED")
+    return alice, camp
+
+
+def test_builder_recipe_auto_binds_to_owned_parcel(session):
+    """A builds_facility recipe started without parcel_id rises on the
+    builder's own ground -- the engine knows where the camp is; a
+    parcel_id the seat cannot observe is bookkeeping dressed as
+    strategy (the run-15 call, made again for builders)."""
+    alice, camp = _builder_world(session)
+    process = start_process(session, alice, "BUILD_SHED")  # no parcel_id
+    assert process.parcel_id == camp.id
+    events = complete_processes(session, tick_number=2)
+    from econengine.parcels import facility_capacity
+    assert facility_capacity(session, camp.id, "SHED") >= 1
+    event = next(e for e in events if e["type"] == "process_completed")
+    assert event["facility"] == "SHED" and event["parcel_id"] == camp.id
+
+
+def test_builder_recipe_prefers_parcel_at_current_place(session):
+    """Two owned parcels: the builder binds the one where it stands
+    (build where you stand), not merely the first by id."""
+    from econengine import places
+    from econengine.parcels import create_parcel
+    alice, _camp = _builder_world(session)
+    homestead = places.create_place(session, "HOME", kind="VILLAGE",
+                                    name="Homestead")
+    near = create_parcel(session, "NEAR", owner=alice)
+    near.place_id = homestead.id
+    alice.location_place_id = homestead.id
+    process = start_process(session, alice, "BUILD_SHED")
+    assert process.parcel_id == near.id
+
+
+def test_builder_recipe_landless_names_the_world_fact(session):
+    """No owned ground: the refusal says what is missing -- land, not
+    call syntax."""
+    alice, _camp = _builder_world(session)
+    drifter = create_entity(session, "Drifter", EntityType.INDIVIDUAL)
+    adjust_holding(session, drifter, "TIMBER", Decimal("2"))
+    with pytest.raises(ValueError, match="control no parcel to build on"):
+        start_process(session, drifter, "BUILD_SHED")
+    assert get_holding(session, drifter.id, "TIMBER").quantity == Decimal("2")
+
+
 def test_input_refusal_names_running_reservers(session):
     """The refusal names the balance the check drew on and WHO holds the
     reservation -- the spendable side was invisible in run 15 (144

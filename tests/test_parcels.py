@@ -123,7 +123,9 @@ def test_parcel_bound_recipe_refuses_unbound_or_uncontrolled_start(session):
     create_recipe(session, "BUILD_SMITHY", inputs={"TIMBER": Decimal("10")},
                   outputs={}, duration_ticks=1, builds_facility="SMITHY")
 
-    with pytest.raises(ValueError, match="must be bound to a parcel"):
+    # unbound AND landless: the builder auto-bind has no ground to pick,
+    # so the refusal names the world fact (not a call-syntax complaint)
+    with pytest.raises(ValueError, match="control no parcel to build on"):
         start_process(session, alice, "BUILD_SMITHY")
     with pytest.raises(ValueError, match="does not control"):
         start_process(session, alice, "BUILD_SMITHY", parcel_id=parcel.id)
