@@ -1529,6 +1529,30 @@ def _create_recipes(session: Session) -> None:
         inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
         duration_ticks=4, requires_facility="SALT_SHED",
     )
+    # The famine rung (run 48, lever 2): three runs straight the
+    # post's food shelf went EMPTY mid-game while coin piled up at a
+    # starving counter (run 48: 28.32 idle coin, bids at the cap,
+    # houses died holding coin) -- SALT_MEAT only transforms meat
+    # the forest sells him, and in run 48 the houses kept every cut
+    # for their own bellies, so the shed had nothing to salt. Coin
+    # could not become calories at ANY price. The caravan is the
+    # backstop: two logs for crates and fuel, a runner over the
+    # hills, two jerky back. Still a transform, not a faucet -- the
+    # wood is bought with coin houses paid for food, and the lua
+    # prices each batch on a LADDER that climbs with every caravan
+    # (dear calories in a hungry world) and falls when real meat
+    # flows again (the SALT_MEAT anchor). No labor: a BUSINESS
+    # issues none; no fire: the hills, not the hearth, feed him.
+    production.create_recipe(
+        session, "RESTOCK_CARAVAN", name="Send Trade Caravan",
+        description="The post's famine rung: when the shelf is bare and "
+                    "the forest sells no meat, the counter spends two logs "
+                    "on crates and fuel and a runner brings jerky back over "
+                    "the hills -- each batch priced a rung higher (the "
+                    "post's own back room; no house can bind it).",
+        inputs={"WOOD": D("2")}, outputs={"JERKY": D("2")},
+        duration_ticks=6, requires_facility="SALT_SHED",
+    )
     # --- Eating: meals as decisions (run 19) --------------------------------
     # Conscious eating: the FOOD need drinks only SATIETY, and only EAT
     # recipes fill the stomach. All meals are labor-free, instant
