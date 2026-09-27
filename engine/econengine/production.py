@@ -432,6 +432,30 @@ def start_process(
                 f"facility on a parcel you control or a public one with a "
                 f"free seat; you have none"
             )
+    elif recipe.builds_facility:
+        # Auto-bind (run 48: five MAKE_PEN refusals "must be bound to a
+        # parcel you control (pass its parcel_id)" across a whole run --
+        # the seat KNEW it wanted a pen, had the wood, stood at its
+        # hearth, and starved t367 holding the flock it could never
+        # pen. The engine knows where the builder's ground is; making
+        # the seat pass a parcel_id it cannot observe is bookkeeping
+        # dressed as strategy -- the same call the run-15 TEND_FIRE
+        # auto-bind made. Binding: the owned parcel at the entity's
+        # current place (build where you stand), else the first owned
+        # by id. No commons fallback -- building is the owner's alone.
+        here = entity.location_place_id
+        owned = session.execute(
+            select(Parcel).where(Parcel.owner_id == entity.id).order_by(Parcel.id)
+        ).scalars().all()
+        parcel = next((p for p in owned if p.place_id == here), None)
+        if parcel is None and owned:
+            parcel = owned[0]
+        if parcel is None:
+            raise ValueError(
+                f"recipe {recipe.code}: you control no parcel to build on -- "
+                f"your camp is your land; a {recipe.builds_facility} "
+                f"rises only on ground you hold"
+            )
     elif recipe_needs_parcel(recipe):
         raise ValueError(
             f"recipe {recipe.code} must be bound to a parcel you control "
