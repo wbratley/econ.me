@@ -99,6 +99,20 @@ def test_goods_rows_flag_conditions_machine_readably(session):
     assert by_symbol["WOOD"] is False
 
 
+def test_goods_rows_carry_the_kill_line_as_a_number(session):
+    """Run 48's lever 3: the agent loop's condition alarm joins held
+    condition levels against these numbers -- the kill line must be
+    readable without parsing the effect prose, and None for goods that
+    never incapacitate."""
+    _seed(session)
+    state = catalog_state(session)
+    by_symbol = {g["symbol"]: g["incapacitates_at"]
+                 for g in state["goods"]}
+    assert by_symbol["HUNGER"] == "15.0000"   # exact decimal, as held
+    assert by_symbol["BERRIES"] is None
+    assert by_symbol["WOOD"] is None
+
+
 def test_plain_goods_render_their_physics_only(session):
     _seed(session)
     state = catalog_state(session)

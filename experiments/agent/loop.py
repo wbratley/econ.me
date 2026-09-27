@@ -40,6 +40,7 @@ import difflib
 import hashlib
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .llm import (ScriptedModelEmpty, _lua_compiles,
@@ -440,6 +441,51 @@ _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
                 "refused. Add `local` at the first use of that name (or "
                 "capture ctx.state in a local at the top of the script).")
 
+# Run 48's silent killer (lever 3): Harald authored fourteen rounds of
+# hunt-and-sleep and died of THIRST t336 beside a free tap, zero trades
+# -- the platform watched the condition climb its kill line for days
+# without a word. Conditions are holdings; the catalog states where
+# each one kills. A condition riding at or above a quarter of its kill
+# line is FINDINGS now, every round it rides: the channel the author
+# must answer, the same discipline crashes and rejections already ride.
+# HUNGER, FATIGUE, THIRST -- every condition, every world, the platform
+# whispers what is killing you before it does.
+CONDITION_ALARM_FRACTION = Decimal("0.25")
+
+
+def _condition_feedback(entity_state: dict, catalog: dict) -> list[str]:
+    """Alarm lines for held conditions riding toward their kill lines:
+    the join of entity_state's holdings against the catalog's
+    incapacitates_at numbers. Quiet for a healthy floor (conditions sit
+    near zero between their cures); loud the moment a chain has broken
+    -- grants only start when the body runs dry, so a quarter of the
+    kill line is already deep into a spiral, with a round's margin."""
+    thresholds: dict[str, Decimal] = {}
+    for g in (catalog or {}).get("goods", []):
+        line = g.get("incapacitates_at")
+        if line is not None:
+            thresholds[str(g.get("symbol"))] = Decimal(str(line))
+    if not thresholds:
+        return []            # a world without kill lines has nothing to say
+    held = {h.get("symbol"): h.get("quantity")
+            for h in entity_state.get("holdings", [])}
+    lines: list[str] = []
+    for symbol, kill in sorted(thresholds.items()):
+        raw = held.get(symbol)
+        if raw is None:
+            continue
+        try:
+            level = Decimal(str(raw))
+        except InvalidOperation:
+            continue         # a malformed quantity is not an alarm
+        if level >= kill * CONDITION_ALARM_FRACTION:
+            lines.append(
+                f"condition {symbol} at {level} of kill line {kill}: this "
+                f"climb ends in incapacitation -- break it in your "
+                f"behaviour (world_catalog's effect line for {symbol} "
+                f"says what feeds it and what decays it)")
+    return lines
+
 
 def _refusal_hint(error: str) -> str | None:
     """One actionable sentence per refusal class; None = no known class."""
@@ -574,6 +620,7 @@ class AgentLoop:
         self.manual = manual              # authored notes, if the pack ships any
         self.catalog = catalog            # generated readable world (3a fold)
         self._feedback: list[str] = []          # rides into the next prompt
+        self._catalog_state: dict | None = None   # world_catalog, cached (lever 3)
         self.journal_lines: list[dict] = []
         # Call forensics (run 31: an 85-minute thinking attempt left no
         # artifact — the reasoning text was discarded client-side). When
@@ -725,7 +772,25 @@ class AgentLoop:
         self._feedback.extend(_rejection_feedback(
             obs["events"].get("ticks", []),
             status=(obs["entity"].get("entity") or {}).get("status")))
+        # The condition alarm (run 48, lever 3): conditions riding toward
+        # their kill lines are findings, not scenery. Harald died of a
+        # THIRST the platform watched climb without a word -- a rewrite
+        # seat's blindness is the platform's to announce.
+        self._feedback.extend(_condition_feedback(
+            obs["entity"], self._kill_lines_catalog()))
         return obs
+
+    def _kill_lines_catalog(self) -> dict:
+        """The machine-readable world catalog, fetched once per loop --
+        its goods are static for a run's life. A server without the
+        tool (or a transport hiccup at first observe) runs the loop
+        without the alarm, never without the round."""
+        if self._catalog_state is None:
+            try:
+                self._catalog_state = self.mcp.call("world_catalog") or {}
+            except McpError:
+                self._catalog_state = {}
+        return self._catalog_state
 
     def cycle(self) -> dict:
         """observe -> think -> submit; lint refusals re-prompt, bounded.

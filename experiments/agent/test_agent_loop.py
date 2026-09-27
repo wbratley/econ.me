@@ -1188,6 +1188,7 @@ def test_rejection_findings_ride_into_the_round_prompt():
         "get_script_libraries": {"std": {"source": "-- std"},
                                  "world": {"source": "-- world"},
                                  "pack": {"source": "-- pack"}},
+        "world_catalog": {"goods": []},
         "get_behaviour": {"id": "s1", "source": "ctx.state.x = 1",
                           "state": {}, "description": "", "timeout_ms": 100},
     }
@@ -1204,6 +1205,101 @@ def test_rejection_findings_ride_into_the_round_prompt():
     assert entry["action"] == "keep"           # KEEP rode the first attempt
     assert "travel rejected x1" in model.calls[0]["user"]
     assert "already at Berry thicket" in model.calls[0]["user"]
+
+
+def _alarm_canned(thirst="2.0000", fatigue="1.0000"):
+    return {
+        "round_state": {"current_round": 2},
+        "leaderboard": {"rows": []},
+        "entity_activity": {"activity": []},
+        "entity_state": {
+            "entity": {"id": "e-harald", "status": "ACTIVE"},
+            "holdings": [
+                {"symbol": "THIRST", "quantity": thirst},
+                {"symbol": "FATIGUE", "quantity": fatigue},
+                {"symbol": "WOOD", "quantity": "3"},
+            ],
+        },
+        "entity_events": {"ticks": []},
+        "market_prices": {"markets": []},
+        "epoch_state": {},
+        "world_catalog": {"goods": [
+            {"symbol": "WOOD", "incapacitates_at": None},
+            {"symbol": "THIRST", "incapacitates_at": "7.5"},
+            {"symbol": "FATIGUE", "incapacitates_at": "7.5"},
+        ]},
+        "get_script_libraries": {"std": {"source": "-- std"},
+                                 "world": {"source": "-- world"},
+                                 "pack": {"source": "-- pack"}},
+        "get_behaviour": {"id": "s1", "source": "ctx.state.x = 1",
+                          "state": {}, "description": "", "timeout_ms": 100},
+    }
+
+
+def test_condition_alarm_rides_into_the_round_prompt():
+    """Run 48's lever 3, end to end: Harald authored fourteen rounds of
+    hunt-and-sleep and died of THIRST beside a free tap while the
+    platform watched the climb without a word. A condition at or above
+    a quarter of its kill line is a FINDING every round it rides --
+    the channel the author must answer."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    canned = _alarm_canned()
+
+    def transport(method, params):
+        name = params["name"]
+        return {"content": [{"type": "text",
+                             "text": json.dumps(canned[name])}]}
+
+    model = ScriptedModel(["KEEP"])
+    lp = AgentLoop(McpClient(transport), model, entity_id="e-harald")
+    entry = lp.cycle()
+    assert entry["action"] == "keep"
+    user = model.calls[0]["user"]
+    # THIRST 2.0000 rides at/above 7.5/4 = 1.875: the alarm fires, with
+    # the numbers and the imperative in one line
+    assert "condition THIRST at 2.0000 of kill line 7.5" in user
+    assert "break it in your behaviour" in user
+    # FATIGUE 1.0000 sits below the line: no alarm (the holdings JSON
+    # still shows it -- scenery, not finding)
+    assert "condition FATIGUE" not in user
+
+
+def test_condition_alarm_is_silent_below_the_line_and_without_a_catalog():
+    """The alarm's two quiet cases: a healthy body (every condition
+    under a quarter of its kill line) and a world the catalog cannot
+    read (no tool, or a refusal) -- the loop runs on, unarmed but
+    unbroken."""
+    from experiments.agent.loop import AgentLoop, McpClient
+
+    # healthy: both conditions well under the line
+    canned = _alarm_canned(thirst="0.5000", fatigue="0.2000")
+
+    def healthy(method, params):
+        return {"content": [{"type": "text",
+                             "text": json.dumps(canned[params["name"]])}]}
+
+    model = ScriptedModel(["KEEP"])
+    AgentLoop(McpClient(healthy), model, entity_id="e-harald").cycle()
+    assert "kill line" not in model.calls[0]["user"]
+
+    # no catalog: the server refuses the tool -- silence, no crash
+    canned2 = _alarm_canned()          # THIRST would alarm, but cannot
+    canned2.pop("world_catalog")
+
+    def bare(method, params):
+        name = params["name"]
+        if name == "world_catalog":
+            return {"isError": True,
+                    "content": [{"type": "text", "text": "no such tool"}]}
+        return {"content": [{"type": "text",
+                             "text": json.dumps(canned2[name])}]}
+
+    model2 = ScriptedModel(["KEEP"])
+    entry = AgentLoop(McpClient(bare), model2,
+                      entity_id="e-harald").cycle()
+    assert entry["action"] == "keep"
+    assert "kill line" not in model2.calls[0]["user"]
 
 
 # ===========================================================================
@@ -1223,6 +1319,7 @@ def _forensics_canned():
         "get_script_libraries": {"std": {"source": "-- std"},
                                  "world": {"source": "-- world"},
                                  "pack": {"source": "-- pack"}},
+        "world_catalog": {"goods": []},
         "get_behaviour": {"id": "s1", "source": "ctx.state.x = 1",
                           "state": {}, "description": "", "timeout_ms": 100},
     }
