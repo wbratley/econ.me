@@ -1047,3 +1047,79 @@ def test_live_panel_drops_off_the_finished_page(client, monkeypatch,
         html = build_dashboard(snapshots, meta)
         assert "EventSource" not in html
         assert 'id="lv"' not in html
+
+
+def test_snapshot_carries_the_cast(tmp_path):
+    """Run 50's lesson: the merchant post IS the lever, but the
+    snapshot only ever carried the dynasties. The cast view reads the
+    businesses' state off the same MCP surface the houses use, and
+    counts wildlife off the map — a world without either just leaves
+    the section empty."""
+    from types import SimpleNamespace
+    from experiments.agent.loop import McpError
+    from experiments.agent.multi import _snapshot
+
+    class FakeMcp:
+        def __init__(self, world_map):
+            self.world_map = world_map
+
+        def call(self, tool, params=None):
+            if tool == "market_prices":
+                return []
+            if tool == "world_catalog":
+                return {"goods": []}
+            if tool == "world_activity":
+                return {"activity": []}
+            if tool == "world_map":
+                return self.world_map
+            if tool == "entity_activity":
+                return {"activity": []}
+            if tool == "entity_state":
+                if params.get("entity_id") == "post-1":
+                    return {
+                        "accounts": [{"currency": "COIN",
+                                      "balance": "9.78"}],
+                        "holdings": [{"symbol": "SHOP_OPEN",
+                                      "quantity": "0.44"}],
+                        "processes": [{"recipe": "WHOLESALE_BUY_EGGS",
+                                       "status": "running"}],
+                        "parcels": [], "unlocks": [], "needs": []}
+                return {"accounts": [], "holdings": [], "processes": [],
+                        "parcels": [], "unlocks": [], "needs": []}
+            if tool == "get_behaviour":
+                return {}
+            if tool == "leaderboard":
+                return {"rows": []}
+            raise McpError(f"unfaked tool {tool}")
+
+    d = Dynasty("u-1", "House Alpha", "m1", "t", entity_id="e1")
+    wmap = {"entities": [
+        {"id": "e1", "name": "House Alpha", "entity_type": "individual",
+         "status": "active", "place": "HEARTH"},
+        {"id": "post-1", "name": "Trading Post", "entity_type": "business",
+         "status": "active", "place": "POST"},
+        {"id": "w1", "name": "Wolf Pack I", "entity_type": "individual",
+         "status": "active", "place": "FOREST"},
+        {"id": "w2", "name": "Wolf Pack II", "entity_type": "individual",
+         "status": "incapacitated", "place": "FOREST"},
+        {"id": "b1", "name": "Wild Boar I", "entity_type": "individual",
+         "status": "active", "place": "FOREST"},
+    ]}
+    snap = _snapshot([(d, FakeMcp(wmap))],
+                     {"round_number": 1, "ticks": [1],
+                      "events_by_type": {}}, {})
+    post = snap.cast["businesses"][0]
+    assert post["name"] == "Trading Post"
+    assert post["accounts"][0]["balance"] == "9.78"
+    assert post["holdings"][0]["symbol"] == "SHOP_OPEN"
+    assert post["processes"][0]["recipe"] == "WHOLESALE_BUY_EGGS"
+    assert snap.cast["wildlife"] == {"Wolf": {"active": 1, "down": 1},
+                                     "Boar": {"active": 1, "down": 0}}
+    # the JSON round-trip carries it (the dashboard eats the artifact)
+    assert "cast" in snap.to_json() and snap.to_json()["cast"]["businesses"]
+
+    # a world with no map and no beasts: the section is empty, not broken
+    bare = _snapshot([(d, FakeMcp({}))],
+                     {"round_number": 1, "ticks": [1],
+                      "events_by_type": {}}, {})
+    assert bare.cast == {"businesses": [], "wildlife": {}}

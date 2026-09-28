@@ -142,3 +142,87 @@ def test_condition_meters_stay_quiet_without_kill_lines():
     assert '<div class="meter' not in h and "num cond heat-" not in h
     # the old amber number cells still render
     assert 'class="num cond">0.50' in h or 'num cond">0.50' in h
+
+
+def _extinct_snaps() -> list[dict]:
+    """The run-50 shape: two rounds, Alpha dying in the second —
+    needs frozen at the death tick, the map flips to incapacitated."""
+    s1, s2 = _snap(), _snap()
+    s2["round"] = 2
+    s2["ticks"] = [3, 4]
+    s2["world_map"]["entities"][0]["status"] = "incapacitated"
+    s2["dynasties"]["House Alpha"]["needs"] = [
+        {"need": "FOOD", "satisfaction": "0.0", "updated_tick": 3}]
+    s1["kill_lines"] = {"HUNGER": "15.0"}
+    s1["dynasties"]["House Alpha"]["holdings"].append(
+        {"symbol": "HUNGER", "quantity": "13.5"})
+    return [s1, s2]
+
+
+def _meta(status: str = "extinct") -> dict:
+    return {"title": "t", "status": status, "round": 2, "rounds_total": 24,
+            "elapsed_s": 3600}
+
+
+def test_the_banner_says_what_happened_to_the_run():
+    """Run 50's lesson: the watcher saw the dashboard go dark and had
+    to ask. The extinct banner names the reason, the round it stopped,
+    and who was lost."""
+    h = build_dashboard(_extinct_snaps(), _meta())
+    assert 'bn-extinct">☠ run ended — total extinction' in h
+    assert "stopped after round 2 of 24" in h
+    assert "lost: House Alpha, House Beta" in h
+    h = build_dashboard([_snap()], _meta("complete"))
+    assert "✓ finished</span><span>all 24 rounds" in h
+
+
+def test_the_roster_cards_carry_the_deaths_and_the_climb():
+    h = build_dashboard(_extinct_snaps(), _meta())
+    # Alpha: dead at the frozen-need tick, with the honest prior-round
+    # climb against its kill line
+    assert 'chip-dead">dead t3' in h
+    assert "climbing HUNGER 13.50/15.00 (90%)" in h
+    # Beta: still alive, still placed
+    assert 'chip-alive">alive' in h
+    # wildlife is counted off the map (none here: no beasts named)
+    assert 'class="rcard-wild"' not in h
+
+
+def test_the_roster_carries_the_post_and_the_beasts():
+    """The cast view (run 50): the business gets a card with its lamp
+    and coin; wolves and boars are counted from the map."""
+    snaps = [_snap()]
+    s = snaps[0]
+    s["world_map"]["entities"] += [
+        {"id": "p1", "name": "Trading Post", "place": "POST",
+         "status": "active", "entity_type": "business"},
+        {"id": "w1", "name": "Wolf Pack I", "place": "FOREST",
+         "status": "active"},
+        {"id": "w2", "name": "Wolf Pack II", "place": "FOREST",
+         "status": "incapacitated"}]
+    s["cast"] = {
+        "businesses": [{
+            "name": "Trading Post", "place": "POST", "status": "active",
+            "accounts": [{"currency": "COIN", "balance": "9.78"}],
+            "holdings": [{"symbol": "SHOP_OPEN", "quantity": "0.44"},
+                         {"symbol": "JERKY", "quantity": "2.7"}],
+            "processes": [{"recipe": "WHOLESALE_BUY_EGGS", "status": "running",
+                           "completes_tick": 7}]}],
+        "wildlife": {"Wolf": {"active": 1, "down": 1}}}
+    h = build_dashboard(snaps, _meta("live"))
+    assert 'chip-post">the post' in h
+    assert "lamp 0.44" in h and "9.78 coin" in h
+    assert "Wolf 1 alive/2" in h
+    # the merchant tab rides the cast: charts, shelf, errand, book
+    assert 'data-tab="post"' in h
+    assert "SHOP_OPEN — the lamp" in h and "post coin" in h
+    assert "WHOLESALE_BUY_EGGS" in h
+    assert "the key rests" not in h
+
+
+def test_the_post_tab_survives_a_run_without_cast_data():
+    """Pre-cast snapshots (every run before this change) still render:
+    the tab says so, quietly, and nothing crashes."""
+    h = build_dashboard([_snap()], _meta("complete"))
+    assert "no cast data" in h
+    assert 'data-tab="post"' in h

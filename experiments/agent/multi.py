@@ -180,6 +180,14 @@ class RoundSnapshot:
     # The dashboard draws the map and a per-round location strip from
     # it; a resumed pre-map run's old snapshots simply lack the key.
     world_map: dict = field(default_factory=dict)
+    # The non-house cast, same source as the map (run 50's lesson: the
+    # merchant post IS the lever, but the dashboard only ever showed
+    # the dynasties — answering "how is the post doing" meant reading
+    # the world database by hand). Businesses get the full state read
+    # (accounts, holdings — the SHOP_OPEN lamp among them — processes);
+    # wildlife is counted off the map's statuses. Anything a world
+    # without businesses simply leaves empty.
+    cast: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {
@@ -192,6 +200,7 @@ class RoundSnapshot:
             "conditions": self.conditions,
             "kill_lines": self.kill_lines,
             "world_map": self.world_map,
+            "cast": self.cast,
         }
 
 
@@ -267,6 +276,30 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
             ).get("activity", [])
         except McpError:
             dyn_activity[d.name] = []
+    # The non-house cast (run 50): every business on the map gets a
+    # state read (accounts, holdings, processes) off the same MCP
+    # surface the houses use; wildlife is a status count off the map.
+    # Optional like the map itself: an older world keeps rendering.
+    cast: dict = {"businesses": [], "wildlife": {}}
+    for ent in (world_map.get("entities") or []):
+        name, etype = ent.get("name", ""), ent.get("entity_type", "")
+        if etype == "business":
+            try:
+                st = mcps[0][1].call("entity_state", {"entity_id": ent["id"]})
+                cast["businesses"].append({
+                    "name": name, "place": ent.get("place"),
+                    "status": ent.get("status"),
+                    "accounts": st.get("accounts", []),
+                    "holdings": st.get("holdings", []),
+                    "processes": st.get("processes", []),
+                })
+            except McpError:
+                pass
+        for beast in ("Wolf", "Boar"):
+            if beast.lower() in name.lower():
+                cur = cast["wildlife"].setdefault(beast, {"active": 0, "down": 0})
+                key = "active" if ent.get("status") == "active" else "down"
+                cur[key] += 1
     snap = RoundSnapshot(
         round=resolved["round_number"], ticks=resolved.get("ticks", []),
         resolved=resolved, market=market,
@@ -278,6 +311,7 @@ def _snapshot(mcps: list[tuple[Dynasty, McpClient]], resolved: dict,
                    for d, mcp in mcps},
         activity={"world": world, "dynasties": dyn_activity},
         world_map=world_map,
+        cast=cast,
     )
     return snap
 
