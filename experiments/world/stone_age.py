@@ -640,6 +640,47 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # comfort like hens round-trip the flock.
              "BED": Decimal("1")}
 
+# THE WHOLESALE LADDER (run 49, the merchant rework): the prices the
+# HILLS deal at -- the back channel that keeps the counter stocked
+# and solvent whatever the forest does. The run-49 post coin-broke at
+# t224 buying eggs it could never resell, and the market died with a
+# corpse counter for 60% of the run. Now every price the post quotes
+# hangs off these anchors: it never bids above 0.70 x w (never pay
+# what the hills charge) and never retails below 1.05 x w (never sell
+# under restock cost) -- the band is the wholesale ladder, and it is
+# the real price lever the seats face. w = the hills' charge per unit
+# (wholesale BUY, coin debited at start); d = what they pay for
+# overstock (the DUMP -- always under w: the spread is the toll);
+# lot = the caravan-sized batch each recipe moves; buy/dump = which
+# doors exist for the symbol. Tuned to run 49's observed band
+# (jerky retailed 1.00-1.80, wood bid 1.00-5.00, eggs 3.88-5.00).
+# THE OFF-SWITCH: drop the recipes and the post is a pure inventory
+# market-maker -- the dial to turn once houses trade houses.
+WHOLESALE = {
+    "JERKY":     {"w": Decimal("0.90"), "d": Decimal("0.45"), "lot": 6,
+                  "buy": True,  "dump": False},   # the never-rot staple
+    "BERRIES":   {"w": Decimal("0.50"), "d": Decimal("0.25"), "lot": 10,
+                  "buy": True,  "dump": True},    # thin food, rotting
+    "APPLES":    {"w": Decimal("0.70"), "d": Decimal("0.35"), "lot": 10,
+                  "buy": True,  "dump": True},    # the larder staple
+    "EGGS":      {"w": Decimal("0.70"), "d": Decimal("0.35"), "lot": 8,
+                  "buy": True,  "dump": True},    # the hen's wage
+    "CHICKEN":   {"w": Decimal("3.00"), "d": Decimal("1.50"), "lot": 2,
+                  "buy": True,  "dump": False},   # pastoral seed capital
+    "WATERSKIN": {"w": Decimal("4.50"), "d": Decimal("2.25"), "lot": 2,
+                  "buy": True,  "dump": False},   # the water kit's anchor
+    "WOOD":      {"w": Decimal("1.00"), "d": Decimal("0.50"), "lot": 10,
+                  "buy": True,  "dump": True},    # upkeep + the forest's plenty
+    "MEAT":      {"w": Decimal("1.00"), "d": Decimal("0.50"), "lot": 4,
+                  "buy": False, "dump": True},    # bought to salt, not resell
+    "YARN":      {"w": Decimal("1.50"), "d": Decimal("0.75"), "lot": 10,
+                  "buy": False, "dump": True},    # craft input
+    "FLINT":     {"w": Decimal("1.50"), "d": Decimal("0.75"), "lot": 10,
+                  "buy": False, "dump": True},    # craft input
+    "PELT":      {"w": Decimal("3.00"), "d": Decimal("1.50"), "lot": 4,
+                  "buy": False, "dump": True},    # the hunt's hide
+}
+
 
 def spawn_trading_post(session: Session) -> Entity:
     """The market maker: a man who has done this a while (a BUSINESS
@@ -656,6 +697,16 @@ def spawn_trading_post(session: Session) -> Entity:
     services.create_account(session, post, COIN, initial_balance=POST_COIN)
     for sym, qty in POST_FOOD.items():
         markets.adjust_holding(session, post, sym, qty)
+    # His belt and his first days (run 49): the SHOP_KEY is the one
+    # thing the wholesale channel reads -- present, reserved, never
+    # consumed, no market row, max 1: standing at the counter is not
+    # dealing with the hills. SHOP_OPEN starts lit (the first day is
+    # free), and six logs bank the crates -- after that the counter
+    # pays its own keep: one wood and one meal a day, or it goes dark
+    # for everyone to see.
+    markets.adjust_holding(session, post, "SHOP_KEY", Decimal("1"))
+    markets.adjust_holding(session, post, "SHOP_OPEN", Decimal("1"))
+    markets.adjust_holding(session, post, "WOOD", Decimal("6"))
     combat.create_stat(session, post.id, "HITS", Decimal("20"))
     combat.create_stat(session, post.id, "ATTACK", Decimal("4"))
     combat.create_stat(session, post.id, "DEFENSE", Decimal("4"))
@@ -999,6 +1050,30 @@ def _create_goods(session: Session) -> None:
                                   "are free, instant and night-legal -- but "
                                   "they do not happen by themselves.",
                       decay_per_tick=Decimal("0.1"))
+    # The merchant's belt (run 49). SHOP_KEY: the one thing the
+    # wholesale channel reads -- whoever holds it deals with the
+    # hills. No market row, max 1, never consumed: the post's alone
+    # until he dies, and the hills deal with no one else.
+    goods.create_good(session, "SHOP_KEY", name="The Shop Key",
+                      description="A bronze key on a leather thong: whoever "
+                                  "holds it deals with the hills -- the "
+                                  "wholesale caravans answer it alone. It is "
+                                  "never sold, never consumed, and there is "
+                                  "exactly one.",
+                      max_holding=Decimal("1"))
+    # SHOP_OPEN: the counter's day. One fill is one day of open
+    # counter (decay 1/24 a tick); when it reads zero the shop has gone
+    # dark -- no quotes, no peddle, the man behind the counter unable
+    # to pay the wood-and-meal a day of trade costs. KEEP_SHOP_* is
+    # how it refills.
+    goods.create_good(session, "SHOP_OPEN", name="The Open Counter",
+                      description="A day of open counter at the post: fades "
+                                  "over a day, refilled by the keeper's wood "
+                                  "and a meal (KEEP_SHOP). At zero the shop "
+                                  "is dark -- the price a counter pays to "
+                                  "exist.",
+                      decay_per_tick=Decimal("0.0417"),
+                      max_holding=Decimal("1"))
     # Conditions. See the equilibrium notes in the module docstring.
     goods.create_good(
         session, "HUNGER", name="Hunger",
@@ -1529,30 +1604,59 @@ def _create_recipes(session: Session) -> None:
         inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
         duration_ticks=4, requires_facility="SALT_SHED",
     )
-    # The famine rung (run 48, lever 2): three runs straight the
-    # post's food shelf went EMPTY mid-game while coin piled up at a
-    # starving counter (run 48: 28.32 idle coin, bids at the cap,
-    # houses died holding coin) -- SALT_MEAT only transforms meat
-    # the forest sells him, and in run 48 the houses kept every cut
-    # for their own bellies, so the shed had nothing to salt. Coin
-    # could not become calories at ANY price. The caravan is the
-    # backstop: two logs for crates and fuel, a runner over the
-    # hills, two jerky back. Still a transform, not a faucet -- the
-    # wood is bought with coin houses paid for food, and the lua
-    # prices each batch on a LADDER that climbs with every caravan
-    # (dear calories in a hungry world) and falls when real meat
-    # flows again (the SALT_MEAT anchor). No labor: a BUSINESS
-    # issues none; no fire: the hills, not the hearth, feed him.
-    production.create_recipe(
-        session, "RESTOCK_CARAVAN", name="Send Trade Caravan",
-        description="The post's famine rung: when the shelf is bare and "
-                    "the forest sells no meat, the counter spends two logs "
-                    "on crates and fuel and a runner brings jerky back over "
-                    "the hills -- each batch priced a rung higher (the "
-                    "post's own back room; no house can bind it).",
-        inputs={"WOOD": D("2")}, outputs={"JERKY": D("2")},
-        duration_ticks=6, requires_facility="SALT_SHED",
-    )
+    # THE WHOLESALE CHANNEL (run 49, the merchant rework): the post's
+    # postmortem found the counter coin-broke at t224 -- it bought eggs
+    # (~60 coin) with no resale side, the wood-bid caravan fuel never
+    # arrived, and 60% of the run traded against a corpse. The hills
+    # replace the barter caravan: WHOLESALE_BUY pays COIN (the new
+    # recipe currency leg) for a caravan-lot of stock; WHOLESALE_DUMP
+    # converts overstock lots back to COIN (a banked output mints to
+    # the account -- the same production-mint the shiny-stone gather
+    # uses). Both doors read the SHOP_KEY (present, reserved, never
+    # consumed -- no house can deal with the hills) and both leave from
+    # the shed's racks (capacity 2: at most two runners out). The lua
+    # prices everything off the same WHOLESALE table -- the band is
+    # the lever, and the recipes ARE the off-switch: delete them and
+    # the post is a pure inventory market-maker.
+    for sym, spec in WHOLESALE.items():
+        if spec["buy"]:
+            production.create_recipe(
+                session, f"WHOLESALE_BUY_{sym}", name=f"Wholesale {sym.title()}",
+                description="The post's back channel: coin over the hills, a "
+                            f"caravan-lot of {sym} back -- the shop key's "
+                            "errand alone (no house can run it).",
+                inputs={}, outputs={sym: D(spec["lot"])},
+                duration_ticks=6,
+                currency_cost=spec["w"] * D(spec["lot"]),
+                good_requirements={"SHOP_KEY": D("1")},
+                requires_facility="SALT_SHED",
+            )
+        if spec["dump"]:
+            production.create_recipe(
+                session, f"WHOLESALE_DUMP_{sym}", name=f"Dump {sym.title()}",
+                description="The post's overstock escape: a caravan-lot of "
+                            f"{sym} over the hills, coin back at the dump "
+                            "price -- the shop key's errand alone.",
+                inputs={sym: D(spec["lot"])},
+                outputs={"COIN": spec["d"] * D(spec["lot"])},
+                duration_ticks=4,
+                good_requirements={"SHOP_KEY": D("1")},
+                requires_facility="SALT_SHED",
+            )
+    # The counter's keep (run 49): the post CONSUMES to exist -- one
+    # log and one meal a day keep SHOP_OPEN lit; without them the
+    # counter goes dark (no quotes, no peddle). The shop key gates
+    # these too: a house cannot keep a shop it does not hold.
+    for sym in ("JERKY", "EGGS", "APPLES", "BERRIES"):
+        production.create_recipe(
+            session, f"KEEP_SHOP_{sym}", name="Keep Shop",
+            description="A day of open counter: one log for the crates and "
+                        f"one {sym.lower()} for the keeper -- the price a "
+                        "counter pays to exist (the shop key's errand alone).",
+            inputs={"WOOD": D("1"), sym: D("1")},
+            outputs={"SHOP_OPEN": D("1")}, duration_ticks=1,
+            good_requirements={"SHOP_KEY": D("1")},
+        )
     # --- Eating: meals as decisions (run 19) --------------------------------
     # Conscious eating: the FOOD need drinks only SATIETY, and only EAT
     # recipes fill the stomach. All meals are labor-free, instant

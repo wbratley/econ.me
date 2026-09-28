@@ -108,10 +108,20 @@ The **manufacturing tree is not code** — it emerges from which recipes
 exist, the same way the market list emerges from Market rows. Conservation
 is the engine invariant: a recipe transforms exactly what it declares.
 
+A recipe may also carry a **currency leg**: `currency_cost` is COIN
+debited from the crafter's account at start, refused with the honest
+balance when short (checked before any goods burn). The credit side
+needs no column — an output whose symbol is banked (some Account is
+denominated in it) already mints to the crafter's account, riding the
+ledger like every other money movement. Together they let a script
+trade with an outside counterparty (the stone age's wholesale
+channel: coin over the hills, stock back; overstock out, coin back).
+
 *Status: shipped — inputs/outputs/duration (Step 7); requirements with
 reservation (Step 12, § parcels): good requirements reserve against the
 entity's running processes and are unavailable to settlement, facility
-requirements reserve per parcel.*
+requirements reserve per parcel; currency_cost (the merchant rework,
+run 50).*
 
 **Machinery, wear, and reservation.** A good-type requirement means "hold
 ≥ N of SYMBOL while this runs" — checked at start, never consumed.
