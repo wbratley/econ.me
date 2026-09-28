@@ -222,6 +222,83 @@ def test_unbanked_output_stays_a_good(session):
     assert session.query(Transaction).count() == 0
 
 
+# --- recipe currency_cost (run 49: the merchant's wholesale channel) --------
+
+def test_currency_cost_debits_the_account_at_start(session):
+    """A recipe that COSTS coin draws it from the crafter's COIN account
+    the moment it starts, riding the ledger like every other debit --
+    the wholesale channel pays for its stock, coin first."""
+    from econengine.services import create_account
+
+    buyer = create_entity(session, "Buyer", EntityType.INDIVIDUAL)
+    # someone banks COIN -- that is what makes it a currency
+    bank = create_entity(session, "Bank", EntityType.INDIVIDUAL)
+    create_account(session, bank, "COIN")
+    acc = create_account(session, buyer, "COIN", initial_balance=Decimal("10"))
+    adjust_holding(session, buyer, "LABOR", Decimal("1"))
+    create_recipe(
+        session, "HAUL", inputs={"LABOR": Decimal("1")},
+        outputs={"WOOD": Decimal("2")}, duration_ticks=1,
+        currency_cost=Decimal("5.40"),
+    )
+
+    proc = start_process(session, buyer, "HAUL")
+    assert proc.status == ProcessStatus.RUNNING
+    assert acc.balance == Decimal("4.60")
+    tx = session.query(Transaction).filter_by(account_id=acc.id).one()
+    assert tx.tx_type == TransactionType.DEBIT
+    assert tx.reference == "cost HAUL"
+    complete_processes(session, tick_number=2)
+    assert get_holding(session, buyer.id, "WOOD").quantity == Decimal("2")
+
+
+def test_currency_cost_refusal_is_honest_and_rolls_back(session):
+    """Short coin refuses before any goods burn: the balance is named,
+    the inputs stay held, and the hills do not extend credit."""
+    from econengine.services import create_account
+
+    buyer = create_entity(session, "Buyer", EntityType.INDIVIDUAL)
+    bank = create_entity(session, "Bank", EntityType.INDIVIDUAL)
+    create_account(session, bank, "COIN")
+    acc = create_account(session, buyer, "COIN", initial_balance=Decimal("2"))
+    adjust_holding(session, buyer, "LABOR", Decimal("1"))
+    create_recipe(
+        session, "HAUL", inputs={"LABOR": Decimal("1")},
+        outputs={"WOOD": Decimal("2")}, duration_ticks=1,
+        currency_cost=Decimal("5.40"),
+    )
+
+    with pytest.raises(InsufficientHoldingsError, match="has 2 COIN"):
+        start_process(session, buyer, "HAUL")
+    assert acc.balance == Decimal("2")
+    assert get_holding(session, buyer.id, "LABOR").quantity == Decimal("1")
+    assert session.query(Process).count() == 0
+
+
+def test_currency_cost_without_account_names_the_zero_purse(session):
+    """No COIN account at all is a purse of zero -- named, not a
+    different error class."""
+    from econengine.services import create_account
+
+    buyer = create_entity(session, "Buyer", EntityType.INDIVIDUAL)
+    bank = create_entity(session, "Bank", EntityType.INDIVIDUAL)
+    create_account(session, bank, "COIN")
+    create_recipe(
+        session, "HAUL", inputs={}, outputs={"WOOD": Decimal("2")},
+        duration_ticks=1, currency_cost=Decimal("1"),
+    )
+    with pytest.raises(InsufficientHoldingsError, match="has 0 COIN"):
+        start_process(session, buyer, "HAUL")
+
+
+def test_currency_cost_must_be_positive(session):
+    with pytest.raises(ValueError, match="currency_cost"):
+        create_recipe(
+            session, "DUD", inputs={}, outputs={"WOOD": Decimal("1")},
+            duration_ticks=0, currency_cost=Decimal("0"),
+        )
+
+
 # --- facility auto-bind (run 15: 20 "must be bound to a parcel" refusals) ---
 
 def _fire_world(session):

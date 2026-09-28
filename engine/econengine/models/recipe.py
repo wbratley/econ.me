@@ -80,6 +80,18 @@ class Recipe(Base):
     # good_requirement (present, reserved, never consumed); the harvest
     # is priced by the herd at completion. One entry max -- one herd,
     # one harvest. NULL = fixed outputs (all of history).
+    # Currency legs (run 49's dead market): a recipe may COST money --
+    # currency_cost COIN, debited from the crafter's account at start
+    # like any input, refused with the honest balance when short (the
+    # wholesale channel: the post PAYS the hills for stock, coin first,
+    # crates at completion). The credit side needs no column: an output
+    # whose symbol is banked (some Account is denominated in it) already
+    # mints to the account (see _credit_output) -- a dump recipe is just
+    # inputs + a COIN output. Single-money worlds; the stone age coins
+    # in COIN.
+    currency_cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     scales_with: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

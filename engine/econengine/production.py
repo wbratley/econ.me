@@ -104,6 +104,7 @@ def create_recipe(
     requires_place_kind: str | None = None,
     requires_place_key: str | None = None,
     scales_with: dict | None = None,
+    currency_cost: Decimal | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -225,6 +226,15 @@ def create_recipe(
                 f"never consumed")
         scales_with = {symbol: str(cap)}
 
+    # The COIN leg (run 49): cost debited from the crafter's account at
+    # start, refused with the honest balance when short -- the wholesale
+    # channel pays for its stock, coin first. Positive when set, like
+    # every other input quantity.
+    if currency_cost is not None:
+        currency_cost = Decimal(currency_cost).quantize(_QUANTUM)
+        if currency_cost <= 0:
+            raise ValueError("currency_cost must be positive when set")
+
     recipe = Recipe(
         code=code.upper(),
         name=name,
@@ -241,6 +251,7 @@ def create_recipe(
         requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
         scales_with=scales_with,
+        currency_cost=currency_cost,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
@@ -513,6 +524,27 @@ def start_process(
                 f"entity {entity.id} has {available} {req.symbol} effective unreserved, "
                 f"recipe {recipe.code} requires {req.quantity}"
             )
+
+    if recipe.currency_cost is not None:
+        # The COIN leg: checked and debited BEFORE any goods burn, so a
+        # short purse refuses with the holdings intact (the caller's
+        # savepoint would roll them back anyway -- this way a bare call
+        # keeps the same promise). The wholesale channel pays for its
+        # stock, coin first -- the hills do not extend credit.
+        from . import services
+
+        account = next(
+            (a for a in entity.accounts if a.currency == "COIN"), None)
+        if account is None or account.balance < recipe.currency_cost:
+            held = account.balance if account is not None else Decimal("0")
+            raise InsufficientHoldingsError(
+                f"entity {entity.id} has {held} COIN, "
+                f"recipe {recipe.code} costs {recipe.currency_cost} -- "
+                f"the counter does not extend credit"
+            )
+        services.withdraw(
+            session, account, recipe.currency_cost,
+            f"cost {recipe.code}")
 
     for item in recipe.inputs:
         available = _available_quantity(session, entity, item.symbol)

@@ -1056,23 +1056,40 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
         by_sym[("sell", mid[o.market_id])] = o
     for o in buys:
         by_sym[("buy", mid[o.market_id])] = o
-    assert by_sym[("sell", "BERRIES")].limit_price == Decimal("1.25")
+    # the wholesale band prices the opening book: retail = w x 1.30
+    # (JERKY 0.90 -> 1.17, BERRIES 0.50 -> 0.65, CHICKEN 3.00 -> 3.90,
+    # WATERSKIN 4.50 -> 5.85), never below w x 1.05
+    assert by_sym[("sell", "JERKY")].limit_price == Decimal("1.17")
+    assert by_sym[("sell", "BERRIES")].limit_price == Decimal("0.65")
     assert by_sym[("sell", "BERRIES")].quantity == Decimal("60")
     assert by_sym[("sell", "COOKED_MEAT")].limit_price == Decimal("1.50")
     # the larder's seed stock (P5): two hens on the shelf at the ask
-    assert by_sym[("sell", "CHICKEN")].limit_price == Decimal("4.00")
+    assert by_sym[("sell", "CHICKEN")].limit_price == Decimal("3.90")
     assert by_sym[("sell", "CHICKEN")].quantity == Decimal("2")
-    # bids on every raw good, pro-rata across the P5 purse (7 goods
-    # x 4 = 44 against 30 COIN -> every quantity floors to 2);
-    # BERRIES itself is skipped -- the ladder is already stuffed (60 >= 20)
+    # bids on every raw good the bands allow, at half the hills'
+    # charge -- never above 0.70 x w, because that is what the
+    # wholesale door would charge instead (run 49's 5.00 egg bid,
+    # which drained the purse into eggs it could not resell, is dead)
     for sym in ("MEAT", "WOOD", "YARN", "FLINT", "APPLES", "EGGS", "PELT"):
-        assert by_sym[("buy", sym)].quantity == Decimal("2")
-    assert ("buy", "BERRIES") not in by_sym
-    assert by_sym[("buy", "MEAT")].limit_price == Decimal("1.00")
-    assert by_sym[("buy", "YARN")].limit_price == Decimal("2.00")
-    assert by_sym[("buy", "EGGS")].limit_price == Decimal("1.20")
-    assert by_sym[("buy", "APPLES")].limit_price == Decimal("0.80")
-    # it never crosses itself: BERRIES ask stands even with no bid
+        assert by_sym[("buy", sym)].quantity == Decimal("4")
+    assert ("buy", "BERRIES") not in by_sym   # 60 held > the band's 20
+    assert by_sym[("buy", "MEAT")].limit_price == Decimal("0.50")
+    assert by_sym[("buy", "YARN")].limit_price == Decimal("0.75")
+    assert by_sym[("buy", "EGGS")].limit_price == Decimal("0.35")
+    assert by_sym[("buy", "APPLES")].limit_price == Decimal("0.35")
+    # the wholesale door already left: EGGS stood under its minimum
+    # (0 < 8) and was the cheapest errand (5.60 coin), so the runner
+    # is out -- and THE KEY IS THE RUNNER (a good-requirement reserves
+    # while its process runs): no second errand this tick, so the
+    # 60-berry overstock waits its turn behind the egg run
+    started = [e for e in _events(session, "start_process")]
+    recipes = [e["params"]["recipe"] for e in started
+               if e.get("status") != "rejected"]
+    assert "WHOLESALE_BUY_EGGS" in recipes
+    assert not any(r.startswith("WHOLESALE_DUMP") for r in recipes)
+    assert _hold(session, post.id, "BERRIES") == Decimal("51")  # 60 - rot
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    assert acc.balance == stone_age.POST_COIN - Decimal("5.60")
 
 
 def test_post_peddles_its_menu_on_the_cadence(session):
@@ -1097,7 +1114,7 @@ def test_post_peddles_its_menu_on_the_cadence(session):
 
 
 def test_post_ask_rises_when_food_sells(session):
-    """Demand moves the ask up 5% the tick after a fill."""
+    """Demand moves the retail ask up 5% the tick after a fill."""
     create_content(session)
     post, buyer = _post(session), _biz(session, "Buyer")
     _at(session, buyer, "POST")   # every market trades AT the post (S4)
@@ -1108,10 +1125,11 @@ def test_post_ask_rises_when_food_sells(session):
     _run(session, 1)                    # the fill
     trades = [e for e in _events(session, "trade")]
     assert trades and Decimal(trades[-1]["quantity"]) == Decimal("2")
-    assert buyer.accounts[0].balance == SEAT_COIN - Decimal("4")
+    assert Decimal(str(trades[-1]["price"])) == Decimal("1.17")
+    assert buyer.accounts[0].balance == SEAT_COIN - Decimal("2.34")
     _run(session, 1)                    # the post reads its fill
     ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("2.10")]
+    assert [o.limit_price for o in ask] == [Decimal("1.23")]   # 1.17 x 1.05
 
 
 def test_post_bid_falls_when_supply_arrives(session):
@@ -1122,16 +1140,16 @@ def test_post_bid_falls_when_supply_arrives(session):
     markets.adjust_holding(session, seller, "WOOD", Decimal("10"))
     _run(session, 1)
     markets.place_order(session, seller.id, "WOOD", "sell",
-                        Decimal("3"), Decimal("1.00"),
+                        Decimal("3"), Decimal("0.50"),
                         next(a.id for a in seller.accounts if a.currency == COIN))
-    _run(session, 1)                    # the fill (pro-rata purse bids 2)
-    filled = _hold(session, post.id, "WOOD")
+    _run(session, 1)                    # the fill (the purse bids 4)
+    filled = _hold(session, post.id, "WOOD") - Decimal("6")
     assert filled >= Decimal("2")
     assert next(a for a in seller.accounts if a.currency == COIN).balance \
-        == SEAT_COIN + filled
+        == SEAT_COIN + filled * Decimal("0.50")
     _run(session, 1)                    # the post reads its fill
     bids = _open_orders(session, post.id, "WOOD", OrderSide.BUY)
-    assert [o.limit_price for o in bids] == [Decimal("0.95")]
+    assert [o.limit_price for o in bids] == [Decimal("0.47")]   # 0.50 x 0.95
 
 
 def test_post_prices_drift_toward_trade_when_quiet(session):
@@ -1143,67 +1161,127 @@ def test_post_prices_drift_toward_trade_when_quiet(session):
     _run(session, 3)
     # three ticks of resting, only two aged: prices hold
     ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("1.25")]
+    assert [o.limit_price for o in ask] == [Decimal("0.65")]
     _run(session, 1)
     ask = _open_orders(session, post.id, "BERRIES", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("1.19")]   # 1.25*0.95
+    assert [o.limit_price for o in ask] == [Decimal("0.62")]   # 0.65 x 0.95
     bid = _open_orders(session, post.id, "MEAT", OrderSide.BUY)
-    assert [o.limit_price for o in bid] == [Decimal("1.03")]   # 1.00*1.03
+    assert [o.limit_price for o in bid] == [Decimal("0.52")]   # 0.50 x 1.03
 
 
 def test_post_never_bids_beyond_its_coin(session):
-    """The purse runs out: the coin is split pro-rata across every good
-    the post wants -- a lean budget shrinks all bids together instead
-    of letting the head of the list eat the coin and starve the tail
-    (run 4: MEAT/WOOD bids at the 5.00 cap consumed the purse; YARN and
-    FLINT never quoted, so 57 FLINT of surplus found no bid)."""
+    """The purse runs out: the coin beyond the wholesale RESERVE is
+    split pro-rata across every good the post wants -- a lean budget
+    shrinks all bids together instead of letting the head of the list
+    eat the coin and starve the tail (run 4: MEAT/WOOD bids at the
+    5.00 cap consumed the purse; YARN and FLINT never quoted, so 57
+    FLINT of surplus found no bid)."""
     create_content(session)
     post = _post(session)
     acc = next(a for a in post.accounts if a.currency == COIN)
-    acc.balance = Decimal("5.5")       # a lean purse
+    acc.balance = Decimal("10")        # 4 beyond the RESERVE
     _run(session, 1)
     buys = _open_orders(session, post.id, side=OrderSide.BUY)
     committed = sum(o.quantity * o.limit_price for o in buys)
-    assert committed <= Decimal("5.5")
+    assert committed <= Decimal("4")
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     by_sym = {mid[o.market_id]: o for o in buys}
-    # too thin to spread 4 each (P5: the purse serves eight wants now):
-    # one unit of the cheapest four fits (APPLES 0.80 + MEAT 1.00 +
-    # WOOD 1.00 + EGGS 1.20 = 4.00 <= 5.5); YARN's 2.00 does not --
-    # and NO good hoards the purse
-    assert by_sym["APPLES"].quantity == Decimal("1")
-    assert by_sym["MEAT"].quantity == Decimal("1")
-    assert by_sym["WOOD"].quantity == Decimal("1")
-    assert by_sym["EGGS"].quantity == Decimal("1")
-    assert "YARN" not in by_sym and "FLINT" not in by_sym
+    # too thin to spread 4 each: the cheapest goods get one unit apiece
+    # (APPLES 0.35 + EGGS 0.35 + MEAT 0.50 + WOOD 0.50 + YARN 0.75 +
+    # FLINT 0.75 = 3.20 <= 4); PELT's 1.50 does not fit -- and NO good
+    # hoards the purse
+    assert set(by_sym) == {"APPLES", "EGGS", "MEAT", "WOOD",
+                           "YARN", "FLINT"}
+    assert all(o.quantity == Decimal("1") for o in buys)
 
 
 def test_post_dark_bids_freeze_instead_of_drifting(session):
-    """A bid that cannot afford to stand (purse drained) goes DARK --
-    and a dark order does not drift. Run 4 walked dark bids to the 5.00
-    cap for nothing; the frozen price returns the moment coin does."""
+    """A bid that cannot afford to stand (purse drained to the RESERVE)
+    goes DARK -- and a dark order does not drift. Run 4 walked dark
+    bids to the 5.00 cap for nothing; the frozen price returns the
+    moment coin does."""
     create_content(session)
     post = _post(session)
     acc = next(a for a in post.accounts if a.currency == COIN)
-    acc.balance = Decimal("0.10")      # nothing is affordable
+    acc.balance = Decimal("0.10")      # nothing beyond the RESERVE
     _run(session, 8)
     assert _open_orders(session, post.id, side=OrderSide.BUY) == []
     state = _post_script(session).state or {}
-    assert Decimal(str(state["bid"]["MEAT"])) == Decimal("1.00")  # frozen
-    assert Decimal(str(state["bid"]["YARN"])) == Decimal("2.00")
+    assert Decimal(str(state["bid"]["MEAT"])) == Decimal("0.50")  # frozen
+    assert Decimal(str(state["bid"]["YARN"])) == Decimal("0.75")
     # coin returns: the bids come back at the frozen prices
     acc.balance = Decimal("12")
     _run(session, 1)
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     buys = {mid[o.market_id]: o for o in
             _open_orders(session, post.id, side=OrderSide.BUY)}
-    assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("1.00")
-    # every want now (the rotted larder re-opened the BERRIES appetite):
-    # 12 coin against a 44-coin want -- every bid comes back, pro-rated
-    # to one unit each (P5: the purse serves the larder goods too)
+    assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("0.50")
+    # every want now: 6 spendable coin against a ~15-coin want --
+    # every bid comes back, pro-rated to one unit each (BERRIES too:
+    # the dump door and the rot walked the 60-berry hoard under the
+    # band's 20, so its appetite is back)
     assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
                          "APPLES", "EGGS", "PELT"}
     assert all(o.quantity == Decimal("1") for o in buys.values())
+
+
+def test_the_dump_door_mints_coin_from_overstock(session):
+    """Run 49's corpse state -- goods with no coin and no way back -- is
+    impossible now: over the band's max, a lot goes back over the hills
+    and coin comes home (a banked output mints to the account, the
+    same production-mint the shiny-stone gather uses)."""
+    create_content(session)
+    _no_wolves(session)
+    post = _post(session)
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    # nothing under its minimum (no buy errand competes for the key),
+    # nothing else over its max, and 45 wood against a 30-max band:
+    # fifteen over
+    markets.adjust_holding(session, post, "APPLES", Decimal("20"))
+    markets.adjust_holding(session, post, "EGGS", Decimal("12"))
+    markets.adjust_holding(session, post, "WATERSKIN", Decimal("1"))
+    markets.adjust_holding(session, post, "BERRIES",
+                           -POST_FOOD["BERRIES"] + Decimal("25"))
+    markets.adjust_holding(session, post, "WOOD", Decimal("39"))
+    _run(session, 6)     # dumps are 4 ticks
+    done = [e for e in _events(session, "process_completed")
+            if e["recipe"] == "WHOLESALE_DUMP_WOOD"]
+    assert done and Decimal(str(done[0]["outputs"]["COIN"])) == Decimal("5.00")
+    assert acc.balance == stone_age.POST_COIN + Decimal("5.00")
+    assert _hold(session, post.id, "WOOD") <= Decimal("30")  # back in band
+
+
+def test_the_dark_counter_pays_its_keep(session):
+    """Upkeep (run 49's honest merchant): one log and one meal a day
+    keep SHOP_OPEN lit. No wood and no meal and the counter goes DARK
+    -- no quotes, no peddle, one honest say -- and the moment the
+    keeper can pay again, the shop reopens."""
+    create_content(session)
+    _no_wolves(session)
+    post = _post(session)
+    # burn the bank: no wood, no meal on the shelf, the counter's day
+    # nearly spent
+    for sym, qty in (("WOOD", Decimal("6")),
+                     ("JERKY", -POST_FOOD["JERKY"] + Decimal("1")),
+                     ("BERRIES", -POST_FOOD["BERRIES"]),
+                     ("COOKED_MEAT", -POST_FOOD["COOKED_MEAT"])):
+        markets.adjust_holding(session, post, sym, qty)
+    markets.adjust_holding(session, post, "EGGS", Decimal("0"))
+    markets.adjust_holding(session, post, "SHOP_OPEN", -Decimal("0.96"))
+    _run(session, 1)
+    assert _open_orders(session, post.id, side=OrderSide.BUY) == []
+    assert _open_orders(session, post.id, side=OrderSide.SELL) == []
+    dark_says = [e for e in _events(session, "say")
+                 if "dark" in e.get("params", {}).get("text", "")]
+    assert dark_says                    # the honest word, said once
+    # the keeper pays: a log and the last jerky relight the counter
+    markets.adjust_holding(session, post, "WOOD", Decimal("1"))
+    _run(session, 3)                    # KEEP_SHOP is 1 tick + reopen
+    started = [e["params"]["recipe"] for e in _events(session, "start_process")
+               if e.get("status") != "rejected"]
+    assert "KEEP_SHOP_JERKY" in started
+    assert _hold(session, post.id, "SHOP_OPEN") > Decimal("0.5")  # relit
+    assert _open_orders(session, post.id, side=OrderSide.SELL)  # reopened
 
 
 def test_post_salts_its_meat_into_jerky(session):
@@ -1243,70 +1321,113 @@ def test_the_salt_shed_binds_the_post_alone(session):
     assert proc.recipe.code == "SALT_MEAT"
 
 
-def test_the_caravan_restocks_a_bare_shelf(session):
-    """Run 48's faucet death: three runs straight the food shelf went
-    EMPTY mid-game while coin piled at a starving counter -- the houses
-    kept their meat, the shed had nothing to salt, and coin could not
-    become calories at ANY price. The famine rung: a bare never-rot
-    shelf and an idle back room send the runner -- two logs, two jerky
-    -- and the batch is priced one rung UP the ladder (dear calories
-    in a hungry world)."""
+def test_the_wholesale_door_restocks_a_bare_shelf(session):
+    """Run 49's real failure, answered: the post coin-broke at t224
+    with a bare shelf and no way to turn coin into calories. The
+    wholesale door: a staple under its minimum and coin beyond the
+    RESERVE sends a runner -- coin debited at start, a caravan lot of
+    stock back at completion, and the lot retails one famine rung UP
+    (dear calories in a hungry world)."""
     create_content(session)
     _no_wolves(session)
     post = _post(session)
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    acc.balance = Decimal("20")
     markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
-    markets.adjust_holding(session, post, "WOOD", Decimal("4"))
-    _run(session, 8)      # caravan is 6 ticks from a bare shelf
+    markets.adjust_holding(session, post, "BERRIES",
+                           -POST_FOOD["BERRIES"])   # no dump errand
+    _run(session, 15)    # one key, one errand: BERRIES (6t) then JERKY
     done = [e for e in _events(session, "process_completed")
-            if e["recipe"] == "RESTOCK_CARAVAN"]
-    assert len(done) == 1
-    assert Decimal(str(done[0]["outputs"]["JERKY"])) == Decimal("2")
-    assert _hold(session, post.id, "JERKY") == Decimal("2")  # never rots
-    # the ladder: 2.00 + one famine rung
+            if e["recipe"].startswith("WHOLESALE_BUY")]
+    codes = sorted(e["recipe"] for e in done)
+    # cheapest errand first, and only one at a time (the SHOP_KEY is
+    # the runner): BERRIES 5.00 (stripped to 0, min 10) leaves t1 and
+    # returns t7; JERKY 5.40 cannot leave until the key is back
+    assert codes == ["WHOLESALE_BUY_BERRIES", "WHOLESALE_BUY_JERKY"]
+    jerky = next(e for e in done if e["recipe"] == "WHOLESALE_BUY_JERKY")
+    assert Decimal(str(jerky["outputs"]["JERKY"])) == Decimal("6")
+    assert _hold(session, post.id, "JERKY") == Decimal("6")  # never rots
+    assert acc.balance == Decimal("20") - Decimal("5.00") - Decimal("5.40")
+    # the famine ladder: wholesale jerky retails a rung up
     state = _post_script(session).state
-    assert state["caravans"] == 1
-    assert Decimal(str(state["ask"]["JERKY"])) == Decimal("2.75")
+    assert state["rungs"] == 1
     ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("2.75")]
+    assert [o.limit_price for o in ask] == [Decimal("1.92")]  # 1.17 + 0.75
 
 
-def test_the_caravan_waits_for_the_cheaper_rung(session):
-    """The caravan is the LAST resort: meat the forest sells is salted
-    first (4 ticks, no wood), and while racks are busy no runner
-    leaves -- the hills feed the counter only what the forest will
-    not."""
+def test_the_salt_rack_gates_the_wholesale_door(session):
+    """Salt what the forest sells FIRST (the cheaper rung -- 4 ticks,
+    no coin): while racks are busy salting, no runner leaves. The
+    hills feed the counter only what the forest will not."""
     create_content(session)
     _no_wolves(session)
     post = _post(session)
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    acc.balance = Decimal("20")
     markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
-    markets.adjust_holding(session, post, "WOOD", Decimal("4"))
+    markets.adjust_holding(session, post, "BERRIES", -POST_FOOD["BERRIES"])
     markets.adjust_holding(session, post, "MEAT", Decimal("4"))
     _run(session, 2)
-    started = [e for e in _events(session, "start_process")
-               if e.get("params", {}).get("recipe")
-               in ("SALT_MEAT", "RESTOCK_CARAVAN")]
+    started = [e for e in _events(session, "start_process")]
     recipes = [e["params"]["recipe"] for e in started]
     assert recipes.count("SALT_MEAT") == 2      # both racks busy
-    assert "RESTOCK_CARAVAN" not in recipes     # the runner waits
-    assert _hold(session, post.id, "WOOD") == Decimal("4")  # crates unspent
+    assert not any(r.startswith("WHOLESALE_") for r in recipes)
+    assert acc.balance == Decimal("20")        # no coin left the purse
 
 
-def test_the_caravan_binds_the_post_alone(session):
-    """The famine rung is the merchant's edge too: a house at the POST
-    place with logs in hand cannot bind the OWNER shed -- houses buy
-    the dear calories, they do not import them."""
+def test_the_wholesale_door_binds_the_post_alone(session):
+    """The hills deal with the SHOP KEY alone: a house at the POST
+    place with coin in hand cannot run the errand -- standing at the
+    counter is not dealing with the hills."""
     create_content(session)
     _no_wolves(session)
     house = _seat(session, "Neighbor")
     _at(session, house, "POST")
-    markets.adjust_holding(session, house, "WOOD", Decimal("4"))
     with pytest.raises(ValueError, match="SALT_SHED"):
-        production.start_process(session, house, "RESTOCK_CARAVAN")
+        production.start_process(session, house, "WHOLESALE_BUY_JERKY")
     post = _post(session)
-    markets.adjust_holding(session, post, "JERKY", -POST_FOOD["JERKY"])
-    markets.adjust_holding(session, post, "WOOD", Decimal("2"))
-    proc = production.start_process(session, post, "RESTOCK_CARAVAN")
-    assert proc.recipe.code == "RESTOCK_CARAVAN"
+    proc = production.start_process(session, post, "WHOLESALE_BUY_JERKY")
+    assert proc.recipe.code == "WHOLESALE_BUY_JERKY"
+    acc = next(a for a in post.accounts if a.currency == COIN)
+    assert acc.balance == stone_age.POST_COIN - Decimal("5.40")
+
+
+def test_the_wholesale_ladder_is_pinned_to_the_recipes(session):
+    """The lua WHOLESALE table and stone_age.WHOLESALE are ONE ladder:
+    this parses the lua and pins every number to the recipes' own
+    currency legs and lots, so the band the seats read is the band
+    the doors trade -- drift between the two is the silent price bug
+    (and the off-switch is deleting the recipes, lua be damned)."""
+    import re
+    from pathlib import Path
+
+    create_content(session)
+    src = (Path(stone_age.__file__).parent / "lua" / "trading_post.lua").read_text()
+    lua = {}
+    for m in re.finditer(
+            r"(\w+)\s*=\s*\{\s*w\s*=\s*([\d.]+),\s*d\s*=\s*([\d.]+),"
+            r"\s*lot\s*=\s*(\d+),\s*buy\s*=\s*(true|false),"
+            r"\s*dump\s*=\s*(true|false)\s*\}", src):
+        lua[m.group(1)] = (Decimal(m.group(2)), Decimal(m.group(3)),
+                           int(m.group(4)), m.group(5) == "true",
+                           m.group(6) == "true")
+    assert lua and set(lua) == set(stone_age.WHOLESALE)
+    for sym, spec in stone_age.WHOLESALE.items():
+        w, d, lot, buy, dump = lua[sym]
+        assert (w, d, lot, buy, dump) == (spec["w"], spec["d"], spec["lot"],
+                                          spec["buy"], spec["dump"]), sym
+        if buy:
+            r = production.get_recipe(session, f"WHOLESALE_BUY_{sym}")
+            assert r is not None and r.currency_cost == spec["w"] * spec["lot"]
+            assert next(o.quantity for o in r.outputs if o.symbol == sym) \
+                == spec["lot"]
+        if dump:
+            r = production.get_recipe(session, f"WHOLESALE_DUMP_{sym}")
+            assert r is not None
+            assert next(i.quantity for i in r.inputs if i.symbol == sym) \
+                == spec["lot"]
+            assert next(o.quantity for o in r.outputs if o.symbol == "COIN") \
+                == spec["d"] * spec["lot"]
 
 
 def test_post_reanchors_jerky_off_its_meat_buys(session):
@@ -1320,12 +1441,13 @@ def test_post_reanchors_jerky_off_its_meat_buys(session):
     post, hunter = _post(session), _biz(session, "Hunter")
     _at(session, hunter, "POST")
     script = _post_script(session)
+    script = _post_script(session)
     script.state = {
-        "ask": {"BERRIES": "1.25", "COOKED_MEAT": "1.50", "JERKY": "2.00",
-                "CHICKEN": "4.00", "WATERSKIN": "6.00", "BED": "5.00"},
-        "bid": {"BERRIES": "1.00", "MEAT": "0.85", "WOOD": "1.00",
-                "YARN": "2.00", "FLINT": "2.00", "PELT": "3.00",
-                "APPLES": "0.80", "EGGS": "1.20"},
+        "ask": {"COOKED_MEAT": "1.50", "BED": "5.00"},
+        "bid": {"BERRIES": "0.25", "MEAT": "0.85", "WOOD": "0.50",
+                "YARN": "0.75", "FLINT": "0.75", "PELT": "1.50",
+                "APPLES": "0.35", "EGGS": "0.35"},
+        "cost": {}, "adj": {}, "rungs": 0,
         "quiet": {}, "live": {}, "ids": {}, "answered": {},
     }
     markets.adjust_holding(session, hunter, "MEAT", Decimal("4"))
@@ -1337,10 +1459,12 @@ def test_post_reanchors_jerky_off_its_meat_buys(session):
     _run(session, 1)                    # t2: the fill -- at 0.85
     _run(session, 1)                    # t3: the post reads its fill
     state = _post_script(session).state
-    assert state["cost_meat"] == pytest.approx(0.85)
-    assert Decimal(str(state["ask"]["JERKY"])) == Decimal("1.70")
+    assert Decimal(str(state["cost"]["MEAT"])) == pytest.approx(Decimal("0.85"))
+    # the salt anchor: two raw make two jerky, so the jerky basis IS
+    # the meat fill -- retail follows at the margin
+    assert Decimal(str(state["cost"]["JERKY"])) == pytest.approx(Decimal("0.85"))
     ask = _open_orders(session, post.id, "JERKY", OrderSide.SELL)
-    assert [o.limit_price for o in ask] == [Decimal("1.70")]
+    assert [o.limit_price for o in ask] == [Decimal("1.10")]  # .85 x 1.3
 
 
 def test_post_jerky_never_rots_and_feeds(session):
@@ -2390,16 +2514,17 @@ def test_thirst_kills_the_dry_larder_on_day_three(session):
 
 def test_the_post_anchors_a_waterskin(session):
     """The price anchor (P3): one waterskin on the post's shelf, asked
-    at 6.00 -- between \"sew it yourself\" (one pelt, bid 3.00) and the
-    egg trade it unlocks. The market exists; the shelf holds exactly
-    one; water itself is never sold (the tap is free)."""
+    at the wholesale band's retail (4.50 x 1.30 = 5.85 -- between "sew
+    it yourself" and the egg trade it unlocks). The market exists; the
+    shelf holds exactly one; water itself is never sold (the tap is
+    free)."""
     create_content(session)
     post = _post(session)
     assert _hold(session, post.id, "WATERSKIN") == Decimal("1")
     _run(session, 2)
     sell = _open_orders(session, post.id, "WATERSKIN", OrderSide.SELL)
     assert len(sell) == 1
-    assert Decimal(next(iter(sell)).limit_price) == Decimal("6.00")
+    assert Decimal(next(iter(sell)).limit_price) == Decimal("5.85")
     # water itself is never sold: the tap is free, the SKIN is the stock
     assert not any(m.symbol in ("WATER", "SKINWATER")
                    for m in session.execute(select(Market)).scalars())
