@@ -951,6 +951,229 @@ def _live_panel(meta: dict, snapshots: list[dict]) -> str:
             f"<script>{js}</script>")
 
 
+def _cond_qty(view: dict, sym: str) -> Decimal:
+    return next((Decimal(h["quantity"]) for h in view.get("holdings", [])
+                 if h.get("symbol") == sym), Decimal("0"))
+
+
+def _house_status(snap: dict, name: str) -> str:
+    """The house's map status this round (public fact): active or
+    incapacitated. Pre-map snapshots say '' — treated as unknown."""
+    for ent in (snap.get("world_map") or {}).get("entities") or []:
+        if ent.get("name") == name:
+            return ent.get("status", "")
+    return ""
+
+
+def _death_tick(view: dict) -> "int | None":
+    """The tick the house's needs froze — the death tick."""
+    ticks = [fd.get("updated_tick") for fd in view.get("needs", [])]
+    ticks = [t for t in ticks if isinstance(t, int)]
+    return min(ticks) if ticks else None
+
+
+def _run_banner(meta: dict, snapshots: list[dict]) -> str:
+    """The state-at-a-glance banner (run 50's lesson: a watcher saw
+    the dashboard go dark with the sidecar and had to ask what
+    happened; the page knew and never said). Extinct runs get the
+    loud red strip with the plain-language reason."""
+    status = meta.get("status", "live")
+    total = meta.get("rounds_total", "?")
+    last = snapshots[-1] if snapshots else {}
+    tick = (last.get("ticks") or [0])[-1]
+    if status == "live":
+        body = (f'<span class="bn-state bn-live">● running</span>'
+                f'<span>round {meta.get("round", len(snapshots))} of {total}'
+                f' · tick {tick}</span>'
+                f'<span class="quiet">{_hms(meta.get("elapsed_s"))} elapsed —'
+                ' aggregates refresh on reload</span>')
+        cls = "banner"
+    elif status == "complete":
+        body = (f'<span class="bn-state bn-done">✓ finished</span>'
+                f'<span>all {total} rounds · tick {tick} ·'
+                f' {_hms(meta.get("elapsed_s"))}</span>')
+        cls = "banner bn-complete"
+    else:  # extinct: the run stopped itself — say so, loudly
+        names = list(last.get("dynasties", {}).keys())
+        body = (f'<span class="bn-state bn-extinct">☠ run ended — total'
+                ' extinction</span>'
+                f'<span>no dynasty left to act: stopped after round'
+                f' {meta.get("round", len(snapshots))} of {total}'
+                f' · tick {tick} · {_hms(meta.get("elapsed_s"))}</span>'
+                + (f'<span class="quiet">lost: {_esc(", ".join(names))}</span>'
+                   if names else ""))
+        cls = "banner bn-extinct"
+    return f'<div class="{cls}">{body}</div>'
+
+
+def _roster_strip(snapshots: list[dict]) -> str:
+    """One card per house — alive or dead, when, and the climb that
+    killed them — plus the merchant post and the wildlife count. This
+    is the layer that answers 'who's left and how is the post' without
+    reading the database (run 50: three lines of SQL to learn what the
+    page should have said at the top)."""
+    if not snapshots:
+        return ""
+    last = snapshots[-1]
+    kill_lines: dict[str, Decimal] = {}
+    for s in reversed(snapshots):     # the most recent world that has them
+        kl = {k: Decimal(str(v)) for k, v in (s.get("kill_lines") or {}).items()
+              if str(v).replace(".", "").isdigit()}
+        if kl:
+            kill_lines = kl
+            break
+    cards = []
+    for name, view in last.get("dynasties", {}).items():
+        # death round: the first snapshot whose map shows the house down
+        death = next((s for s in snapshots
+                      if _house_status(s, name) == "incapacitated"), None)
+        if death is None:
+            status_chip = '<span class="chip chip-alive">alive</span>'
+            where = next((e.get("place") for e in
+                          (last.get("world_map") or {}).get("entities") or []
+                          if e.get("name") == name), "")
+            tail = f'at {_esc(where)}' if where else ""
+        else:
+            dtick = _death_tick(death.get("dynasties", {}).get(name) or {})
+            when = f"t{dtick}" if dtick else f"round {death['round']}"
+            status_chip = f'<span class="chip chip-dead">dead {when}</span>'
+            # the honest cause: the worst condition climb in the round
+            # BEFORE the fall, against its kill line — labeled as the
+            # climb, not the verdict
+            prior = next((s for s in reversed(snapshots[:snapshots.index(death)])
+                          if _house_status(s, name) == "active"), None)
+            climb = ""
+            if prior is not None and kill_lines:
+                pv = prior.get("dynasties", {}).get(name) or {}
+                ratios = [(_cond_qty(pv, sym), sym, kl) for sym, kl
+                          in kill_lines.items()]
+                ratios = [(q, s, kl) for q, s, kl in ratios if q > 0]
+                if ratios:
+                    q, sym, kl = max(ratios, key=lambda r: r[0] / r[2])
+                    climb = (f'climbing {_esc(sym)} {_fmt(q)}/{_fmt(kl)}'
+                             f' ({int(q / kl * 100)}%)')
+            tail = climb or "the fall before the freeze"
+        coin = dynasty_money(view)
+        model = view.get("model", "")
+        short = model.split(":")[-1][:28] if model else ""
+        cards.append(
+            f'<div class="rcard">{status_chip}'
+            f'<div class="rcard-name">{_esc(name)}</div>'
+            f'<div class="rcard-tail quiet">{_esc(tail)}</div>'
+            f'<div class="rcard-coin">{_fmt(coin)} coin</div>'
+            f'<div class="rcard-model quiet">{_esc(short)}</div></div>')
+    # the post card (the lever, run 50): coin, the lamp, dark episodes
+    biz = ((last.get("cast") or {}).get("businesses") or [None])[0]
+    if biz is not None:
+        lamp = next((Decimal(h["quantity"]) for h in biz.get("holdings", [])
+                     if h.get("symbol") == "SHOP_OPEN"), None)
+        coin = next((Decimal(a["balance"]) for a in biz.get("accounts", [])
+                     if a.get("currency") == "COIN"), Decimal("0"))
+        lamp_txt = (f'lamp {_fmt(lamp)}' if lamp is not None else "lamp —")
+        darks = sum(int(s.get("events_by_type", {}).get("facility_dark", 0))
+                    for s in snapshots)
+        run_procs = len([p for p in biz.get("processes", [])
+                         if p.get("status") in ("running", "RUNNING")])
+        cards.append(
+            f'<div class="rcard rcard-post">'
+            '<span class="chip chip-post">the post</span>'
+            f'<div class="rcard-name">{_esc(biz.get("name", "business"))}</div>'
+            f'<div class="rcard-tail quiet">{lamp_txt}'
+            f' · {darks} dark episodes · {run_procs} running</div>'
+            f'<div class="rcard-coin">{_fmt(coin)} coin</div>'
+            '<div class="rcard-model quiet">the merchant lever</div></div>')
+    # wildlife: counted off the map
+    wild = (last.get("cast") or {}).get("wildlife") or {}
+    if not wild:
+        counts: dict[str, dict[str, int]] = {}
+        for ent in (last.get("world_map") or {}).get("entities") or []:
+            nm = ent.get("name", "")
+            for beast in ("Wolf", "Boar"):
+                if beast.lower() in nm.lower():
+                    cur = counts.setdefault(beast, {"active": 0, "down": 0})
+                    cur["active" if ent.get("status") == "active" else "down"] += 1
+        wild = counts
+    if wild:
+        bits = " · ".join(f'{_esc(b)} {v.get("active", 0)} alive'
+                           f'/{v.get("active", 0) + v.get("down", 0)}'
+                           for b, v in sorted(wild.items()))
+        cards.append(f'<div class="rcard rcard-wild">'
+                     '<span class="chip chip-wild">wild</span>'
+                     f'<div class="rcard-tail">{bits}</div></div>')
+    return (f'<div class="roster">{"".join(cards)}</div>')
+
+
+def _post_tab(snapshots: list[dict]) -> str:
+    """The merchant tab (run 50's lever): the post's coin and lamp by
+    round, its shelf, its errands, and the book it quotes — everything
+    the wholesale channel is doing, at a glance."""
+    have = [s for s in snapshots if (s.get("cast") or {}).get("businesses")]
+    if not have:
+        return ('<h2>The post</h2><p class="quiet">no cast data — this run\'s'
+                ' snapshots predate the merchant panel</p>')
+    biz = have[-1]["cast"]["businesses"][0]
+    parts = ["<h2>The post — the merchant, round by round</h2>"]
+    # coin by round
+    coin_series = []
+    lamp_series = []
+    for s in have:
+        b = s["cast"]["businesses"][0]
+        coin_series.append(next(
+            (Decimal(str(a["balance"])) for a in b.get("accounts", [])
+             if a.get("currency") == "COIN"), Decimal("0")))
+        lamp_series.append(next(
+            (Decimal(str(h["quantity"])) for h in b.get("holdings", [])
+             if h.get("symbol") == "SHOP_OPEN"), Decimal("0")))
+    labels = [f"R{s['round']}" for s in have]
+    parts.append(line_chart("post coin", labels,
+                           {"coin": coin_series}, height=200))
+    parts.append(line_chart("SHOP_OPEN — the lamp", labels,
+                           {"lit": lamp_series}, height=200))
+    # the shelf now
+    rows = [f'<tr><td>{_esc(h["symbol"])}</td>'
+            f'<td class="num">{_fmt(Decimal(str(h["quantity"])))}</td></tr>'
+            for h in sorted(biz.get("holdings", []),
+                            key=lambda h: h.get("symbol", ""))
+            if Decimal(str(h.get("quantity", 0))) > 0
+            and h.get("symbol") not in ("SHOP_KEY", "SHOP_OPEN")]
+    parts.append('<h3>The shelf</h3>')
+    if rows:
+        parts.append('<table class="grid"><tr><th>good</th><th>held</th></tr>'
+                     + "".join(rows) + "</table>")
+    else:
+        parts.append('<p class="quiet">the shelf is bare</p>')
+    # errands running now
+    procs = [p for p in biz.get("processes", [])
+             if p.get("status") in ("running", "RUNNING")]
+    parts.append('<h3>Errands out</h3>')
+    if procs:
+        prows = [f'<tr><td>{_esc(str(p.get("recipe") or p.get("code") or "?"))}'
+                 f'</td><td>{_esc(str(p.get("completes_tick", "")))}</td></tr>'
+                 for p in procs]
+        parts.append('<table class="grid"><tr><th>recipe</th><th>done at'
+                     '</th></tr>' + "".join(prows) + "</table>")
+    else:
+        parts.append('<p class="quiet">no errands out — the key rests</p>')
+    # the book: best bid/ask per symbol with a price on either side
+    book_rows = []
+    for m in sorted(have[-1].get("market", []), key=lambda m: m["symbol"]):
+        bid = m.get("best_bid")
+        ask = m.get("best_ask")
+        if bid is None and ask is None:
+            continue
+        book_rows.append(
+            f'<tr><td>{_esc(m["symbol"])}</td>'
+            f'<td class="num">{_fmt(Decimal(str(bid))) if bid is not None else "—"}</td>'
+            f'<td class="num">{_fmt(Decimal(str(ask))) if ask is not None else "—"}</td></tr>')
+    parts.append('<h3>The book (best of either side)</h3>')
+    if book_rows:
+        parts.append('<table class="grid"><tr><th>good</th><th>bid</th>'
+                     '<th>ask</th></tr>' + "".join(book_rows) + "</table>")
+    else:
+        parts.append('<p class="quiet">no orders on the book</p>')
+    return "".join(parts)
+
+
 def build_dashboard(snapshots: list[dict], meta: dict) -> str:
     """Assemble the full HTML from per-round snapshots + run metadata."""
     labels = [f"R{s['round']}" for s in snapshots]
@@ -988,6 +1211,7 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
               '<button class="tab" data-tab="chat">💬 the square</button>'
               + "".join(f'<button class="tab" data-tab="h{i}">{_esc(n)}</button>'
                         for i, n in enumerate(names))
+              + '<button class="tab" data-tab="post">🏪 the post</button>'
               + '<button class="tab" data-tab="world">🌍 the world</button>'
               '</div>')
     house_panes = "".join(
@@ -1147,12 +1371,38 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       .fl-heard{color:#8b93a3}
       .fl-say{color:#93c5fd}.fl-combat{color:#fbbf24}
       .fl-death{color:#f87171}.fl-quiet{color:#8b93a3}
+      .banner{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;
+           border:1px solid #2a2f3a;border-left:4px solid #4b5563;
+           border-radius:10px;background:#141821;color:#c7cdd9;
+           padding:10px 16px;margin:12px 0;font-size:14px}
+      .banner.bn-complete{border-left-color:#34d399}
+      .banner.bn-extinct{border-left-color:#f87171;background:#1a1214}
+      .bn-state{font-weight:700;letter-spacing:.3px}
+      .bn-live{color:#facc15}.bn-done{color:#34d399}
+      .bn-extinct{color:#f87171}
+      .roster{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 4px}
+      .rcard{background:#141821;border:1px solid #2a2f3a;border-radius:10px;
+           padding:10px 14px;min-width:190px;max-width:250px;flex:1 1 190px}
+      .rcard-post{border-color:#3a2a10}
+      .rcard-wild{max-width:250px;flex:0 1 auto;display:flex;
+           flex-direction:column;justify-content:center}
+      .rcard-name{font-weight:700;font-size:15px;margin:6px 0 2px}
+      .rcard-tail{font-size:12px}
+      .rcard-coin{font:13px ui-monospace,monospace;color:#fcd34d;
+           margin:4px 0 2px}
+      .rcard-model{font-size:11px;overflow:hidden;text-overflow:ellipsis}
+      .chip-alive{color:#34d399;border-color:#1d4d33}
+      .chip-dead{color:#f87171;border-color:#7f1d1d;font-weight:700}
+      .chip-post{color:#fcd34d;border-color:#3a2a10}
+      .chip-wild{color:#8b93a3}
     """
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>{_esc(meta.get("title", "econ.me run"))}</title><style>{css}</style>
 </head><body>
 <h1>{_esc(meta.get("title", "Dynasty run"))}</h1>
 <p class="meta">{houses}</p>
+{_run_banner(meta, snapshots)}
+{_roster_strip(snapshots)}
 {status}
 {_live_panel(meta, snapshots)}
 {tabbar}
@@ -1166,6 +1416,7 @@ refreshes.</p>
 <div id="chat-log" class="chat-log"></div>
 </div>
 {house_panes}
+<div id="pane-post" class="tabpane">{_post_tab(snapshots)}</div>
 <div id="pane-world" class="tabpane">
 <p class="meta">{len(snapshots)} rounds · {_esc(meta.get("ticks_per_round", "?"))
 } ticks/round · ticks {_esc(snapshots[0]["ticks"][0] if snapshots else "")}–
