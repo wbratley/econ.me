@@ -76,9 +76,15 @@ def member_weight(session: Session, name: str, entity_id: str) -> Decimal:
     if entity_id not in register:
         return Decimal(0)
     try:
-        return Decimal(register[entity_id])
+        weight = Decimal(register[entity_id])
     except (ArithmeticError, ValueError):
         return DEFAULT_MEMBER_WEIGHT
+    if not weight.is_finite():
+        # NaN/Infinity parse cleanly; treated as "no usable weight" like
+        # any other unparseable entry -- a poisoned register must not
+        # poison the enactment arithmetic that consumes it.
+        return DEFAULT_MEMBER_WEIGHT
+    return weight
 
 
 def set_register(

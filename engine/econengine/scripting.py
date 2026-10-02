@@ -1398,6 +1398,30 @@ SAY_TEXT_CAP = 256
 # The direct-action outbox: intents from OUTSIDE any script
 # ---------------------------------------------------------------------------
 
+#: The engine's money scale (Numeric(18,4)) applied at the intent
+#: boundary, so a full-precision Lua float ("0.30000000000000004") or an
+#: over-wide literal lands quantized rather than drifting a tick.
+_INTENT_QUANTUM = Decimal("0.0001")
+
+
+def _param_decimal(params: dict, key: str, default: str) -> Decimal:
+    """Parse a defaulted decimal intent parameter (governance numbers).
+
+    Same poison guard as ``amount_of``: a NaN threshold is inert at
+    proposal time and detonates as an ``InvalidOperation`` inside the
+    enactment compare, months of ticks later. Rejected here it becomes a
+    clean script-side reject.
+    """
+    try:
+        value = Decimal(params.get(key, default))
+        value.quantize(_INTENT_QUANTUM)  # magnitude probe, see amount_of
+        if not value.is_finite():
+            raise ValueError(f"{key} must be a finite number")
+        return value
+    except (InvalidOperation, TypeError):
+        raise ValueError(f"invalid {key}")
+
+
 def queue_intent(session: Session, entity_id: str, intent_type: str,
                  params: dict, priority: int = 100) -> "PendingIntent":
     """Park a controller-submitted intent for the next tick's resolution
@@ -1455,10 +1479,25 @@ def resolve_intent(session: Session, intent: Intent,
         return {**event, "status": "rejected", "reason": reason}
 
     def amount_of(key: str) -> Decimal:
+        # The intent boundary is the one place raw script output becomes
+        # money. Decimal("nan")/"inf" parse cleanly and then poison every
+        # later comparison -- an InvalidOperation out of a compare is not a
+        # ValueError, so it would escape this function's rejection path and
+        # halt the tick loop. Reject non-finite here, quantize to the
+        # engine's 4-decimal scale (a magnitude too large to quantize is
+        # equally invalid).
         try:
-            return Decimal(intent.params[key])
+            amount = Decimal(intent.params[key])
+            # probe only: rejects magnitudes too wide for Numeric(18,4)
+            # (Decimal("1e999") is finite); the value itself is returned
+            # unquantized -- the DB re-quantizes on read-back, and the
+            # audit strings keep the author's own formatting.
+            amount.quantize(_INTENT_QUANTUM)
         except (InvalidOperation, KeyError, TypeError):
             raise ValueError(f"invalid {key}")
+        if not amount.is_finite():
+            raise ValueError(f"{key} must be a finite number")
+        return amount
 
     reference = intent.params.get("reference", "")
     extra: dict = {}
@@ -1766,8 +1805,8 @@ def resolve_intent(session: Session, intent: Intent,
                         session, intent.entity_id, target.id,
                         intent.params.get("title", ""),
                         weight_model,
-                        Decimal(intent.params.get("threshold", "0.5")),
-                        Decimal(intent.params.get("quorum", "0")),
+                        _param_decimal(intent.params, "threshold", "0.5"),
+                        _param_decimal(intent.params, "quorum", "0"),
                         mutations,
                         proposal_type=proposal_type,
                         reference=reference,
