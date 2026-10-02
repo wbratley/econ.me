@@ -65,6 +65,20 @@ def set_constitution(session: Session, params: dict) -> WorldSetting:
     """
     if not isinstance(params, dict):
         raise ValueError("constitution must be a JSON object")
+    # The two floor params must parse as finite decimals. A poisoned
+    # register ("nan") would sail through here and detonate inside
+    # supermajority_floor's Decimal arithmetic at the NEXT constitutional
+    # enactment -- a landmine planted long before it trips.
+    for k in ("supermajority_threshold", "supermajority_quorum"):
+        v = params.get(k)
+        if v is None:
+            continue
+        try:
+            d = Decimal(str(v))
+        except (ArithmeticError, TypeError, ValueError):
+            raise ValueError(f"{k} must be a decimal")
+        if not d.is_finite():
+            raise ValueError(f"{k} must be a finite number")
     # merge over defaults so a partial amendment (one param) doesn't drop
     # the other; an explicit null/absent key keeps its default.
     merged = {**DEFAULT_CONSTITUTION, **{k: v for k, v in params.items() if v is not None}}
