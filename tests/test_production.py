@@ -224,6 +224,48 @@ def test_unbanked_output_stays_a_good(session):
 
 # --- recipe currency_cost (run 49: the merchant's wholesale channel) --------
 
+def test_vetoed_mint_rolls_back_whole_and_survives_the_tick(session):
+    """A votable validator can refuse a completion mint; the veto must
+    not escape complete_processes (run_tick calls it bare — the same due
+    process would re-veto on every tick, a deterministic permanent halt:
+    nothing can run to vote a fix). The completion rolls back whole, the
+    process stays RUNNING (it retries the tick the constitution allows
+    it), and one process_vetoed event lands per refused tick."""
+    from econengine.models import Script, ScriptType
+    from econengine.services import create_account, deposit
+
+    digger, _ = _digger(session)
+    # someone — anyone — banks COIN: that is what makes it a currency
+    rich = create_entity(session, "Rich", EntityType.INDIVIDUAL)
+    rich_acc = create_account(session, rich, "COIN")
+    deposit(session, rich_acc, Decimal("10"), "seat stake")
+    session.add(Script(name="mint cap", script_type=ScriptType.VALIDATOR,
+                       source='return {allow=false, reason="mint cap"}'))
+    session.flush()
+
+    process = start_process(session, digger, "DIG")
+    events = complete_processes(session, tick_number=2)
+
+    vetoed = [e for e in events if e["type"] == "process_vetoed"]
+    assert len(vetoed) == 1
+    assert vetoed[0]["recipe"] == "DIG"
+    assert vetoed[0]["entity_id"] == digger.id
+    assert vetoed[0]["process_id"] == process.id
+    assert "mint cap" in vetoed[0]["reason"]
+
+    # rolled back whole: no completion event, no mint, no ledger row
+    assert all(e["type"] != "process_completed" for e in events)
+    assert process.status == ProcessStatus.RUNNING
+    acc = next((a for a in digger.accounts if a.currency == "COIN"), None)
+    assert acc is None or acc.balance == Decimal("0")
+    assert session.query(Transaction).filter_by(reference="mint DIG").count() == 0
+
+    # the tick AFTER is refused too — no escape, no halt, still honest
+    events = complete_processes(session, tick_number=3)
+    assert len([e for e in events if e["type"] == "process_vetoed"]) == 1
+    assert process.status == ProcessStatus.RUNNING
+
+
 def test_currency_cost_debits_the_account_at_start(session):
     """A recipe that COSTS coin draws it from the crafter's COIN account
     the moment it starts, riding the ledger like every other debit --
