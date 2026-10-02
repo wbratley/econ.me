@@ -63,6 +63,7 @@ from sqlalchemy.orm import Session
 
 from . import clock, conditions, parcels, rng, tech
 from .markets import InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity
+from .scripting import OperationVetoedError
 from .models import (
     Entity, EntityStatus, Parcel, Process, ProcessStatus, Recipe, RecipeBranch,
     RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement, RecipeInput,
@@ -643,7 +644,31 @@ def complete_processes(session: Session, tick_number: int) -> list[dict]:
     seed = prev_events_hash(session) if due else None
     events = []
     for process in due:
-        granted = _complete(session, process, seed)
+        # One savepoint per completion: a banked-currency output rides
+        # services.deposit and its validators, and a votable validator
+        # can veto the mint. Mints are deliberately NOT suppressed
+        # (production mints pass the same validators every other money
+        # movement does) -- but the veto must not escape the tick: the
+        # bare complete_processes call site has no catch, and the same
+        # due process would re-veto on every subsequent tick, a
+        # deterministic permanent halt (nothing can run to vote a fix).
+        # A vetoed completion rolls back whole -- no half-credited
+        # outputs -- and the process stays RUNNING: it retries when the
+        # constitution allows it, visible as one process_vetoed event
+        # per tick it is refused.
+        try:
+            with session.begin_nested():
+                granted = _complete(session, process, seed)
+        except OperationVetoedError as veto:
+            events.append({
+                "type": "process_vetoed",
+                "entity_id": process.entity_id,
+                "process_id": process.id,
+                "recipe": process.recipe.code,
+                "completes_tick": process.completes_tick,
+                "reason": str(veto),
+            })
+            continue
         if not process.is_travel:
             # a travel hop's record is travel_arrived (travel.py's arrival
             # pass), not process_completed: production statistics skip the
