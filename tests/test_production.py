@@ -565,6 +565,30 @@ def test_burn_pass_empties_the_bank_and_emits_dark(session):
     assert burn_facility_fuel(session, tick_number=3) == []  # stays dark, no noise
 
 
+def test_full_banked_facilities_drop_the_stoke_loudly(session):
+    """F6: the stoke loop skips full facilities and never clips
+    (credit_fuel RAISES on overflow; the loop pre-checks room). A stoke
+    whose facilities fill between start and completion used to drop the
+    fuel output SILENTLY -- wood burned, nothing banked, nothing said.
+    The drop is news: one stoke_dropped event rides the completion."""
+    from econengine.parcels import credit_fuel
+    villager, ground = _commons_world(session, fuel=Decimal("2"), cap=Decimal("4"))
+    create_recipe(session, "SLOW_STOKE", inputs={"WOOD": Decimal("1")},
+                  outputs={}, duration_ticks=1, requires_facility="FIRE",
+                  facility_fuel_output=Decimal("2"))
+    process = start_process(session, villager, "SLOW_STOKE")  # 2 + 2 <= 4: ok
+    # the race: a neighbour banks the fire to the cap between start and
+    # completion (reservations are queries, not escrows)
+    credit_fuel(session, ground.facilities[0], Decimal("2"), entity_id=villager.id)
+    events = complete_processes(session, tick_number=process.completes_tick)
+    assert [e["type"] for e in events] == ["process_completed", "stoke_dropped"]
+    dropped = events[1]
+    assert dropped["parcel_id"] == ground.id
+    assert dropped["quantity"] == "2.0000"
+    assert ground.facilities[0].fuel == Decimal("4")  # nothing spilled
+    assert get_holding(session, villager.id, "WOOD").quantity == Decimal("4")
+
+
 def test_stoking_a_dark_fire_emits_the_beacon(session):
     """Relighting is news: fuel crossing 0 -> positive is a facility_lit
     event (visible from far off); topping a lit fire is quiet telemetry."""

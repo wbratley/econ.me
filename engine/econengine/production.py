@@ -865,11 +865,16 @@ def _complete(session: Session, process: Process, seed: str) -> list:
             **(recipe.builds_facility_config or {}),
         )
     if recipe.facility_fuel_output is not None and process.parcel is not None:
-        # Stoking: credit the fuel to the first bound facility with room
-        # (start_process verified room at start; a same-tick race past the
-        # cap clips -- state over noise). The beacon event rides the
-        # completion path (complete_processes appends it); the inline
-        # duration-0 path drops it, exactly as it drops process_completed.
+        # Stoking: credit the fuel to the first bound facility with room.
+        # start_process refused before drawing inputs when nothing could
+        # bank the fuel, but that check is a snapshot -- reservations are
+        # queries, not escrows -- so a parallel stoke can fill every
+        # facility between start and completion. credit_fuel never clips
+        # (overflow raises), so this loop skips full facilities, and when
+        # NONE has room the fuel output is dropped and SAID so: one
+        # stoke_dropped event rides the completion path (the loss is news;
+        # steady stoking is telemetry). The inline duration-0 path drops
+        # it, exactly as it drops process_completed.
         for facility in parcels.facilities_of_type(
             session, process.parcel.id, recipe.requires_facility
         ):
@@ -880,6 +885,16 @@ def _complete(session: Session, process: Process, seed: str) -> list:
                     entity_id=process.entity_id,
                 )
                 break
+        else:
+            process.fuel_event = {
+                "type": "stoke_dropped",
+                "entity_id": process.entity_id,
+                "parcel_id": process.parcel_id,
+                "facility_type": recipe.requires_facility,
+                "quantity": str(recipe.facility_fuel_output.quantize(_QUANTUM)),
+                "reason": "every facility is fully banked -- the wood "
+                          "burned for nothing",
+            }
     granted = []
     for u in sorted(recipe.unlocks, key=lambda u: u.technology.code):
         unlock = tech.grant_unlock(
