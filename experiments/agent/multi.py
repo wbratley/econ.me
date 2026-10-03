@@ -13,12 +13,17 @@ the seats are SYMMETRIC: every dynasty gets scenario.make_house's
 identical bundle (same money, FARM + FORGE + ORE seam, both unlocks)
 and the plain survival starter, which runs only until its first cycle
 replaces it. From then on every mind in the world is a model rewriting
-Lua between rounds; the readiness gate (§9.1) paces it: each round,
-every dynasty cycles then readies, and the final ready resolves the
-round in-request. No admin in the pacing loop — the operator built the
-world, then stepped back. Under a world clock (§9.2, `clock_wait`) the
-same loop runs one beat slower: consent is recorded but the world
-closes rounds on its own ticks, and the runner waits.
+Lua on its OWN cadence: one authoring thread per dynasty — read the
+world, submit for the next round, signal consent, repeat — with no
+communal round barrier (run 52's killer: a two-hour llama ladder held
+every seat's next submission hostage while the world clock played
+five rounds underneath; the healthy seats died of stale behaviours).
+A seat slower than its round simply misses the window — its behaviour
+keeps running (a keep) and its late submission rolls forward — and
+the rounds keep closing: on the world's own ticks under a clock
+(§9.2, `clock_wait`), or on the final consent in a readiness-gated
+world (§9.1). No admin in the pacing loop — the operator built the
+world, then stepped back.
 
 Snapshots are taken from each dynasty's OWN MCP surface (the §13 parity
 set plus leaderboard/prices): the dashboard's data is exactly what the
@@ -30,7 +35,8 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -145,8 +151,25 @@ def read_world_meta(session) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# The run: cycle -> ready, per dynasty, per round
+# The run: one authoring thread per dynasty, rounds close on the world's
+# clock (or its consent), snapshots every closure
 # ---------------------------------------------------------------------------
+
+# The worker's cond-wait tick: how often a parked seat rechecks the
+# world's closed-round counter (the main thread notifies on every
+# closure, so this is a belt, not the mechanism).
+_WORKER_POLL_S = 0.05
+
+# Clock mode's grace: how long the main thread waits for an in-request
+# resolution (a mixed launch whose gate still closes rounds on consent)
+# before parking on the world's clock. Long enough for real consent
+# round-trips in tests; noise against a 60s round.
+_CONSENT_GRACE_S = 2.0
+
+# The final join: a seat mid-ladder at the run's end gets this long to
+# land its last submission, then is left as a daemon — the run's
+# artifacts are already on disk.
+_JOIN_S = 2.0
 
 @dataclass
 class RoundSnapshot:
@@ -335,8 +358,7 @@ def _extinct_entry(d: Dynasty, round_no: int) -> dict:
 def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
     """One dynasty's decision turn, ready to run on its own thread: the
     dynasties' cycles are independent (each reads only its own entity's
-    surface, and ticks only move at resolution — after everyone has
-    decided), so their LLM latencies can overlap instead of summing.
+    surface), so their LLM latencies can overlap instead of summing.
     An extinct dynasty (status != active) is skipped before any model
     call: the dead get no turn."""
     try:
@@ -353,6 +375,206 @@ def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
         }
 
 
+def _missed_entry(d: Dynasty, round_no: int) -> dict:
+    """The honest journal line for a seat that was still mid-authoring
+    when the round closed: it missed the window, its behaviour rolled
+    forward unchanged (a keep), and its submission — when it lands —
+    applies to the rounds still to come. Run 52 made these invisible
+    (a communal barrier meant rounds only closed with every seat's
+    entry in hand, or — once the barrier wedged — not at all); now the
+    snapshot says so instead of going quiet."""
+    return {
+        "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "entity": d.entity_id, "model": d.model_name, "round": round_no,
+        "attempts": 0, "accepted": False, "kept_old": True,
+        "action": "missed_window", "refusal": None, "warnings": [],
+        "source_sha": None, "thoughts": "", "prompt_bytes": 0,
+    }
+
+
+# Seat worker phases, as the main thread reads them:
+#   deciding       — a call is in flight; its consent may still close a
+#                    round (readiness mode waits for exactly this)
+#   readying       — submission landed, consent call in flight (the
+#                    final ready may resolve the round any moment)
+#   ready_waiting  — submitted and consented for its target; waiting
+#                    for the world to close a round
+#   extinct        — the dynasty is dead; the worker has parked for good
+#   done           — the worker exited (run target reached / stopped)
+_SETTLED = {"ready_waiting", "extinct", "done"}
+
+
+@dataclass
+class _RunState:
+    """The shared state between the main thread (round bookkeeping) and
+    the per-dynasty authoring workers: the world's closed-round counter
+    the workers chase, each seat's phase and last-submitted round, and
+    the resolutions a worker's final ready produced (readiness mode's
+    in-request round closures)."""
+    dynasties: dict[str, Dynasty]          # name -> seat
+    rounds: int
+    closed: int
+    cond: threading.Condition = field(default_factory=threading.Condition)
+    stop: bool = False
+    phases: dict[str, str] = field(default_factory=dict)
+    submitted: dict[str, int] = field(default_factory=dict)
+    entries: dict[str, list[dict]] = field(default_factory=dict)
+    resolutions: list[dict] = field(default_factory=list)
+    ready_refusals: dict[str, str] = field(default_factory=dict)
+    # Consent calls serialize: the server's readiness register is a
+    # read-modify-write (two parallel set_readies can drop one consent,
+    # and the round would never close). Consent ORDER is free — the
+    # gate resolves in whichever ready lands last — so this costs a
+    # round trip, never an authoring barrier.
+    ready_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def everyone_settled(self) -> bool:
+        return bool(self.phases) and all(p in _SETTLED for p in
+                                         self.phases.values())
+
+    def all_extinct(self) -> bool:
+        return bool(self.phases) and all(p == "extinct"
+                                         for p in self.phases.values())
+
+    def snapshot_entries(self, round_no: int) -> dict[str, dict]:
+        """Each dynasty's journal entry for a closing round: the entry
+        it authored FOR this round if one landed in time; else — a
+        tombstone for the dead (the dashboard counts them as neither
+        refusals nor keeps) and an honest missed-window keep for the
+        living (run 52's rounds 6-10 closed with no entry at all; the
+        snapshot now says what happened instead of going quiet)."""
+        with self.cond:
+            out = {}
+            for name, d in self.dynasties.items():
+                if self.phases.get(name) == "extinct":
+                    out[name] = _extinct_entry(d, round_no)
+                    continue
+                landed = [e for e in self.entries[name]
+                          if e.get("round", 0) <= round_no]
+                out[name] = landed[-1] if landed else _missed_entry(d,
+                                                                    round_no)
+            return out
+
+
+def _seat_worker(d: Dynasty, lp: AgentLoop, state: _RunState) -> None:
+    """One dynasty's authoring cadence, free of every other seat: read
+    the world, author and submit for the next round it hasn't closed,
+    signal consent, repeat — at the seat's own pace. A submission that
+    lands after its round closed applies going forward (a keep for the
+    rounds slept through); a slow seat costs its own house those
+    rounds, never another seat's. The dead park for good."""
+    name = d.name
+    try:
+        while True:
+            with state.cond:
+                while True:
+                    if state.stop:
+                        state.phases[name] = "done"
+                        return
+                    target = state.closed + 1
+                    if target > state.rounds:
+                        state.phases[name] = "done"
+                        return
+                    if state.submitted.get(name, 0) < target:
+                        break           # we owe the world a submission
+                    state.cond.wait(_WORKER_POLL_S)
+                state.phases[name] = "deciding"
+            entry = _decide(d, lp, target)   # the long part: no lock held
+            with state.cond:
+                state.entries[name].append(entry)
+                state.submitted[name] = target
+                dead = entry.get("action") == "extinct"
+                state.phases[name] = ("extinct" if dead else "readying")
+                state.cond.notify_all()
+            if dead:
+                return                      # the dead get no turn
+            try:
+                with state.ready_lock:
+                    out_ready = lp.set_ready()
+                with state.cond:
+                    if out_ready.get("resolved"):
+                        state.resolutions.append(out_ready["resolved"])
+                    state.phases[name] = "ready_waiting"
+                    state.cond.notify_all()
+            except Exception as exc:
+                # consent-channel death rides like a model death: the
+                # entry says so, the seat keeps playing
+                with state.cond:
+                    entry.setdefault("refusal", f"set_ready refused: {exc}")
+                    state.ready_refusals[name] = f"set_ready refused: {exc}"
+                    state.phases[name] = "ready_waiting"
+                    state.cond.notify_all()
+    except Exception:
+        # transport death mid-flight: this seat is out of the game, but
+        # it must not take the run with it — mark it settled and go
+        with state.cond:
+            state.phases[name] = "done"
+            state.cond.notify_all()
+
+
+def _extinction_brake(snapshots: list[dict]) -> None:
+    """Run 16's ending, still the rule: a world nobody is left to act
+    in stops cleanly at its last resolved round instead of parking on
+    a gate (or a clock) that will never close another round."""
+    last = snapshots[-1]["round"] if snapshots else 0
+    print(f"  total extinction — no dynasty left to act; "
+          f"stopping after round {last}")
+
+
+def _no_consent(state: _RunState, admin_advance, round_no: int) -> dict:
+    """Everyone settled without a closure: the referee's moment. With
+    `admin_advance` the world is pushed; without it the run says what
+    the gate refused to do (the run-16 shape) and dies loudly."""
+    if admin_advance is not None:
+        return admin_advance(round_no)
+    refusals = "; ".join(
+        f"{name}: {msg}" for name, msg in sorted(state.ready_refusals.items()))
+    raise RuntimeError(
+        f"round {round_no} did not resolve after every dynasty "
+        "readied (gate not in readiness mode?)"
+        + (f" -- readies refused: {refusals}" if refusals else ""))
+
+
+def _await_next_round(state: _RunState, clock_wait, admin_advance,
+                      after_round: int, snapshots: list[dict]):
+    """The main thread's whole job between rounds: take the next round
+    closure from whichever clock produces it — a seat's final ready
+    (in-request resolution; mixed launches), the world's own ticks
+    (clock mode's park), or the referee (everyone consented, nothing
+    closed). The extinction brake fires before any park. Resolutions
+    at or behind `after_round` are stale races — dropped, not replayed."""
+    deadline = (None if clock_wait is None
+                else time.monotonic() + _CONSENT_GRACE_S)
+    while True:
+        expired = False
+        with state.cond:
+            while state.resolutions:
+                r = state.resolutions.pop(0)
+                if r.get("round_number", 0) > after_round:
+                    return r
+            if state.all_extinct():
+                _extinction_brake(snapshots)
+                return None
+            if deadline is None:
+                # Readiness mode: only consent moves the world — wait
+                # for a ready to resolve, or discover nobody ever will.
+                if state.everyone_settled():
+                    return _no_consent(state, admin_advance,
+                                       after_round + 1)
+                state.cond.wait(_WORKER_POLL_S)
+            else:
+                # Clock mode: in-request resolution preempts the park
+                # for a grace (a mixed launch whose gate still
+                # resolves), then the world's clock owns advancement.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    expired = True
+                else:
+                    state.cond.wait(min(_WORKER_POLL_S, remaining))
+        if expired:
+            return clock_wait(after_round)
+
+
 def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                out_dir: str | Path,
                admin_advance=None, on_round=None,
@@ -363,103 +585,82 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
     run continues at start_round and passes the rounds already on disk
     as `snapshots` so `on_round` and the return value carry the WHOLE
     run — the dashboard never forgets round 1 because the process
-    restarted). Each round: every dynasty cycles — CONCURRENTLY, the
-    decisions are independent — then readies in order, and the final
-    ready resolves the round in-request (readiness gate); a snapshot
-    lands in `out_dir/round-XX.json`. A dynasty whose model hard-fails
-    (network, provider) keeps its behaviour, journals the failure, and
-    STILL readies — one dead model must not stop the world.
-    `admin_advance` is the referee fallback for a round nobody resolved
-    (never expected in readiness mode; keeps long runs unstickable).
-    `on_round(snapshots)` fires after each resolved round with the
-    full list so far — the live dashboard is rewritten from it.
-
-    `clock_wait(after_round)` is clock mode (§9.2): the world clock owns
-    advancement, consent is recorded but never resolves, and after the
-    readies the runner parks on this callback until the world's own
-    ticks close the NEXT round past after_round; it returns the closure
-    summary in the same shape an in-request resolution has. Seats
-    slower than a round are the lever's point: rounds can close while
-    the dynasties think, so the round that closes may be LATER than the
-    one this iteration played — the snapshot is labeled with the round
-    that actually closed, and the run ends when the world's counter
-    reaches N. Without clock_wait the consent path is bit-identical to
-    before."""
+    restarted). One authoring thread per dynasty (§ the worker): each
+    seat reads the world, submits for the next round it hasn't closed,
+    and consents — at its own pace, with no communal barrier. A seat
+    slower than its round misses the window: its behaviour keeps
+    running (journaled as `missed_window`, kept_old) and its late
+    submission rolls forward to the rounds still open. Rounds close on
+    the world's own ticks in clock mode (`clock_wait`, §9.2 — the
+    closure may be for a LATER round than any seat played; snapshots
+    are labeled with the round that actually closed) or on the final
+    consent in a readiness-gated world (§9.1); `admin_advance` stays
+    the referee fallback for a round everyone consented to that still
+    didn't close. A dynasty whose model hard-fails (network, provider)
+    keeps its behaviour, journals the failure, and STILL readies — one
+    dead model must not stop the world, and now one SLOW one must not
+    stop the others either. `on_round(snapshots)` fires after each
+    resolved round with the full list so far — the live dashboard is
+    rewritten from it. Without clock_wait the consent path is
+    bit-identical to before."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     mcps = [(d, lp.mcp) for d, lp in loops]
     snapshots = snapshots if snapshots is not None else []
 
-    rounds_done = start_round - 1
-    while rounds_done < rounds:
-        round_no = rounds_done + 1
-        resolved, entries = None, {}
-        with ThreadPoolExecutor(max_workers=len(loops)) as pool:
-            futures = [(d, pool.submit(_decide, d, lp, round_no))
-                       for d, lp in loops]
-            for d, fut in futures:
-                entries[d.name] = fut.result()
-        # Readying stays sequential: consent order is free (the gate
-        # resolves in whichever ready lands last), and a slow set_ready
-        # costs a round trip, not an LLM call.
-        for d, lp in loops:
-            try:
-                out_ready = lp.set_ready()
-                if out_ready.get("resolved"):
-                    resolved = out_ready["resolved"]
-            except McpError as exc:
-                # e.g. an eliminated dynasty is no longer eligible — its
-                # consent is not required, and it must not stop the world
-                entries.setdefault(d.name, {}).setdefault(
-                    "refusal", f"set_ready refused: {exc}")
-        if resolved is None:
-            # Nobody consented. The one expected shape: every dynasty is
-            # extinct — the world's answer is in (run 16 ended in a
-            # RuntimeError here at round 27, after the last house died
-            # mid-round-26 and the run crashed on a gate nobody was left
-            # to close). Stop the world instead — and in clock mode do it
-            # BEFORE parking on clock_wait: the extinction brake stops
-            # the clock with the last dynasty, and a dead world will
-            # never close the round we'd be sleeping on.
-            if entries and all(e.get("action") == "extinct"
-                               for e in entries.values()):
-                last = snapshots[-1]["round"] if snapshots else 0
-                print(f"  total extinction — no dynasty left to act; "
-                      f"stopping after round {last}")
-                break
-            if clock_wait is not None:
-                # Clock mode (§9.2): the world closes rounds on its own
-                # ticks. The closure may be for a later round than the
-                # one this iteration played (seats slower than a round) —
-                # take whatever closed.
-                resolved = clock_wait(rounds_done)
-            elif admin_advance is None:
-                refusals = "; ".join(
-                    f"{name}: {e['refusal']}" for name, e in
-                    sorted(entries.items()) if "refusal" in e)
-                raise RuntimeError(
-                    f"round {round_no} did not resolve after every dynasty "
-                    "readied (gate not in readiness mode?)"
-                    + (f" -- readies refused: {refusals}" if refusals
-                       else ""))
-            else:
-                resolved = admin_advance(round_no)
-        # The world's counter, not the iteration count, drives the run:
-        # consent resolves exactly round_no, but a clocked world (or an
-        # admin advance into a new gate) may close LATER rounds.
-        rounds_done = resolved["round_number"]
+    state = _RunState(
+        dynasties={d.name: d for d, _ in loops}, rounds=rounds,
+        closed=start_round - 1,
+        phases={d.name: "deciding" for d, _ in loops},
+        submitted={d.name: start_round - 1 for d, _ in loops},
+        entries={d.name: [] for d, _ in loops},
+    )
+    workers = [threading.Thread(target=_seat_worker, args=(d, lp, state),
+                                daemon=True, name=f"seat-{d.name}")
+               for d, lp in loops]
+    for w in workers:
+        w.start()
 
-        snap = _snapshot(mcps, resolved, entries)
-        (out / f"round-{resolved['round_number']:02d}.json").write_text(
-            json.dumps(snap.to_json(), indent=1))
-        snapshots.append(snap.to_json())
-        kinds = ", ".join(f"{k}×{v}" for k, v in
-                          sorted(snap.events_by_type.items())) or "quiet"
-        first_t = snap.ticks[0] if snap.ticks else "?"
-        print(f"  round {snap.round} resolved (ticks {first_t}.."
-              f"{snap.ticks[-1] if snap.ticks else '?'}): {kinds}")
-        if on_round is not None:
-            on_round(snapshots)
+    rounds_done = start_round - 1
+    try:
+        while rounds_done < rounds:
+            resolved = _await_next_round(state, clock_wait, admin_advance,
+                                         rounds_done, snapshots)
+            if resolved is None:
+                break               # the extinction brake fired
+            if resolved.get("round_number", 0) <= rounds_done:
+                continue            # a stale race — already bookkept
+            # The world's counter, not the iteration count, drives the
+            # run: consent resolves exactly one round, but a clocked
+            # world (or an admin advance into a new gate) may close
+            # LATER rounds. Publishing it first lets the seats start
+            # their next submission while this round's snapshot is
+            # still being read.
+            rounds_done = resolved["round_number"]
+            with state.cond:
+                state.closed = rounds_done
+                state.cond.notify_all()
+            snap = _snapshot(mcps, resolved,
+                             state.snapshot_entries(rounds_done))
+            (out / f"round-{resolved['round_number']:02d}.json").write_text(
+                json.dumps(snap.to_json(), indent=1))
+            snapshots.append(snap.to_json())
+            kinds = ", ".join(f"{k}×{v}" for k, v in
+                              sorted(snap.events_by_type.items())) or "quiet"
+            first_t = snap.ticks[0] if snap.ticks else "?"
+            print(f"  round {snap.round} resolved (ticks {first_t}.."
+                  f"{snap.ticks[-1] if snap.ticks else '?'}): {kinds}")
+            if on_round is not None:
+                on_round(snapshots)
+    finally:
+        with state.cond:
+            state.stop = True
+            state.cond.notify_all()
+        for w in workers:
+            w.join(timeout=_JOIN_S)   # a straggler mid-ladder is left as a
+        # daemon: the run's artifacts are on disk, and the old code's
+        # alternative — blocking the whole run on the slowest call — is
+        # exactly the behavior this loop replaced
     return snapshots
 
 
