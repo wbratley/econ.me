@@ -135,3 +135,49 @@ def test_ctx_tick_in_hook_reads_latest_committed(world):
     transfer(session, a, b, Decimal("10"), "x")   # direct op, not in a tick
 
     assert hook.state["seen"] == 1               # tick 1, the latest committed
+
+
+# --- ctx.accounts order (F1): the "first account" contract ---
+
+def test_ctx_accounts_ordered_currency_then_id(world):
+    """std.balance reads "the first account in a currency" and the
+    codebase convention is ctx.accounts[1] -- but nothing ordered the
+    relationship, so an entity holding two accounts of one currency
+    resolved arbitrarily (whatever row the DB returned first). The
+    relationship orders (currency, id): currencies grouped, and the
+    lowest id -- the account genesis opened -- wins within one."""
+    from econengine.lua_engine import LuaEngine
+    from econengine.models import Account
+    from econengine.tick import _build_script_ctx
+
+    session, alice, *_ = world
+    genesis_usd = [a for a in alice.accounts if a.currency == "USD"][0]
+    # duplicates inserted AFTER genesis, with ids that sort after any
+    # uuid4 the fixture could have minted ("mmm"/"zzz" > hex; "000-" < hex)
+    session.add_all([
+        Account(entity=alice, currency="USD", id="mmm-second", balance=Decimal("1")),
+        Account(entity=alice, currency="EUR", id="000-eur", balance=Decimal("5")),
+        Account(entity=alice, currency="USD", id="zzz-third", balance=Decimal("2")),
+    ])
+    session.flush()
+
+    # the order is the LOAD-time contract: expire the collection so the
+    # read goes back to the DB (per-tick, a fresh session does this)
+    session.expire(alice, ["accounts"])
+    keys = [(a.currency, a.id) for a in alice.accounts]
+    assert keys == [("EUR", "000-eur"), ("USD", genesis_usd.id),
+                    ("USD", "mmm-second"), ("USD", "zzz-third")]
+
+    script = make_script(session, "bal", "return std.balance('USD')",
+                         ScriptType.POLICY, entity=alice)
+    ctx = _build_script_ctx(session, alice, script, [], 1)
+    assert [a["id"] for a in ctx["accounts"]] == [
+        "000-eur", genesis_usd.id, "mmm-second", "zzz-third"]
+
+    engine = LuaEngine()
+    result = engine.run("return std.balance('USD')", ctx)
+    assert result.error is None, result.error
+    assert abs(result.return_value - 1000.0) < 1e-9  # the genesis account
+    result = engine.run("return std.balance()", ctx)
+    assert result.error is None, result.error
+    assert abs(result.return_value - 5.0) < 1e-9      # first row = the EUR

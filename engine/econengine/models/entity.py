@@ -96,7 +96,17 @@ class Entity(Base):
         String(36), ForeignKey("places.id"), nullable=True
     )
 
-    accounts: Mapped[list["Account"]] = relationship("Account", back_populates="entity")
+    # Ordered (currency, id): the codebase's "first account" convention
+    # (std.balance, ctx.accounts[1] in Lua) needs a defined winner when an
+    # entity somehow holds two accounts of one currency (no unique
+    # constraint enforces it) -- and ctx.accounts (the script context)
+    # iterates this relationship bare, so its order is the contract.
+    # Lowest id wins within a currency: the oldest account is the one
+    # genesis opened; stable across ticks, deterministic across DBs.
+    accounts: Mapped[list["Account"]] = relationship(
+        "Account", back_populates="entity",
+        order_by="[Account.currency, Account.id]",
+    )
     owner: Mapped["User | None"] = relationship("User", back_populates="entities")
     place: Mapped["Place | None"] = relationship("Place")
 
