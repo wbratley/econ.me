@@ -446,20 +446,24 @@ _GLOBAL_HINT = ("Strict mode: reading or writing an undeclared global is "
 # -- the platform watched the condition climb its kill line for days
 # without a word. Conditions are holdings; the catalog states where
 # each one kills. A condition riding at or above a quarter of its kill
-# line is FINDINGS now, every round it rides: the channel the author
-# must answer, the same discipline crashes and rejections already ride.
-# HUNGER, FATIGUE, THIRST -- every condition, every world, the platform
-# whispers what is killing you before it does.
+# line is FINDINGS now, every round it rides. Run 52 softened the
+# line from alarm to TELEMETRY: the platform states the reading and
+# where the catalog documents the mechanics -- plain facts, no
+# imperative. The world does not tell the author what to do; it makes
+# sure the author cannot miss what the body is doing. HUNGER,
+# FATIGUE, THIRST -- every condition, every world.
 CONDITION_ALARM_FRACTION = Decimal("0.25")
 
 
 def _condition_feedback(entity_state: dict, catalog: dict) -> list[str]:
-    """Alarm lines for held conditions riding toward their kill lines:
-    the join of entity_state's holdings against the catalog's
+    """Telemetry lines for held conditions riding toward their kill
+    lines: the join of entity_state's holdings against the catalog's
     incapacitates_at numbers. Quiet for a healthy floor (conditions sit
     near zero between their cures); loud the moment a chain has broken
     -- grants only start when the body runs dry, so a quarter of the
-    kill line is already deep into a spiral, with a round's margin."""
+    kill line is already deep into a spiral, with a round's margin.
+    The lines are plain facts -- reading, line, catalog pointer --
+    never advice: what to do about a number is the author's."""
     thresholds: dict[str, Decimal] = {}
     for g in (catalog or {}).get("goods", []):
         line = g.get("incapacitates_at")
@@ -480,10 +484,10 @@ def _condition_feedback(entity_state: dict, catalog: dict) -> list[str]:
             continue         # a malformed quantity is not an alarm
         if level >= kill * CONDITION_ALARM_FRACTION:
             lines.append(
-                f"condition {symbol} at {level} of kill line {kill}: this "
-                f"climb ends in incapacitation -- break it in your "
-                f"behaviour (world_catalog's effect line for {symbol} "
-                f"says what feeds it and what decays it)")
+                f"condition {symbol} at {level} of kill line {kill}: at "
+                f"the line the body incapacitates (world_catalog's "
+                f"effect line for {symbol} states what raises it and "
+                f"what lowers it)")
     return lines
 
 
@@ -772,10 +776,12 @@ class AgentLoop:
         self._feedback.extend(_rejection_feedback(
             obs["events"].get("ticks", []),
             status=(obs["entity"].get("entity") or {}).get("status")))
-        # The condition alarm (run 48, lever 3): conditions riding toward
-        # their kill lines are findings, not scenery. Harald died of a
-        # THIRST the platform watched climb without a word -- a rewrite
-        # seat's blindness is the platform's to announce.
+        # The condition telemetry (run 48, lever 3; run 52 softened to
+        # plain facts): conditions riding toward their kill lines are
+        # findings, not scenery. Harald died of a THIRST the platform
+        # watched climb without a word -- a rewrite seat's blindness is
+        # the platform's to announce; what to do about it stays the
+        # author's.
         self._feedback.extend(_condition_feedback(
             obs["entity"], self._kill_lines_catalog()))
         return obs

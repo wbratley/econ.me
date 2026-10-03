@@ -1241,7 +1241,8 @@ def test_condition_alarm_rides_into_the_round_prompt():
     hunt-and-sleep and died of THIRST beside a free tap while the
     platform watched the climb without a word. A condition at or above
     a quarter of its kill line is a FINDING every round it rides --
-    the channel the author must answer."""
+    and (run 52) the finding is TELEMETRY: the reading, the line, the
+    catalog pointer -- plain facts, never advice."""
     from experiments.agent.loop import AgentLoop, McpClient
 
     canned = _alarm_canned()
@@ -1256,12 +1257,15 @@ def test_condition_alarm_rides_into_the_round_prompt():
     entry = lp.cycle()
     assert entry["action"] == "keep"
     user = model.calls[0]["user"]
-    # THIRST 2.0000 rides at/above 7.5/4 = 1.875: the alarm fires, with
-    # the numbers and the imperative in one line
+    # THIRST 2.0000 rides at/above 7.5/4 = 1.875: the telemetry fires,
+    # with the reading, the line, and the catalog pointer in one line
     assert "condition THIRST at 2.0000 of kill line 7.5" in user
-    assert "break it in your behaviour" in user
-    # FATIGUE 1.0000 sits below the line: no alarm (the holdings JSON
-    # still shows it -- scenery, not finding)
+    assert "world_catalog's effect line for THIRST states what raises " \
+        "it and what lowers it" in user
+    # telemetry, not advice: the run-48 imperative is gone
+    assert "break it" not in user
+    # FATIGUE 1.0000 sits below the line: no telemetry (the holdings
+    # JSON still shows it -- scenery, not finding)
     assert "condition FATIGUE" not in user
 
 
