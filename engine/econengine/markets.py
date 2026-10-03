@@ -381,7 +381,14 @@ def _settle(
     """Zipper match with live funds/holdings checks. Balances and holdings
     mutate per fill, so an entity cannot double-spend across orders or
     markets — a later fill sees the already-decremented value and its order
-    is cancelled."""
+    is cancelled.
+
+    The buyer's credit clips at the good's max_holding (the banking cap,
+    same stance as adjust_holding): the seller is paid in full and the
+    trade records the full quantity, but the excess above the cap is
+    simply not creditable. Refusing the fill instead — as the funds and
+    holdings pre-checks below do — is a deliberate design boundary, not
+    an oversight."""
     events: list[dict] = []
     bi = si = 0
     while bi < len(buys) and si < len(sells):

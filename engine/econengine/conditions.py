@@ -274,14 +274,16 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
 
     goods_moved = Decimal("0")
     goods_burned = Decimal("0")
+    goods_clipped = Decimal("0")
     for holding in session.execute(
         select(Holding)
         .where(Holding.entity_id == entity.id, Holding.quantity > 0)
         .order_by(Holding.symbol)
     ).scalars():
         if recipient is not None and holding.symbol not in condition_symbols:
-            _credit_holding(session, recipient, holding.symbol, holding.quantity)
-            goods_moved += holding.quantity
+            landed = _credit_holding(session, recipient, holding.symbol, holding.quantity)
+            goods_moved += landed
+            goods_clipped += holding.quantity - landed
         else:
             goods_burned += holding.quantity
         holding.quantity = Decimal("0")
@@ -312,30 +314,36 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
         parcels_moved += 1
 
     return {
+        # transferred = post-clip landed: the ledger separates what the
+        # heir banked from what the cap destroyed (F5)
         "goods_transferred": str(goods_moved.quantize(_QUANTUM)),
         "goods_burned": str(goods_burned.quantize(_QUANTUM)),
+        "goods_clipped": str(goods_clipped.quantize(_QUANTUM)),
         "money_transferred": str(money_moved.quantize(_QUANTUM)),
         "money_burned": str(money_burned.quantize(_QUANTUM)),
         "parcels": parcels_moved,
     }
 
 
-def _credit_holding(session: Session, entity: Entity, symbol: str, quantity: Decimal) -> None:
+def _credit_holding(session: Session, entity: Entity, symbol: str, quantity: Decimal) -> Decimal:
+    """Credit a holding, clipped at the good's banking cap (the same
+    clip as adjust_holding: an heir cannot bank more warmth than the
+    living could). Returns the quantity actually credited."""
     holding = session.execute(
         select(Holding).where(Holding.entity_id == entity.id, Holding.symbol == symbol)
     ).scalar_one_or_none()
     if holding is None:
         holding = Holding(entity_id=entity.id, symbol=symbol, quantity=Decimal("0"))
         session.add(holding)
+    before = holding.quantity
     holding.quantity += quantity
-    # the banking cap, same clip as adjust_holding: an heir cannot bank
-    # more warmth than the living could
     if quantity > 0:
         from . import goods as goods_mod
         good = goods_mod.get_good(session, symbol)
         if good is not None and good.max_holding is not None \
                 and holding.quantity > good.max_holding:
             holding.quantity = good.max_holding
+    return holding.quantity - before
 
 
 def _credit_account(session: Session, entity: Entity, currency: str, amount: Decimal) -> None:
