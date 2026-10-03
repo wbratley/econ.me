@@ -1052,12 +1052,22 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
 
 
 def _read_lua_table(tbl) -> dict:
+    """Read a Lua table back into a JSON-plain dict.
+
+    Conversion errors propagate (F3): a state key whose value cannot be
+    converted is the script's error, not a silent partial write. The
+    caller catches it alongside execution errors, so the entity gets a
+    script_error event and keeps its previous state -- instead of losing
+    every key after the bad one with no trace (the silent-zombie class).
+    """
     result = {}
-    try:
-        for k in tbl:
+    for k in tbl:
+        try:
             result[k] = _lua_to_python(tbl[k])
-    except Exception:
-        pass
+        except Exception as exc:
+            raise ValueError(
+                f"state[{str(k)!r}] is not persistable: {str(exc) or type(exc).__name__}"
+            ) from exc
     return result
 
 
