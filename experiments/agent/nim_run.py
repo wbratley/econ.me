@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -63,7 +64,8 @@ from .multi import (Dynasty, build_agent_world, read_world_meta,
                     run_rounds)
 
 
-def http_transport(base: str, token: str):
+def http_transport(base: str, token: str,
+                  call_log: "McpCallLog | None" = None, seat: str = ""):
     import httpx
 
     client = httpx.Client(base_url=base, timeout=240.0,
@@ -78,7 +80,80 @@ def http_transport(base: str, token: str):
             raise RuntimeError(f"MCP {method}: {body['error']}")
         return body["result"]
 
-    return transport
+    if call_log is None:
+        return transport
+    return _traced(transport, seat, call_log)
+
+
+class McpCallLog:
+    """One JSON line per MCP round trip, shared by every seat's client:
+    ts, seat, method, tool, abbreviated args, ok/error, elapsed, and
+    the size of the answer. The calls themselves are choreographed
+    (AGENT-API.md §4) — this is the timestamped proof of what ran,
+    when, and what each round trip cost (run 52's forensics rebuilt
+    this timeline by inference; the next run reads it). Open-per-line
+    and lock-guarded: a kill -9 never eats the tail, and the per-seat
+    authoring threads (run 53: one per dynasty) interleave safely."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._lock = threading.Lock()
+
+    def write(self, event: dict) -> None:
+        line = json.dumps(event, default=str)
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a") as fh:
+                fh.write(line + "\n")
+
+
+def _abbrev(value, limit: int = 512, head: int = 256):
+    """A copy of a tool-call payload with the huge strings replaced by
+    head + length + sha — set_behaviour's source runs kilobytes and is
+    already archived whole in the round prompt files; the sha keeps
+    the truncated line joinable to the journal's source_sha."""
+    if isinstance(value, str):
+        if len(value) <= limit:
+            return value
+        digest = hashlib.sha1(value.encode()).hexdigest()[:16]
+        return value[:head] + f" …[+{len(value) - head} chars, sha1:{digest}]"
+    if isinstance(value, dict):
+        return {k: _abbrev(v, limit, head) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_abbrev(v, limit, head) for v in value]
+    return value
+
+
+def _traced(transport, seat: str, log: McpCallLog):
+    """Wrap one MCP transport with the call log — every round trip,
+    success or failure, lands as a line before the result (or the
+    exception) is handed back."""
+
+    def traced(method: str, params: dict) -> dict:
+        started = time.monotonic()
+        base_event = {
+            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(
+                timespec="seconds"),
+            "seat": seat, "method": method,
+            "tool": params.get("name"),
+            "args": _abbrev(params.get("arguments") or {}),
+        }
+        try:
+            result = transport(method, params)
+        except Exception as exc:
+            log.write({**base_event, "ok": False,
+                       "error": str(exc)[:300],
+                       "elapsed_s": round(time.monotonic() - started, 3),
+                       "result_chars": 0})
+            raise
+        dumped = json.dumps(result, default=str)
+        log.write({**base_event, "ok": True, "error": None,
+                   "elapsed_s": round(time.monotonic() - started, 3),
+                   "result_chars": len(dumped),
+                   "result_head": dumped[:160]})
+        return result
+
+    return traced
 
 
 def slug(name: str) -> str:
@@ -545,6 +620,9 @@ def main(argv=None) -> int:
 
     try:
         loops = []
+        # the shared MCP call log: every seat's every round trip, one
+        # JSON line each (AGENT-API.md §6)
+        mcp_log = McpCallLog(out / "mcp-calls.jsonl")
         # the diary defaults ON for NIM runs (one short extra call per
         # house per round, inside the same parallel window) and OFF for
         # scripted rehearsals (legacy fixtures carry one line per round)
@@ -552,7 +630,8 @@ def main(argv=None) -> int:
         rewrite = set(args.rewrite_seats or ())
         for d, model in zip(dynasties, models):
             lp = AgentLoop(
-                McpClient(http_transport(base, d.token)),
+                McpClient(http_transport(base, d.token,
+                                         call_log=mcp_log, seat=d.name)),
                 model,
                 entity_id=d.entity_id, max_attempts=args.max_attempts,
                 journal_path=str(out / f"journal-{slug(d.name)}.jsonl"),
