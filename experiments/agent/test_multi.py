@@ -884,6 +884,110 @@ def test_run_rounds_waits_for_the_world_clock(client, monkeypatch, tmp_path):
     assert snaps[-1]["resolved"]["closed_by"] == "world_clock"
 
 
+def test_slow_seat_never_holds_back_a_fast_seat(client, monkeypatch,
+                                                 tmp_path):
+    """Run 52's killer, pinned: a seat whose authoring outlasts its ROUND
+    (the two-hour llama ladder) must cost its own house those rounds and
+    nobody else's. Each dynasty authors on its own cadence — the fast
+    seats submit every round while the slow one is still thinking about
+    round one — the world keeps closing rounds underneath both, the
+    slow seat's misses are journaled as keeps (missed_window, kept_old),
+    and its late submission rolls forward when it lands. The old communal
+    round barrier froze every seat's NEXT submission behind the slowest
+    call (run 52: seats stale from round 7, both survivors dead of
+    fixable conditions by round 10)."""
+    import threading
+
+    from experiments.agent import multi
+
+    monkeypatch.setenv("ECON_WORLD_TICK_SECONDS", "60")   # consent never
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")       # resolves
+    monkeypatch.setattr(multi, "_CONSENT_GRACE_S", 0.2)
+
+    release = threading.Event()          # the 2h08m ladder, compressed
+
+    class SlowModel:
+        name = "test:slow"
+        calls = 0
+
+        def complete(self, system, user):
+            type(self).calls += 1
+            release.wait(timeout=30)
+            return CLEAN
+
+    # distinct sources per round, so the test can see WHICH round a
+    # fast seat has submitted for in the world itself
+    LINES = [f"ctx.state.note = 'r{r}'" for r in (1, 2, 3)]
+    fast = [d for d in client["dynasties"] if d.name != "House Two"]
+    loops = []
+    for d in client["dynasties"]:
+        model = (SlowModel() if d.name == "House Two"
+                 else ScriptedModel(list(LINES)))
+        loops.append((d, AgentLoop(McpClient(client["transports"][d.user_id]),
+                                   model, entity_id=d.entity_id)))
+
+    def fast_sources():
+        return [McpClient(client["transports"][d.user_id]).call(
+                    "get_behaviour", {"entity_id": d.entity_id})
+                .get("source") or "" for d in fast]
+
+    closures = [
+        {"round_number": r, "ticks": [r * 2 - 1, r * 2], "events": 0,
+         "events_by_type": {}, "next_round": r + 1,
+         "closed_by": "world_clock"}
+        for r in (1, 2, 3)
+    ]
+    calls = []
+
+    def clock_wait(after_round):
+        calls.append(after_round)
+        closing = after_round + 1
+        want = f"note = 'r{closing}'"
+        for _ in range(200):            # the fast seats' round-R
+            if all(want in s for s in fast_sources()):
+                break                    # submissions are IN — close it
+            time.sleep(0.05)
+        else:
+            raise AssertionError(
+                f"fast seats never submitted round {closing}")
+        time.sleep(0.3)                 # let the entries land in the run
+        return closures[closing - 1]    # state's journal too
+
+    snaps = run_rounds(loops, 3, tmp_path, clock_wait=clock_wait)
+    assert calls == [0, 1, 2]
+    assert [s["round"] for s in snaps] == [1, 2, 3]
+    for snap in snaps:
+        # the fast seats submitted EVERY round — never held back
+        for name in ("House One", "House Three"):
+            entry = snap["dynasties"][name]["entry"]
+            assert entry["accepted"], (snap["round"], name, entry)
+        # the slow seat missed every window — an honest keep, journaled
+        slow = snap["dynasties"]["House Two"]["entry"]
+        assert slow["action"] == "missed_window"
+        assert slow["kept_old"] and not slow["accepted"]
+
+    # the dashboard says it in plain words instead of going quiet
+    page = build_dashboard(snaps, {
+        "title": "run 52 shape", "ticks_per_round": 2, "generated": "now"})
+    assert page.count("missed — kept") == 3
+
+    # the ladder finally returns: the late submission rolls forward (the
+    # engine applies accepted scripts immediately) — and the seat never
+    # re-authors the round it slept through
+    release.set()
+    two = next(d for d in client["dynasties"] if d.name == "House Two")
+    mcp = McpClient(client["transports"][two.user_id])
+    for _ in range(50):
+        src = mcp.call("get_behaviour",
+                       {"entity_id": two.entity_id}).get("source") or ""
+        if CLEAN in src:
+            break
+        time.sleep(0.1)
+    assert CLEAN in src                 # CLEAN landed — mid-run rounds be
+    time.sleep(0.3)                     # damned, it runs from here on
+    assert SlowModel.calls == 1         # no re-author of round 1
+
+
 def test_clock_wait_yields_to_in_request_resolution(client, monkeypatch,
                                                     tmp_path):
     """A server whose clock is NOT armed (or a mixed launch) still

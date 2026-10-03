@@ -461,6 +461,10 @@ def _activity(snapshots: list[dict]) -> str:
             entry = view.get("entry") or {}
             if entry.get("action") == "extinct":
                 cell, cls = "† extinct", "extinct"
+            elif entry.get("action") == "missed_window":
+                # a keep that missed its round: the behaviour rolled
+                # forward unchanged while the seat was still authoring
+                cell, cls = "⌛ missed — kept", "quiet"
             elif entry.get("accepted"):
                 cell, cls = f"{entry.get('attempts', '?')}✓", "ok"
             else:
@@ -549,6 +553,8 @@ def _strategy(snapshots: list[dict]) -> str:
             entry = snap["dynasties"][name].get("entry") or {}
             if entry.get("action") == "extinct":
                 cls = "sha-ext"          # frozen, not refused
+            elif entry.get("action") == "missed_window":
+                cls = "sha-ext"          # rolled forward, not refused
             else:
                 cls = "sha-ok" if entry.get("accepted") else "sha-bad"
             changed = ""
