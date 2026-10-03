@@ -4,40 +4,36 @@
 -- bought eggs (14 fills, ~60 coin) with no resale side, coin-broke at
 -- t224, and 60% of the run traded against a corpse -- `selling JERKY
 -- 1.00 | buying .`, 0.98 coin, a BED and 0.8 WARMTH. The wood-bid
--- caravan fuel never arrived (Lagertha sat on 70 logs all run), so the
--- famine rung never fired once.
+-- fuel never arrived (Lagertha sat on 70 logs all run), so the
+-- famine ladder never fired once.
 --
--- Run 50's post is a MERCHANT (three trades at once):
---   a) PROFIT-SEEKING RESALE: nothing is bought without a resale
---      plan. Every lot carries a cost basis (fills blend into it),
---      retail = max(basis x 1.30, wholesale x 1.05) -- stock that
---      isn't there isn't quoted, and stock that IS there is priced
---      off what it cost. The egg pump is dead: the post pays at most
---      0.70 x wholesale for anything, because that is what the hills
---      charge IT.
+-- Run 52 -- THE BACKDOOR IS OFF. The wholesale back channel -- the
+-- bulk trade over the ridge, the DUMP mint, the famine ladder -- is
+-- deleted, and the post is a merchant in a CLOSED economy:
+--   a) PROFIT-SEEKING RESALE OFF ITS OWN BOOKS: nothing is bought
+--      without a resale plan, and every price hangs off the post's
+--      cost basis -- fills blend into it (genesis anchors stand in
+--      until real trade replaces them), retail = basis x 1.30, bids
+--      start at half basis and never exceed 0.75 x basis. Stock that
+--      isn't held isn't quoted; stock that IS held is priced off
+--      what it cost. Coin moves only between houses and this
+--      counter: every jerky on the shelf was once a house's hunt,
+--      and a bare shelf stays bare until the forest sells.
 --   b) IT PAYS TO EXIST: one log and one meal a day keep the counter
 --      open (KEEP_SHOP_* refills SHOP_OPEN, which fades in a day).
 --      No wood and no meal and the counter goes DARK -- no quotes, no
 --      peddle, one honest say -- a visibly failing shop instead of a
 --      zombie corpse quoting prices it cannot honour.
---   c) THE WHOLESALE BACK CHANNEL: the hills are an outside economy
---      that deals ONLY with the shop key. WHOLESALE_BUY_* pays coin
---      (debited at start -- the hills do not extend credit) for a
---      caravan-lot of stock when a staple runs under its minimum;
---      WHOLESALE_DUMP_* converts overstock lots back to coin at the
---      dump price (always under wholesale: the spread is the toll).
---      The wholesale anchors ARE the price band the seats face --
---      the real lever for prices, and the dial to turn OFF (delete
---      the recipes) once houses trade houses.
+--   The back room still salts (run 46): bought MEAT rots at
+--   0.30/tick in any larder, so raw fills go to the shed promptly
+--   and come back as the never-rot shelf -- the counter's one
+--   transform, priced 1:1 off the meat fills that stocked it.
 --
--- It still haggles like a person, INSIDE the band:
+-- It still haggles like a person, INSIDE its books:
 --   sold food            -> ask adjust x1.05   (demand is real)
 --   3 live ticks quiet   -> ask adjust x0.95 / bid x1.03 (move the
 --                          price toward trade instead of waiting)
 --   bought goods         -> bid x0.95          (sellers are eager)
--- Famine rungs: every wholesale jerky lot retails one rung up
--- (+0.75 -- dear calories in a hungry world); real supply (a MEAT
--- fill, a salt batch) walks the ladder back down.
 --
 -- Vocabulary: std.* (engine), ctx.action.place_order / cancel_order /
 -- start_process / say, ctx.events (the post's own fills, applied
@@ -58,28 +54,30 @@ for _, e in ipairs(ctx.events or {}) do
   end
 end
 
--- The wholesale ladder (mirrors WHOLESALE in stone_age.py -- the
--- consistency test in test_stone_age pins the two together). w = the
--- hills' charge per unit; d = the dump price they pay for overstock;
--- lot = the caravan-sized batch the recipes move.
-local WHOLESALE = {
-  JERKY     = { w = 0.90, d = 0.45, lot = 6,  buy = true,  dump = false },
-  BERRIES   = { w = 0.50, d = 0.25, lot = 10, buy = true,  dump = true },
-  APPLES    = { w = 0.70, d = 0.35, lot = 10, buy = true,  dump = true },
-  EGGS      = { w = 0.70, d = 0.35, lot = 8,  buy = true,  dump = true },
-  CHICKEN   = { w = 3.00, d = 1.50, lot = 2,  buy = true,  dump = false },
-  WATERSKIN = { w = 4.50, d = 2.25, lot = 2,  buy = true,  dump = false },
-  WOOD      = { w = 1.00, d = 0.50, lot = 10, buy = true,  dump = true },
-  MEAT      = { w = 1.00, d = 0.50, lot = 4,  buy = false, dump = true },
-  YARN      = { w = 1.50, d = 0.75, lot = 10, buy = false, dump = true },
-  FLINT     = { w = 1.50, d = 0.75, lot = 10, buy = false, dump = true },
-  PELT      = { w = 3.00, d = 1.50, lot = 4,  buy = false, dump = true },
+-- The genesis anchors (mirrors GENESIS_BASIS -- the consistency test
+-- in test_stone_age pins the two together). Each number is what one
+-- unit is WORTH to the counter on its opening day: retail opens at
+-- basis x 1.30, bids open at half basis and may climb to 0.75 x
+-- basis. Real fills blend the basis away -- the anchors are the
+-- price of an unstocked shelf, trade replaces them with fact.
+local GENESIS_BASIS = {
+  JERKY     = 0.90,
+  BERRIES   = 0.50,
+  APPLES    = 0.70,
+  EGGS      = 0.70,
+  CHICKEN   = 3.00,
+  WATERSKIN = 4.50,
+  WOOD      = 1.00,
+  MEAT      = 1.00,
+  YARN      = 1.50,
+  FLINT     = 1.50,
+  PELT      = 3.00,
 }
-local STOCK = {          -- bands: under min the wholesale door opens,
-  JERKY = {min = 6, max = 12},  -- over max the bids stop and the dump
-  BERRIES = {min = 10, max = 20}, -- door opens. A larder, not a landfill.
-  APPLES = {min = 10, max = 20},
-  EGGS = {min = 8, max = 16},
+local STOCK = {          -- the larder's shape: bids stop at the max
+  JERKY = {min = 6, max = 12},   -- (a larder, not a landfill); the min
+  BERRIES = {min = 10, max = 20}, -- is the lean line the counter
+  APPLES = {min = 10, max = 20},  -- waits behind, not a door -- there
+  EGGS = {min = 8, max = 16},     -- is nowhere else to buy from now
   CHICKEN = {min = 2, max = 4},
   WATERSKIN = {min = 2, max = 4},
   WOOD = {min = 6, max = 30},
@@ -92,31 +90,25 @@ local RETAIL = { "JERKY", "BERRIES", "APPLES", "EGGS", "CHICKEN",
                  "WATERSKIN" }
 local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
                  "APPLES", "EGGS", "PELT" }
--- Genesis one-offs with no wholesale anchor (they rot, or they are
+-- Genesis one-offs with no larder future (they rot, or they are
 -- gone when gone): haggled directly, like the old book.
 local LEGACY_ASK = { COOKED_MEAT = 1.50, BED = 5.00 }
 
 local MARGIN = 1.30      -- retail = cost basis x margin
-local BID_CAP = 0.70     -- ... never bid above this fraction of w
-local ASK_FLOOR = 1.05   -- ... never retail below this fraction of w
-local BID_FLOORF = 0.25  -- ... nor bid below a quarter of w
+local BID_CAP = 0.75     -- ... never bid above this fraction of basis
+local BID_FLOORF = 0.25  -- ... nor below a quarter of basis
 local ASK_CAP = 8.00
-local RESERVE = 6.00     -- coin the wholesale door never dips into
 
 local function r2(x) return string.format("%.2f", x) end
 
 if not S.bid then
-  -- Opening bids start at half the hills' charge; they may climb to
-  -- 0.70 x w -- that is the most stock is worth to a shop that can
-  -- always send a runner instead. Run 49's 5.00 egg bid is gone: the
-  -- hills underbid every seat at the wholesale counter, and the post
-  -- knows it.
+  -- Opening bids start at half the genesis basis; they may climb to
+  -- 0.75 x basis -- paying near retail for stock is how a shop dies.
   S.bid, S.cost, S.adj = {}, {}, {}
   for _, sym in ipairs(FOREST) do
-    S.bid[sym] = r2(WHOLESALE[sym].w * 0.5)
+    S.bid[sym] = r2(GENESIS_BASIS[sym] * 0.5)
   end
   S.ask = { COOKED_MEAT = 1.50, BED = 5.00 }
-  S.rungs = 0            -- the famine ladder (wholesale jerky retails dear)
   S.quiet = {}   -- LIVE ticks since the last fill, per "side_SYMBOL" key
   S.live = {}    -- the (qty, price) placed per key, to spot drift
   S.ids = {}     -- order id per key, from applied place_order events
@@ -138,7 +130,7 @@ local function blend(sym, price, qty)
   -- died precisely because nothing kept the books honest).
   local now = std.holding_qty(sym)
   local prev = math.max(now - qty, 0)
-  local old = S.cost[sym] or WHOLESALE[sym].w
+  local old = S.cost[sym] or GENESIS_BASIS[sym]
   if prev + qty > 0 then
     S.cost[sym] = (old * prev + price * qty) / (prev + qty)
   end
@@ -156,30 +148,22 @@ for _, e in ipairs(ctx.events or {}) do
       end
     else                           -- we bought: supply, bid down, basis in
       local q = tonumber(e.quantity) or 1
-      local p = tonumber(e.price) or WHOLESALE[e.market].w
+      local p = tonumber(e.price) or GENESIS_BASIS[e.market]
       if S.bid[e.market] then
         S.bid[e.market] = math.max(S.bid[e.market] * 0.95,
-                                   WHOLESALE[e.market].w * BID_FLOORF)
+                                   GENESIS_BASIS[e.market] * BID_FLOORF)
       end
       blend(e.market, p, q)
       if e.market == "MEAT" then
         -- the salt anchor: two raw make two jerky, so a meat fill IS a
-        -- jerky basis (the 1:1 transform) -- and real supply walks the
-        -- famine ladder back down.
+        -- jerky basis (the 1:1 transform) -- the shelf follows the
+        -- raw price the forest actually paid the hunter.
         S.cost.JERKY = p
-        S.rungs = math.max(0, (S.rungs or 0) - 1)
       end
     end
   elseif e.type == "process_completed" and e.entity_id == ctx.entity.id then
     if e.recipe == "SALT_MEAT" then
-      -- a batch came off the rack: fresh stock is fresh news, and the
-      -- ladder eases (the forest fed him, no need for dear calories)
-      S.rungs = math.max(0, (S.rungs or 0) - 1)
-      S.quiet["sell_JERKY"] = 0
-    elseif e.recipe == "WHOLESALE_BUY_JERKY" then
-      -- the famine rung: this lot retails dear -- wholesale calories
-      -- are what a BARE shelf demanded, and the demand was proven.
-      S.rungs = (S.rungs or 0) + 1
+      -- a batch came off the rack: fresh stock is fresh news
       S.quiet["sell_JERKY"] = 0
     end
   elseif e.type == "place_order" and e.status == "applied"
@@ -220,15 +204,11 @@ end
 --     larder -- so it goes to the back room promptly: while raw meat
 --     covers a batch (2) and a rack stands free (capacity 2), salt.
 --     No labor, no fire, no daylight: the shed works the night shift.
---     Salt comes FIRST: what the forest sells is the cheaper rung --
---     wholesale only what the forest will not (run 48's lesson).
-local racks = 0        -- SALT_MEAT and every wholesale runner share
-local running = {}     -- the shed's two racks
+--     It is the counter's ONLY restock now -- the backdoor is off,
+--     and what the forest will not sell, no runner can fetch.
+local racks = 0        -- SALT_MEAT batches on the shed's two racks
 for _, p in ipairs(ctx.processes or {}) do
-  running[p.recipe] = true
-  if p.recipe == "SALT_MEAT" or p.recipe:sub(1, 10) == "WHOLESALE_" then
-    racks = racks + 1
-  end
+  if p.recipe == "SALT_MEAT" then racks = racks + 1 end
 end
 
 while std.holding_qty("MEAT") >= 2 and racks < 2 do
@@ -236,51 +216,8 @@ while std.holding_qty("MEAT") >= 2 and racks < 2 do
   racks = racks + 1
 end
 
--- 2c. The wholesale doors (run 50): under minimum stock, coin beyond
---     the RESERVE buys a caravan lot (cheapest errand first); over the
---     band's max, a lot goes back over the hills for coin at the dump
---     price (most overweight first). THE KEY IS THE RUNNER: a
---     good-requirement is reserved while its process runs, so one
---     SHOP_KEY means one errand at a time -- restock beats disposal,
---     and the hills are a counterparty, not a firehose.
-if not dark then
-  local acct, coin = nil, 0
-  for _, a in ipairs(ctx.accounts) do
-    if a.currency == "COIN" then acct, coin = a.id, tonumber(a.balance) end
-  end
-
-  local errand_out = false
-  for code in pairs(running) do
-    if code:sub(1, 10) == "WHOLESALE_" then errand_out = true end
-  end
-
-  if not errand_out and racks < 2 then
-    local buys, dumps = {}, {}
-    for sym, spec in pairs(WHOLESALE) do
-      local band = STOCK[sym] or { min = spec.lot, max = spec.lot * 2 }
-      local held = std.holding_qty(sym)
-      if spec.buy and held < band.min
-         and coin >= spec.w * spec.lot + RESERVE then
-        buys[#buys + 1] = { code = "WHOLESALE_BUY_" .. sym,
-                            cost = spec.w * spec.lot }
-      end
-      if spec.dump and held > band.max and held >= spec.lot then
-        dumps[#dumps + 1] = { code = "WHOLESALE_DUMP_" .. sym,
-                              over = held - band.max }
-      end
-    end
-    table.sort(buys, function(a, b) return a.cost < b.cost end)
-    table.sort(dumps, function(a, b) return a.over > b.over end)
-    if #buys > 0 then
-      ctx.action.start_process(buys[1].code)
-    elseif #dumps > 0 then
-      ctx.action.start_process(dumps[1].code)
-    end
-  end
-end
-
 -- 3. Quiet drift: 3 live ticks without a fill eases the price toward
---    trade -- bids up toward the wholesale cap, ask adjust down.
+--    trade -- bids up toward the basis cap, ask adjust down.
 for _, sym in ipairs(RETAIL) do
   if (S.quiet["sell_" .. sym] or 0) >= 3 then
     S.adj[sym] = math.max((S.adj[sym] or 1) * 0.95, 0.9)
@@ -290,7 +227,7 @@ end
 for _, sym in ipairs(FOREST) do
   if (S.quiet["buy_" .. sym] or 0) >= 3 then
     S.bid[sym] = math.min(S.bid[sym] * 1.03,
-                          WHOLESALE[sym].w * BID_CAP)
+                          GENESIS_BASIS[sym] * BID_CAP)
     S.quiet["buy_" .. sym] = 0
   end
 end
@@ -301,21 +238,17 @@ for sym in pairs(LEGACY_ASK) do
   end
 end
 
--- 4. What should stand now? The wholesale band prices the book:
---    retail = max(basis x MARGIN, w x ASK_FLOOR) x adjust + famine
---    rungs; stock that isn't held isn't quoted. Bids stand only under
---    the band max, and never commit the RESERVE.
+-- 4. What should stand now? The post's own books price it: retail =
+--    basis x MARGIN x adjust, capped; stock that isn't held isn't
+--    quoted. Bids stand only under the larder's max.
 local acct, coin = nil, 0
 for _, a in ipairs(ctx.accounts) do
   if a.currency == "COIN" then acct, coin = a.id, tonumber(a.balance) end
 end
 
 local function ask_of(sym)
-  local spec = WHOLESALE[sym]
-  local a = math.max((S.cost[sym] or spec.w) * MARGIN,
-                     spec.w * ASK_FLOOR)
+  local a = (S.cost[sym] or GENESIS_BASIS[sym]) * MARGIN
     * (S.adj[sym] or 1)
-  if sym == "JERKY" then a = a + 0.75 * (S.rungs or 0) end
   return r2(math.min(a, ASK_CAP))
 end
 
@@ -337,12 +270,10 @@ if not dark then
   end
 end
 
--- The purse is split pro-rata over the bids the bands still allow,
--- and never dips into the RESERVE (the wholesale door eats first).
-local spendable = math.max(coin - RESERVE, 0)
+-- The purse is split pro-rata over the bids the larder still allows.
 local desired, total_cost = {}, 0
 for _, sym in ipairs(FOREST) do
-  local band = STOCK[sym] or { max = WHOLESALE[sym].lot * 2 }
+  local band = STOCK[sym] or { max = 8 }
   local price = S.bid[sym]
   if not dark and price and std.holding_qty(sym) < band.max then
     desired[#desired + 1] = { key = "buy_" .. sym, symbol = sym,
@@ -351,8 +282,8 @@ for _, sym in ipairs(FOREST) do
   end
 end
 local scale = 1
-if total_cost > spendable and total_cost > 0 then
-  scale = spendable / total_cost
+if total_cost > coin and total_cost > 0 then
+  scale = coin / total_cost
 end
 local qtys, spread = {}, false
 for _, d in ipairs(desired) do
@@ -366,7 +297,7 @@ if not spread and #desired > 0 then
   table.sort(desired, function(a, b) return a.price < b.price end)
   local spent = 0
   for _, d in ipairs(desired) do
-    if spent + d.price <= spendable + 0.000001 then
+    if spent + d.price <= coin + 0.000001 then
       qtys[d.key] = 1
       spent = spent + d.price
     end
