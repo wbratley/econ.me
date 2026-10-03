@@ -449,3 +449,24 @@ def test_std_clock_queries_nil_without_ctx_clock():
     result = engine.run("return std.is_night()", bare)
     assert result.error is None
     assert result.return_value is None
+
+
+def test_unpersistable_state_is_a_script_error_not_a_partial_write():
+    """F3: _read_lua_table used to swallow mid-table conversion errors
+    (blanket except:pass), persisting a PARTIAL dict as script state with
+    error=None -- keys after the bad one lost silently. A cyclic state
+    table (ctx.state.s = ctx.state) is the deterministic case: recursion
+    overflows during conversion. Now the conversion failure must surface
+    as the script's error -- state_updates empty, prior state preserved
+    by the tick, script_error event emitted -- instead."""
+    src = """
+ctx.state.good_key = 1
+ctx.state.self_ref = ctx.state
+return 1
+"""
+    result = engine.run(src, _CTX)
+    assert result.error is not None
+    assert "self_ref" in result.error
+    assert "not persistable" in result.error
+    assert result.state_updates == {}
+    assert result.return_value is None
