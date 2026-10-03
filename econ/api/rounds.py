@@ -67,6 +67,16 @@ class NotEligibleError(Exception):
     (spectator, or an eliminated dynasty) and cannot signal readiness."""
 
 
+class RoundConflictError(RuntimeError):
+    """Another request closed this round first: the check-then-act that
+    decided "I close round N+1" (readiness gate, deadline poll, operator
+    advance) raced a concurrent advance and lost. The raise fires before
+    any boundary work, so the caller's rollback discards the loser's
+    whole double round -- the world runs its K ticks exactly once. The
+    endpoint maps this to 409; the poll and the clock retry on their
+    next beat against the round that actually opened."""
+
+
 def ticks_per_round() -> int:
     """K -- ticks resolved per round. Deployment config (env), default 10.
 
@@ -365,6 +375,29 @@ def _close_round(session: Session, rounds_before: int,
     operator's advance, a full-consent resolve, and the world clock's
     boundary all land here, so the three paths cannot drift apart.
     """
+    # Double-advance guard: every caller decided "I close round N+1"
+    # from a check-then-act (the readiness register, the deadline, the
+    # operator's click) that a concurrent request can also have passed --
+    # a double-clicked final ready, a ready landing on the deadline
+    # boundary. SQLite's writer lock serializes the writes but not the
+    # check, and the register's with_for_update covers its own row only
+    # (session.get serves the identity map without re-SELECTing). So
+    # re-read the counter with a REAL select -- populate_existing
+    # bypasses the identity map -- and refuse to close a round the
+    # world already closed: the loser's rollback (endpoint 409 / the
+    # schedulers' retry) keeps 2K ticks from running under one consent
+    # and spawns.apply_on_round from renewing the fauna twice.
+    row = session.execute(
+        select(WorldSetting).where(WorldSetting.key == ROUND_STATE_KEY)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    persisted = int(dict(row.value).get("round_number", 0)) if row is not None else 0
+    if persisted != rounds_before:
+        raise RoundConflictError(
+            f"round {rounds_before + 1} was already closed "
+            f"(counter now at {persisted}); retry against the open round"
+        )
+
     # Population renews at the round boundary (spawns.py): what the
     # world's SPAWN_RULES call for, after the round's ticks committed.
     from econengine import spawns as spawns_mod

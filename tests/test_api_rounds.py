@@ -611,3 +611,80 @@ def test_clock_extinction_brake(client, monkeypatch):
 
     assert _clock_tick_once() is None
     assert _current(client).json()["ticks_run"] == 0
+
+
+# ===========================================================================
+# double-advance guard (§9): the check-then-act race on the round counter
+# ===========================================================================
+
+def test_close_round_refuses_a_round_the_world_already_closed(client):
+    """_close_round re-reads the counter with a real select before doing
+    any boundary work: a caller whose check-then-act went stale (the
+    register's with_for_update serializes its own row, not the decision)
+    is refused instead of re-applying the round's spawns and running a
+    second K ticks under one consent."""
+    from econ.api import rounds as rounds_mod
+
+    assert _advance(client).status_code == 201
+    engine = client.app.state._test_engine
+    with Session(engine) as s:
+        with pytest.raises(rounds_mod.RoundConflictError, match="already closed"):
+            rounds_mod._close_round(s, rounds_before=0, last_tick_number=10)
+
+
+def test_stale_advance_rolls_back_the_whole_losing_round(client, monkeypatch):
+    """The loser of a double-advance race (a final ready landing exactly
+    on the deadline boundary; a double-clicked ready): its ticks, spawns
+    and counter write all roll back with the raise -- the world keeps
+    exactly one closure of that round."""
+    from econ.api import rounds as rounds_mod
+
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")
+    assert _advance(client).status_code == 201
+    before = _current(client).json()
+    assert (before["round_number"], before["ticks_run"]) == (1, 2)
+
+    # the race's only effect on the loser's state: its check read the
+    # counter BEFORE the winner committed. Pin the check to that stale
+    # value; everything downstream is the loser's real code path.
+    real = rounds_mod._rounds_completed
+    monkeypatch.setattr(
+        rounds_mod, "_rounds_completed",
+        lambda session: real(session) - 1,
+    )
+    engine = client.app.state._test_engine
+    with Session(engine) as s:
+        with pytest.raises(rounds_mod.RoundConflictError):
+            rounds_mod.advance_round(s)
+        s.rollback()
+
+    monkeypatch.undo()   # the race is over: read the world unpatched
+    after = _current(client).json()
+    assert (after["round_number"], after["ticks_run"]) == (1, 2)
+
+
+def test_advance_conflict_maps_to_409(client, monkeypatch):
+    """Through the endpoint the loser sees 409 (not a 500), the loser's
+    round is rolled back, and a retry against the round that actually
+    opened succeeds -- the operator's next click is the resolution."""
+    from econ.api import rounds as rounds_mod
+
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "1")
+    assert _advance(client).status_code == 201
+
+    real = rounds_mod._rounds_completed
+    monkeypatch.setattr(rounds_mod, "_rounds_completed",
+                        lambda session: real(session) - 1)
+    r = _advance(client)
+    assert r.status_code == 409
+    assert "already closed" in r.json()["detail"]
+
+    monkeypatch.undo()  # the race is over: read the world unpatched
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "1")
+    s = _current(client).json()
+    assert (s["round_number"], s["ticks_run"]) == (1, 1)
+
+    r = _advance(client)
+    assert r.status_code == 201
+    s = _current(client).json()
+    assert (s["round_number"], s["ticks_run"]) == (2, 2)
