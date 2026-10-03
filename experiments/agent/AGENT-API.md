@@ -177,6 +177,7 @@ journals, 11 round snapshots.
 | `seat-<house>.round-N.author.prompt.md` | header (`# round: N`) + exact system + user prompt as sent | "what did Lagertha see in round 6?" |
 | `seat-<house>.round-N.diary.prompt.md` | the diary call, full transcript included | "what was she told after?" |
 | `calls.log` | JSONL per model attempt: model, attempt, ok, elapsed_s, finish_reason, content/reasoning chars & deltas, max_tokens, full token usage, seat, round | "how long did the ladder think?" |
+| `mcp-calls.jsonl` | JSONL per MCP round trip (all seats, one file): ts, seat, method, tool, abbreviated args (huge sources → head+sha, joinable to `source_sha`), ok/error, elapsed_s, result_chars | "which tool calls did the seat make, and what did each cost?" |
 | `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
 | `round-NN.json` | world snapshot: ticks, events_by_type, per-dynasty view (behaviour sha + entry), leaderboard | "what did the world do?" |
 | `dashboard.html` / `index.html` | the browsable standings/round table/sha trails | "what happened at a glance?" |
@@ -190,6 +191,8 @@ journals, 11 round snapshots.
 ```bash
 # every prompt a seat got, in order
 ls ~/econ-runs/stone-run52/seat-house-lagertha.round-*.author.prompt.md
+# every tool call a seat made, with timings (runs from the tracer on)
+jq -r 'select(.seat=="House Lagertha") | [.ts, .tool, (.elapsed_s|tostring), (.ok|tostring)] | @tsv' ~/econ-runs/<run>/mcp-calls.jsonl
 # re-fire any prompt at the provider, capture the full reasoning stream
 .venv/bin/python -m experiments.agent.replay_prompt \
   --prompt ~/econ-runs/stone-run52/seat-house-lagertha.round-6.author.prompt.md
@@ -212,10 +215,10 @@ Browser surfaces while a run is live: `--serve` port (8129) serves the
 dashboard dir; `/rounds/events` is the SSE stream of readiness changes
 and round closures.
 
-## 8. The one gap
+## 8. The one gap — closed
 
-Individual MCP tool calls are not yet written to a per-call log (the
-choreography in §4 plus the persisted prompts reconstructs them); model
-calls are fully logged (`calls.log`). A per-seat `mcp-calls.jsonl`
-(method, args, elapsed, result size) would close it — small PR, sits in
-`http_transport`.
+`mcp-calls.jsonl` (the run 53 tracer) logs every MCP round trip from
+ every seat's client — authoring observes, submits, consent, and the
+runner's snapshot calls — with timings and abbreviated arguments.
+Between it, the persisted prompts, `calls.log`, and the journals,
+every byte a seat sent or received is now on disk.
