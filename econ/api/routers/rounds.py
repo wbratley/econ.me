@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from econ.api import events
 from econ.api.deps import get_current_user, get_session, require_admin
 from econ.api.rounds import (
-    NotEligibleError, advance_round, current_round_state, gate_mode,
+    NotEligibleError, RoundConflictError, advance_round, current_round_state, gate_mode,
     set_gate_mode, set_user_ready, unset_user_ready, world_tick_seconds,
 )
 from econ.api.schemas import (
@@ -39,7 +39,14 @@ def advance(
 
     K is deployment config (``ECON_TICKS_PER_ROUND``, default 10). The whole
     round -- all K ticks and the round counter -- commits atomically."""
-    summary = advance_round(session)
+    try:
+        summary = advance_round(session)
+    except RoundConflictError as exc:
+        # a concurrent advance (readiness resolve, clock boundary, another
+        # operator click) closed this round first: our ticks roll back, the
+        # world keeps exactly one closure -- retry against the open round
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
     events.publish_round_closed(jsonable_encoder(summary))
     return RoundSummary(**summary)
@@ -82,6 +89,13 @@ def ready(
     try:
         out = set_user_ready(session, user.id)
     except NotEligibleError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RoundConflictError as exc:
+        # the final-ready resolve lost a race with a concurrent advance:
+        # consent is recorded only if the loser's transaction survived --
+        # it did not (rolled back whole), so the client re-readies against
+        # the round that actually opened (idempotent re-POST)
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
