@@ -11,7 +11,7 @@ from econengine.conditions import (
 )
 from econengine.goods import create_good
 from econengine.markets import adjust_holding, create_market, get_holding, place_order
-from econengine.models import Base, EntityStatus, EntityType, OrderStatus, ProcessStatus
+from econengine.models import Base, EntityStatus, EntityType, Holding, OrderStatus, ProcessStatus
 from econengine.needs import create_need, run_consumption
 from econengine.parcels import create_parcel
 from econengine.production import create_recipe, start_process
@@ -187,6 +187,7 @@ def test_incapacity_burn_default(session):
         "condition": "COND-SICK", "quantity": "50.0000", "threshold": "50.0000",
         "estate_policy": "burn", "recipient_id": None,
         "goods_transferred": "0.0000", "goods_burned": "60.0000",
+        "goods_clipped": "0.0000",
         "money_transferred": "0.0000", "money_burned": "100.0000", "parcels": 1,
     }]
 
@@ -207,6 +208,29 @@ def test_incapacity_heir_inherits_all_but_conditions(session):
     assert get_holding(session, heir.id, "COND-SICK") is None  # sickness is not heritable
     assert heir.accounts[0].balance == Decimal("100")
     assert parcel.owner_id == heir.id
+    assert event["goods_burned"] == "50.0000"  # the condition itself
+
+
+def test_heir_transfer_reports_post_clip_totals(session):
+    """F5: the estate event used to report goods_transferred PRE-clip --
+    the dead's full stack, overstating what the heir could bank at a
+    capped good. The ledger now separates landed from clipped-at-cap."""
+    set_estate_rule(session, "heir")
+    entity = _sick_entity(session)
+    heir = create_entity(session, "Heir", EntityType.INDIVIDUAL)
+    entity.heir_id = heir.id
+    create_good(session, "WARMTH", max_holding=Decimal("10"))
+    # seed directly: adjust_holding would clip the LIVING stack at the cap
+    session.add(Holding(entity_id=entity.id, symbol="WARMTH",
+                        quantity=Decimal("30")))
+    adjust_holding(session, entity, "GOLD", Decimal("10"))
+
+    (event,) = run_incapacity(session, tick_number=1)
+
+    assert get_holding(session, heir.id, "WARMTH").quantity == Decimal("10")
+    # landed: GOLD 10 + WARMTH 10 (clipped from 30); cap destroyed 20
+    assert event["goods_transferred"] == "20.0000"
+    assert event["goods_clipped"] == "20.0000"
     assert event["goods_burned"] == "50.0000"  # the condition itself
 
 
