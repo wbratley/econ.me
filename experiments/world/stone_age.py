@@ -478,7 +478,8 @@ cheap, so the question is what you carry and what you quote -- not
 whether the trip survives the day. Mind the dark on the way all the
 same.
 
-== THE LADDER (rough order; a gather averages ~0.75 of a needed food) ==
+== THE LADDER (rough order; a bare gather averages ~5.5 satiety --
+   a third of a day's food in one roll) ==
 1. THE FIRE IS COMMON GROUND: a standing fire at the clearing already
    seats four and cooks for anyone -- keep it fed (1 WOOD stokes four
    hours) and take your seat by dark (WARM_BY_FIRE). MAKE_FIRE (2 WOOD)
@@ -527,8 +528,8 @@ same.
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
 7. TRAPs: convert surplus WOOD+YARN into the best hunt table.
-A tooled house gathers ~2.5 food per LABOR against a ~0.6/hour burn -- the
-surplus is what markets are for. The starter script never builds ANY of
+A tooled house gathers ~10.5 food per LABOR against a ~0.6/hour burn --
+the surplus is what markets are for. The starter script never builds ANY of
 this: it is the floor you inherit, not the ceiling.
 
 == THE LARDER ==
@@ -536,7 +537,7 @@ THE INCOME WALL, AND HOW IT BREAKS: every world so far starved its
 houses beside wealth -- the food a body FINDS (0.5/hour needed) cost
 more daylight than the day had. The ladder's new rungs answer on the
 income side. THE ORCHARD BRANCH: the gather tables now find APPLES
-(bare-handed ~3.5 satiety-equivalent/hour, a bag ~7) -- apples keep
+(bare-handed ~5.5 satiety-equivalent/hour, a bag ~10.5) -- apples keep
 a day and a half, so the surplus is worth banking, and EAT_APPLES is
 a proper meal (~5 hours fed).
 HENS ARE CAPITAL THAT LAYS: the post SELLS hens (2 on the shelf to
@@ -1303,27 +1304,26 @@ def _create_recipes(session: Session) -> None:
     # One gather = one loot-table roll of ONE resource (you find what you
     # find). The thicket carries the larder's shelf (P5) and the night's
     # fuel (run 38's lever: all three houses died of FATIGUE beside a
-    # dark fire -- the wood roll starved the commons): the berry bushes,
-    # the apple boughs, and a fat wood branch -- bare-handed finds
-    # ~3.5 satiety-equivalent/hour (berries 40% x4, apples 25% x3, wood
-    # 25% x3, yarn 5% x1, flint 5% x1) against a need of ~14/day: food
-    # costs ~4 of the 14 daylight hours bare-handed, ~2 with a bag,
-    # and the SAME walk banks ~4.5 logs a day. Run 39 priced the
-    # wood lever honestly: the fire got funded (36 logs gathered vs
-    # 33 stoked, zero exposure deaths) but the berry share that paid
-    # was the MARGIN, not slack -- two houses starved by d5 on the
-    # ~3.5 gather-hours a commute-and-meal day affords, because run
-    # 38's 0.771 food sat was an average carried by apples and
-    # bought jerky. So the crafts pay the larder's bill back:
-    # berries restored, wood kept, yarn and flint halved (run 39
-    # was not binding on crafts -- pens got built, torches lit).
-    # Wood stays a quarter of gathers, not a seventh -- frequency
-    # beats size for famine: P(zero wood in a six-gather day) is
-    # 0.18. On the doubled BAG table a ~5%
-    # branch of 1 COIN -- shiny stones, minted by the ground itself
-    # (production credits a banked symbol to the account,
-    # production._credit_output). The bare table finds none: scarcity
-    # first, then the supply grows with tools.
+    # dark fire -- the wood roll starved the commons).
+    # RUN 52 -- THE THICKET FEEDS A HOUSE: runs 50 and 51 both ended in
+    # total extinction with every house gathering for its life and
+    # losing; the doctrine flips from famine-by-design to "solo
+    # survival is possible, and surplus is the trade's raw material".
+    # Bare-handed finds ~5.5 satiety-equivalent/hour (berries 40% x6,
+    # apples 25% x5, wood 25% x3, yarn 5% x1, flint 5% x1) against a
+    # need of ~14/day: food costs ~2.5 of the 14 daylight hours
+    # bare-handed, and the SAME walk banks ~0.75 logs/hour for the
+    # fire. A bag doubles every row: ~10.5 sat/hour, so a tooled
+    # house feeds the day in ~1.5 hours and the rest is SURPLUS --
+    # surplus that rots (berries in a morning, apples in a day and a
+    # half), so eating it all yourself was never on the table: sell
+    # it, pot it, or feed a neighbour before it does. Wood stays a
+    # quarter of bare gathers -- frequency beats size for the fire
+    # (P(zero wood in a six-gather day) is 0.18). On the doubled
+    # BAG table a ~5% branch of 1 COIN -- shiny stones, minted by the
+    # ground itself (production credits a banked symbol to the
+    # account, production._credit_output). The bare table finds none:
+    # scarcity first, then the supply grows with tools.
     production.create_recipe(
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
@@ -1332,8 +1332,8 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("40"), "outputs": {"BERRIES": D("4")}, "label": "berries"},
-            {"weight": D("25"), "outputs": {"APPLES": D("3")}, "label": "apples"},
+            {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
+            {"weight": D("25"), "outputs": {"APPLES": D("5")}, "label": "apples"},
             {"weight": D("25"), "outputs": {"WOOD": D("3")}, "label": "wood"},
             {"weight": D("5"), "outputs": {"YARN": D("1")}, "label": "yarn"},
             {"weight": D("5"), "outputs": {"FLINT": D("1")}, "label": "flint"},
@@ -1347,8 +1347,8 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
         branches=[
-            {"weight": D("35"), "outputs": {"BERRIES": D("8")}, "label": "berries"},
-            {"weight": D("27"), "outputs": {"APPLES": D("6")}, "label": "apples"},
+            {"weight": D("35"), "outputs": {"BERRIES": D("12")}, "label": "berries"},
+            {"weight": D("27"), "outputs": {"APPLES": D("10")}, "label": "apples"},
             {"weight": D("20"), "outputs": {"WOOD": D("6")}, "label": "wood"},
             {"weight": D("5"), "outputs": {"YARN": D("2")}, "label": "yarn"},
             {"weight": D("3"), "outputs": {"FLINT": D("2")}, "label": "flint"},

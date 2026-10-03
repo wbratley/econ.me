@@ -2072,14 +2072,15 @@ def test_the_dark_road_wants_a_flame(session):
 # ===========================================================================
 
 def test_the_orchard_branch_feeds_the_bare_hand(session):
-    """P5's arithmetic, asserted from the installed rows: both gather
+    """The gather arithmetic, asserted from the installed rows: both
     tables carry the orchard branch, the weights sum to 100, and bare
-    food income clears ~3.5 satiety-equivalent/hour (the income wall's
-    first break -- apples keep a day and a half where berries rot in a
-    morning, so the surplus is worth banking; run 39's census sent
-    the berries back: the donated 30% table starved two houses by d5
-    beside a funded fire, so the larder pays at its famine-era
-    strength again and the crafts pay the bill)."""
+    food income clears ~5.5 satiety-equivalent/hour (run 52's flip:
+    runs 50-51 ended in total extinction with every house gathering
+    for its life and losing -- now the thicket feeds a house
+    bare-handed: food costs ~2.5 of the 14 daylight hours, and the
+    surplus that rots in a morning is the trade's raw material).
+    The bag still doubles every row: ~10.5 satiety/hour, the
+    advantage contract's wide margin."""
     create_content(session)
     gather = production.get_recipe(session, "GATHER")
     bag = production.get_recipe(session, "GATHER_BAG")
@@ -2095,10 +2096,10 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
 
     bare, bagged = table(gather), table(bag)
     assert set(bare) == {"berries", "apples", "wood", "yarn", "flint"}
-    assert bare["berries"][1] == {"BERRIES": Decimal("4")}
-    assert bare["apples"][1] == {"APPLES": Decimal("3")}
-    assert bagged["berries"][1] == {"BERRIES": Decimal("8")}
-    assert bagged["apples"][1] == {"APPLES": Decimal("6")}
+    assert bare["berries"][1] == {"BERRIES": Decimal("6")}
+    assert bare["apples"][1] == {"APPLES": Decimal("5")}
+    assert bagged["berries"][1] == {"BERRIES": Decimal("12")}
+    assert bagged["apples"][1] == {"APPLES": Decimal("10")}
 
     def food_ev(rows):
         ev = Decimal("0")
@@ -2108,8 +2109,8 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
             ev += weight * qty * Decimal(str(per_hen[label]))
         return ev
 
-    assert food_ev(bare) >= Decimal("3.4")    # the wall breaks bare-handed
-    assert food_ev(bagged) >= Decimal("6.7")   # and the bag doubles down
+    assert food_ev(bare) >= Decimal("5.4")    # the thicket feeds a house
+    assert food_ev(bagged) >= Decimal("10.4")  # and the bag doubles down
 
 
 def test_the_crafts_pay_the_larders_bill(session):
