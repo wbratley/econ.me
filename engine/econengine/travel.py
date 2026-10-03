@@ -223,7 +223,13 @@ def _start_hop(
     recipe = _check_travel_recipe(session, edge.mode)
     # torchlit night departures are loud (P2): the gate also answers it
     lit_departure = _night_gate(session, entity, production.next_tick_number(session))
-    process = production.start_process(session, entity, recipe.code)
+    # start_process draws inputs one at a time on the contract that the
+    # caller wraps a savepoint (the intent path honours it through the
+    # resolver). complete_travel calls us straight from the tick pass, so
+    # the savepoint lives HERE: a multi-input hop short on its second
+    # input must not leak the first draw into a stranded traveller (F4).
+    with session.begin_nested():
+        process = production.start_process(session, entity, recipe.code)
     # the road, not the template, sets the hop's duration
     process.completes_tick = process.started_tick + edge.cost_ticks
     process.is_travel = True

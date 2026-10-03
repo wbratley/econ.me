@@ -528,3 +528,32 @@ def test_describe_renders_the_road(session):
         "params": {"to": "MOON"}, "reason": "unknown place 'MOON'",
     })
     assert "set out for MOON" in refused and "refused" in refused
+
+
+def test_failed_hop_draw_rolls_back_whole(session):
+    """F4: _start_hop called production.start_process outside a savepoint.
+    start_process draws inputs one at a time on the contract that the
+    caller wraps a savepoint (the intent path honours it; complete_travel
+    didn't). A multi-input hop short on the SECOND input leaked the first
+    draw -- the traveller stranded AND short the goods. The draw now
+    rolls back whole: stranded, but holding what the failed hop took."""
+    _map(session)
+    production.create_recipe(
+        session, "TRAVEL_WALK",
+        inputs={"FOOD": Decimal("1"), "TORCH": Decimal("1")},
+        outputs={}, duration_ticks=1)
+    entity = _entity(session)
+    markets_mod.adjust_holding(session, entity, "FOOD", Decimal("2"))
+    markets_mod.adjust_holding(session, entity, "TORCH", Decimal("1"))
+
+    out = _travel(session, entity, "RIVER", modes="WALK")  # hop 1: both in hand
+    assert out["status"] == "applied"
+    run_tick(session)  # hop 1 completes next tick
+    tick = run_tick(session)
+    assert any(e["type"] == "travel_stranded" for e in tick.events)
+    route = session.query(TravelRoute).one()
+    assert route.status is TravelRouteStatus.STRANDED
+    # hop 1's consumption stands (FOOD 2->1, TORCH 1->0); hop 2's partial
+    # FOOD draw rolled back -- the traveller keeps what the dead hop drew
+    food = markets_mod.get_holding(session, entity.id, "FOOD")
+    assert food is not None and food.quantity == Decimal("1")
