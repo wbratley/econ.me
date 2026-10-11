@@ -80,9 +80,11 @@ if satiety < 1.5 then
     ctx.action.start_process("EAT_COOKED")
   elseif jerky >= 1 then
     ctx.action.start_process("EAT_JERKY")
-  elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5 then
+  elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5
+       and std.has_unlock("POTTERY") then
     ctx.action.start_process("FORAGE_POT")
-  elseif berries >= 0.5 and apples >= 0.5 and eggs >= 0.5 then
+  elseif berries >= 0.5 and apples >= 0.5 and eggs >= 0.5
+       and std.has_unlock("POTTERY") then
     -- the rancher's pot: an egg takes the meat leg's place (run 47:
     -- a flock could not out-climb the stomach eaten whole, but half
     -- an egg boils as thick as a hunted meal)
@@ -193,15 +195,43 @@ if place == home and meat >= 2 and cooked < 6 then
   ctx.action.start_process("COOK_MEAT")
 end
 
+-- 2a. The first craft (run 54 P1): knapping is studied, not born.
+--     The floor's spear rung now runs through the scrape: bank the
+--     materials (yarn and a woodpile that spares four), walk the two
+--     hours, dig if the pocket is short, and spend an afternoon
+--     striking edges. Until the rank is held the haft is refused --
+--     so the floor climbs before it crafts. Early in the day only:
+--     the scrape errand plus the study plus the walk home is a whole
+--     working day.
+local knapping = std.has_unlock("KNAPPING")
+if not knapping and spear < 1 and yarn >= 1 and wood >= 4
+   and can_walk and std.hour() < 11 then
+  if place == "FLINT" then
+    if flint >= 3 then
+      ctx.action.start_process("STUDY_KNAPPING")
+    else
+      ctx.action.start_process("DIG_FLINT")
+    end
+  else
+    ctx.action.travel("FLINT")
+  end
+end
+
 -- 2b. The spear rung (run 47's lever: meat must exist, and the floor
---     must make it). An afternoon's hafting when the woodpile can
---     spare the two logs -- the floor's one piece of capital; the
---     rest of the hunt ladder (bag, axe, bow, traps) stays the
---     player's invention. At home, by day, early enough that three
---     honest hours still end in light.
-if spear < 1 and flint >= 1 and wood >= 4 and yarn >= 1
-   and place == home and not std.is_night() and std.hour() < 15 then
-  ctx.action.start_process("MAKE_SPEAR")
+--     must make it; run 54 P1: the haft wants the KNAPPING rank,
+--     studied at the scrape above). An afternoon's hafting when the
+--     woodpile can spare the two logs -- the floor's one piece of
+--     capital; the rest of the hunt ladder (bag, axe, bow, traps,
+--     and every other rank) stays the player's invention. Early
+--     enough that three honest hours still end in light; the walk
+--     home from the scrape is part of the errand.
+if spear < 1 and knapping and flint >= 1 and wood >= 4 and yarn >= 1
+   and not std.is_night() and std.hour() < 15 then
+  if place ~= home then
+    ctx.action.travel(home)
+  else
+    ctx.action.start_process("MAKE_SPEAR")
+  end
 end
 
 -- 3. Everything else is gathering at the thicket: food first, then wood

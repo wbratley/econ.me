@@ -632,6 +632,11 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
                                     # has something to buy (run 4: OSS
                                     # died holding 17 COIN beside an
                                     # empty, rotted larder)
+             # The keeper's shelf stock (run 54 P1): the world's whole
+             # salt supply until P3's lick opens -- eight rocks, each
+             # priced like flint. Two of them buy the SALT_CURING rank
+             # over this very counter (STUDY_SALT).
+             "SALT": Decimal("8"),
              # The water kit's anchor (P3): one waterskin on the shelf
              # -- the price a thirsty house with coin reads. Water
              # itself is never sold: the river is free, and the SKIN
@@ -683,6 +688,16 @@ def spawn_trading_post(session: Session) -> Entity:
     markets.adjust_holding(session, post, "SHOP_KEY", Decimal("1"))
     markets.adjust_holding(session, post, "SHOP_OPEN", Decimal("1"))
     markets.adjust_holding(session, post, "WOOD", Decimal("6"))
+    # Born to the trade (run 54 P1): the man behind the counter holds
+    # SALT_CURING outright -- his shed salts as it always did, no study
+    # owed. Houses learn it over his own shelf (STUDY_SALT at the POST)
+    # for the day they raise a shed of their own (P4). Tech is in
+    # hands, not on shelves -- but these hands were born to it.
+    tech.grant_unlock(
+        session, post,
+        tech.get_technology(session, "SALT_CURING"),
+        production.next_tick_number(session),
+    )
     combat.create_stat(session, post.id, "HITS", Decimal("20"))
     combat.create_stat(session, post.id, "ATTACK", Decimal("4"))
     combat.create_stat(session, post.id, "DEFENSE", Decimal("4"))
@@ -912,6 +927,23 @@ def _create_goods(session: Session) -> None:
                                   "clothes and beds.")
     goods.create_good(session, "FLINT", name="Flint",
                       description="Sharp stone for spearheads and cutting tools.")
+    # The potter's ground (run 54 P1): riverbank clay, dug by the hour
+    # -- decayless, heavy once carrying lands (E2), and useless without
+    # the POTTERY rank: the study consumes it, the wheelless art.
+    goods.create_good(session, "CLAY", name="Clay",
+                      description="Riverbank clay, dug at the water: the potter's "
+                                  "raw ground. Keeps forever; teaches nothing "
+                                  "by itself -- the rank is studied, not held.")
+    # The keeper's rock (run 54 P1): salt keeps forever and cures meat
+    # that keeps forever. Until P3's lick opens the source, the post's
+    # shelf is the world's whole supply -- a rank you buy over the very
+    # counter that holds it.
+    goods.create_good(session, "SALT", name="Salt",
+                      description="The keeper's rock: drawn through raw meat "
+                                  "until it keeps forever. The post's shelf "
+                                  "holds the world's supply (P3 opens the "
+                                  "salt lick); the SALT_CURING rank is "
+                                  "studied over that shelf.")
     # Capital -- durable, never consumed by use (traps are the exception:
     # a consumed input of HUNT_TRAPS, the one-shot technology).
     goods.create_good(session, "SPEAR", name="Spear",
@@ -1276,6 +1308,44 @@ def _create_recipes(session: Session) -> None:
                     "jerky-dense, never sickening). Wolves hold it; "
                     "nothing grants it to anyone else.")
 
+    # The crafts ladder (run 54 P1): research is a recipe whose output
+    # is an unlock -- five ENTITY-scope ranks, so specialization is a
+    # choice that lives in one body: you cannot buy my knapping, only my
+    # arrows. Tech is in hands, not on shelves -- unlocks never transfer
+    # (not tradeable, not inheritable; only a STUDY grants, and the
+    # study is honest inputs at an honest place). The ladder gates the
+    # CRAFT AISLE only: subsistence (fire, torches, the bag, gathering,
+    # fishing, the hunts once you hold the tools, eating, sleep) never
+    # grows a research prerequisite -- the run-52 doctrine's third rail.
+    tech.create_technology(
+        session, "KNAPPING", name="Knapping",
+        description="The first craft: striking flint to an edge. Learnt at "
+                    "the scrape in an afternoon of honest stone (STUDY at "
+                    "the FLINT scrape, 2 flint) -- and then the spear and "
+                    "the axe are yours to make.")
+    tech.create_technology(
+        session, "FIRE_HARDENING", prerequisites=["KNAPPING"],
+        name="Fire Hardening",
+        description="The second edge: slow fire tempers wood true. Wants "
+                    "KNAPPING first (the hand that cannot knapp cannot "
+                    "temper) -- and then the bow and the trap are yours.")
+    tech.create_technology(
+        session, "TANNING", name="Tanning",
+        description="The hide trade: scraping, smoking, greasing a pelt "
+                    "into leather. Learnt at a fire over yarn and hide -- "
+                    "and then clothes and waterskins are yours to sew.")
+    tech.create_technology(
+        session, "POTTERY", prerequisites=["FIRE_HARDENING"],
+        name="Pottery",
+        description="The river's art: clay coaxed to hold water and food. "
+                    "Wants FIRE_HARDENING first (a kiln is a fire you "
+                    "understand) -- and then the cooking pot is yours.")
+    tech.create_technology(
+        session, "SALT_CURING", name="Salt Curing",
+        description="The keeper's trade: salt drawn through meat until it "
+                    "keeps forever. Learnt over the post's own shelf -- and "
+                    "then your own salt shed (P4) is yours to raise.")
+
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
     # find). The thicket carries the larder's shelf (P5) and the night's
@@ -1352,6 +1422,17 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")},
         outputs={"FLINT": D("2")}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="FLINT",
+    )
+    # The potter's errand (run 54 P1): the same certain-hours bargain as
+    # the scrape, one place over -- the river gives clay to anyone who
+    # digs, but the potter's rank is studied, not held.
+    production.create_recipe(
+        session, "DIG_CLAY", name="Dig Clay",
+        description="An hour at the bank: two certain clay, no gamble. "
+                    "Daylight only, at the river.",
+        inputs={"LABOR": D("1")},
+        outputs={"CLAY": D("2")}, duration_ticks=1,
+        requires_daylight=True, requires_place_kind="RIVER",
     )
     # Hunting: slow (2 ticks), risky bare-handed (55% total loss), better
     # with a SPEAR held (never consumed) and best with TRAPs (consumed --
@@ -1579,6 +1660,7 @@ def _create_recipes(session: Session) -> None:
                     "is the post's own back room (no house can bind it).",
         inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
         duration_ticks=4, requires_facility="SALT_SHED",
+        requires=["SALT_CURING"],
     )
     # THE BACKDOOR IS OFF (run 52): run 49's wholesale channel --
     # WHOLESALE_BUY coin-for-stock and WHOLESALE_DUMP stock-for-coin,
@@ -1680,7 +1762,7 @@ def _create_recipes(session: Session) -> None:
                     "makes raw meat safe).",
         inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "MEAT": D("0.5")},
         outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
-        duration_ticks=0,
+        duration_ticks=0, requires=["POTTERY"],
     )
     # The rancher's pot (run 47, Lagertha's lever): the same fragment
     # meal with an EGG where the meat leg is short. Four hens lay
@@ -1697,7 +1779,7 @@ def _create_recipes(session: Session) -> None:
                     "does.",
         inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "EGGS": D("0.5")},
         outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
-        duration_ticks=0,
+        duration_ticks=0, requires=["POTTERY"],
     )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
     # (duration 0: SATIETY lands before this tick's consumption pass), and
@@ -1828,6 +1910,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "YARN": D("3"),
                                           "FLINT": D("1")},
         outputs={"CLOTHES": D("1")}, duration_ticks=2,
+        requires=["TANNING"],
     )
     production.create_recipe(
         session, "HUDDLE", name="Huddle",
@@ -1870,6 +1953,65 @@ def _create_recipes(session: Session) -> None:
         scales_with={"CHICKEN": 4},
     )
 
+    # --- The crafts ladder: study is honest work (run 54 P1) ---------
+    # Research is a recipe whose output is an unlock: 2 ticks at an
+    # honest place, the table's inputs consumed at start, one LABOR per
+    # tick while it runs (the ration feeds the study; night labor fades
+    # and so does night study -- no daylight gate needed, the ration IS
+    # the gate). Unlocks never transfer: only a STUDY grants, and every
+    # craft below it is refused with the rank named. Idempotent: a
+    # second study runs, eats, and grants nothing -- knowledge kept is
+    # not knowledge re-earned.
+    production.create_recipe(
+        session, "STUDY_KNAPPING", name="Study Knapping",
+        description="An afternoon at the scrape striking flint to an edge: "
+                    "the first craft. Two stones and two hours, and the "
+                    "spear and axe are yours to make.",
+        inputs={"FLINT": D("2")}, outputs={}, duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="FLINT", unlocks=["KNAPPING"],
+    )
+    production.create_recipe(
+        session, "STUDY_FIRE", name="Study Fire Hardening",
+        description="An evening at the fire watching wood temper true: the "
+                    "second edge. Wants a log, a flint, and knapping in "
+                    "your hands already -- then the bow and trap are yours.",
+        inputs={"WOOD": D("1"), "FLINT": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["FIRE_HARDENING"],
+    )
+    production.create_recipe(
+        session, "STUDY_TANNING", name="Study Tanning",
+        description="A smoky afternoon at the fire scraping and greasing "
+                    "hide into leather: the hide trade. Cord and a pelt, "
+                    "and clothes and waterskins are yours to sew.",
+        inputs={"YARN": D("2"), "PELT": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["TANNING"],
+    )
+    production.create_recipe(
+        session, "STUDY_POTTERY", name="Study Pottery",
+        description="An afternoon at the bank coaxing clay to hold water: "
+                    "the river's art. Clay and a log, fire-hardening in "
+                    "your hands already -- then the pot is yours.",
+        inputs={"CLAY": D("2"), "WOOD": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="RIVER", unlocks=["POTTERY"],
+    )
+    production.create_recipe(
+        session, "STUDY_SALT", name="Study Salt Curing",
+        description="A day at the counter watching salt draw through meat "
+                    "until it keeps: the keeper's trade, learnt over the "
+                    "post's own shelf. Then a shed of your own is yours "
+                    "to raise (P4).",
+        inputs={"SALT": D("2")}, outputs={}, duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="POST", unlocks=["SALT_CURING"],
+    )
+
     # --- Tools ---------------------------------------------------------------
     # SPEAR (held, never worn) and BAG (held) upgrade hunt and gather;
     # AXE (held) makes the wood certain and fights at +2 when the spear
@@ -1883,7 +2025,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"SPEAR": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["KNAPPING"],
     )
     production.create_recipe(
         session, "MAKE_AXE", name="Make Axe",
@@ -1892,7 +2034,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("1"), "YARN": D("1")},
         outputs={"AXE": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["KNAPPING"],
     )
     production.create_recipe(
         session, "MAKE_BAG", name="Make Bag",
@@ -1912,6 +2054,7 @@ def _create_recipes(session: Session) -> None:
                     "held, never consumed, filled at the bank.",
         inputs={"LABOR": D("1"), "PELT": D("1")},
         outputs={"WATERSKIN": D("1")}, duration_ticks=2,
+        requires=["TANNING"],
     )
     production.create_recipe(
         session, "MAKE_TRAP", name="Make Trap",
@@ -1919,6 +2062,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "WOOD": D("2"),
                                        "YARN": D("1")},
         outputs={"TRAP": D("1")}, duration_ticks=1,
+        requires=["FIRE_HARDENING"],
     )
     production.create_recipe(
         session, "MAKE_BED", name="Make Bed",
@@ -1934,7 +2078,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"BOW": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["FIRE_HARDENING"],
     )
 
 
@@ -2026,13 +2170,13 @@ def _create_markets(session: Session) -> None:
         "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "AXE": "Stone Axe",
         "BAG": "Bag", "BOW": "Bow", "CHICKEN": "Hen",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
-        "PELT": "Pelt", "WATERSKIN": "Waterskin",
+        "PELT": "Pelt", "WATERSKIN": "Waterskin", "SALT": "Salt",
     }
     for symbol in ("LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
                    "EGGS", "WOOD",
                    "YARN", "FLINT", "SPEAR", "AXE", "BAG", "BOW", "CHICKEN",
                    "TRAP", "CLOTHES", "BED",
-                   "PELT", "WATERSKIN"):
+                   "PELT", "WATERSKIN", "SALT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")
 
