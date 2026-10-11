@@ -11,7 +11,9 @@ the world is POOR and the needs are FATAL:
     every condition's equilibrium (grant/decay, the run5 lesson) sits
     ABOVE its incapacitation threshold: chronic neglect eventually
     seizes the entity. HUNGER (starvation), EXPOSURE (cold), DISEASE
-    (raw meat) all have real teeth.
+    (raw meat) all have real teeth. (Run 54 P2: SQUALOR is the one
+    deliberate exception -- comfort's bite throttles LABOR and never
+    touches the death register. No prestige, no scoreboard.)
   * Survival consumes most of the daylight LABOR budget (1
     auto-issued labor-hour per HOUR OF DAYLIGHT -- 14 a day, none at
     night): bare-handed living runs close to the line the genesis
@@ -217,6 +219,13 @@ MANUAL_KEY = "world.manual"
 # deficit against FOOD+WARMTH, so these buffers only postpone the reckoning;
 # capital (fire, clothes, shelter, tools) is the only way to a surplus.
 BERRY_BUFFER = Decimal("8")
+# Born at ease (run 54 P2): a day and a night of comfort banked at birth
+# -- the buffer that keeps the FIRST night's sleep-credit seam (the
+# hour before the first fire-sleep lands) from accruing the first
+# squalor. One unmet hour costs days at the 0.85 ration (squalor decays
+# a percent a tick); a body that starts easy and sits by its fires
+# never learns that price.
+COMFORT_SEAT_BUFFER = Decimal("2")
 WARMTH_BUFFER = Decimal("6")
 
 # --- The commons fire (P1, the fire rework: ROADMAP.md) --------------------
@@ -287,10 +296,28 @@ EMBER_TICKS = 2
 #             3 dead. Sleep pays in hours the house already spends
 #             idle at night: no third time-tax (P3's lesson), the
 #             night becomes a budget instead.
+#
+#   SQUALOR (run 54 P2): comfort's bite is the ONLY condition with no
+#             kill line -- misery that shows up at work, never at the
+#             grave. Grant 0.02/tick unmet, decay 0.01 -> chronic-
+#             neglect equilibrium 2.0: visible in telemetry, felt in
+#             every labor hour, survivable forever. The bite is the
+#             LABOR modifier (x0.85): while any rides, the daylight
+#             ration tops at 0.85 hours and a whole-hour recipe refuses
+#             -- the squalid house cannot work OR feast its way out;
+#             it must SIT (fire seats and beds are labor-free, and the
+#             fire is free). Ease is the dividend of safety: surplus
+#             food into a fine evening, warmth into a nice hour. No
+#             prestige, no scoreboard -- comfort is why you'd want to
+#             be safe rather than merely not-dead.
 FOOD_PER_TICK = Decimal("0.5")
 WARMTH_PER_TICK = Decimal("1")
 WARMTH_PER_NIGHT_TICK = Decimal("3")
 EAT_RAW_DISEASE_WEIGHT = Decimal("25")   # out of 100 per raw meal
+COMFORT_PER_TICK = Decimal("0.1")       # ease drawn from the stock hourly
+SQUALOR_GRANT = Decimal("0.02")         # per unmet tick
+SQUALOR_DECAY = Decimal("0.01")         # -> equilibrium 2.0, forever
+FEAST_COMFORT = Decimal("5")            # a fine evening, banked whole
 
 # --- Water (P3, ROADMAP.md) -----------------------------------------------
 # Thirst is the larder's counterweight: preservation is DRY, and the
@@ -1133,6 +1160,35 @@ def _create_goods(session: Session) -> None:
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
     )
+    # COMFORT + SQUALOR (run 54 P2): comfort, not status. COMFORT is a
+    # stock like any -- banked by fire seats, beds and feasts, drawn a
+    # tenth an hour by the need, fading 5% a tick on its own (ease
+    # fades faster than misery). SQUALOR is its deficit's memory and
+    # the one condition with NO kill line: it throttles LABOR x0.85
+    # (held_modifiers: while ANY rides, the daylight ration tops at
+    # 0.85 and whole-hour work refuses) and never touches the death
+    # register. The cure is the easiest work there is: sit down.
+    goods.create_good(
+        session, "COMFORT", name="Comfort",
+        description="Ease banked in the body: an hour by a fed fire "
+                    "(+0.5), a night in a bed (+1 an hour), a feast "
+                    "(+5, an evening's whole dividend). Drawn a tenth an "
+                    "hour by the COMFORT need, and fading fast on its "
+                    "own -- ease is the first thing a hard week spends.",
+        decay_per_tick=Decimal("0.05"),
+    )
+    goods.create_good(
+        session, "SQUALOR", name="Squalor",
+        description="The memory of unearned ease. It never kills -- it "
+                    "makes everything harder instead: while any rides, "
+                    "the daylight ration shrinks (x0.85) and a whole "
+                    "hour's work refuses its first labor. The cure is the "
+                    "easiest work there is: take a seat by a fed fire, or "
+                    "sleep in a bed, and let it fade.",
+        decay_per_tick=SQUALOR_DECAY,
+        modifies_pattern="LABOR",
+        modifies_factor=Decimal("0.85"),
+    )
     # REST (P4): the night's stock, SATIETY's shape. Cap 8 (a day and
     # a third of waking -- the buffer a good night rebuilds), drained
     # 0.25/h flat: sleeping 8 of the 14 night hours nets +6/day against
@@ -1576,10 +1632,14 @@ def _create_recipes(session: Session) -> None:
         session, "WARM_BY_FIRE", name="Warm by the Fire",
         description="Take a seat at a lit fire: an hour's seated warmth, +6 "
                     "(a body holds at most six -- two cold hours' grace once "
-                    "you stand up). No labor, night-legal, at the hearth; a "
+                    "you stand up) and ease besides (+0.5 comfort -- a fire "
+                    "hour is a nice hour). No labor, night-legal, at the "
+                    "hearth; a "
                     "fire seats four at once, warming hour by hour. This is "
                     "how nights are survived: not banked, SAT.",
-        inputs={}, outputs={"WARMTH": WARM_BY_FIRE_WARMTH}, duration_ticks=1,
+        inputs={},
+        outputs={"WARMTH": WARM_BY_FIRE_WARMTH, "COMFORT": D("0.5")},
+        duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
         requires_place_kind="HEARTH",
     )
@@ -1742,6 +1802,32 @@ def _create_recipes(session: Session) -> None:
         outputs={"SATIETY": D("3.6"), "WATER": D("0.2")},
         duration_ticks=0,
     )
+    # The feast (run 54 P2): surplus into ease, at the fire everybody
+    # smells. Four strips of the never-rotting surplus and a log on the
+    # commons, two honest hours of turning and sharing -- and the whole
+    # evening's dividend lands as comfort, five whole points of it (no
+    # satiety: the feast is eaten on a fed body, or it is just dinner).
+    # Comfort is why you'd want to be safe rather than merely not-dead
+    # -- the one want whose bite is physical (SQUALOR throttles LABOR,
+    # never kills), and the feast is its one bulk buy. A squalid house
+    # cannot feast its way out: the labor throttle refuses the start,
+    # and the cure is the free seat by the fire it has been skipping.
+    production.create_recipe(
+        session, "FEAST", name="Feast",
+        description="A fine evening at the commons fire: four strips of "
+                    "jerky, a log on the flames, two hours of turning and "
+                    "sharing -- and five whole points of comfort banked "
+                    "(no food value: the feast is eaten on a fed body, or "
+                    "it is just dinner). Surplus into ease, the natural "
+                    "conversion -- the one thing worth being SAFE for. "
+                    "Wants the fire lit and an afternoon: labor draws by "
+                    "the hour, and dusk refuses the second one.",
+        inputs={"JERKY": D("4"), "WOOD": D("1")},
+        per_tick_inputs={"LABOR": D("1")},
+        outputs={"COMFORT": FEAST_COMFORT}, duration_ticks=2,
+        requires_facility="FIRE", requires_facility_lit=True,
+        requires_place_kind="HEARTH",
+    )
     # The fragment meal (run 46, lever 3): the deadlock -- Lagertha
     # starved holding a basket of 0.8 berries + 0.7 apples + 0.6 meat,
     # every kind under its own meal's threshold, because meals are
@@ -1874,33 +1960,41 @@ def _create_recipes(session: Session) -> None:
         session, "SLEEP_BY_FIRE", name="Sleep By Fire",
         description="A watch sleep at a lit commons fire: an hour of rest "
                     "(+1) wrapped by the flames' warmth (+3 -- the fire "
-                    "does double duty, covering the night's draw exactly). "
+                    "does double duty, covering the night's draw exactly) "
+                    "and ease (+0.5 -- sleep at a fire is a fire hour). "
                     "Free and labor-free; the fire wants feeding, and the "
                     "sleeping hold no torch -- a wolf that finds a sleeper "
                     "finds prey.",
-        inputs={}, outputs={"REST": D("1"), "WARMTH": D("3")},
+        inputs={},
+        outputs={"REST": D("1"), "WARMTH": D("3"), "COMFORT": D("0.5")},
         duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
     )
     production.create_recipe(
         session, "SLEEP_IN_BED", name="Sleep In Bed",
         description="The comfort top rung: a bed under a roof. An hour of "
-                    "deep rest (+1.5 -- recovery half again as fast) and "
-                    "tight warmth (+3, the night fully covered). The bed is "
+                    "deep rest (+1.5 -- recovery half again as fast), tight "
+                    "warmth (+3, the night fully covered) and ease (+1 -- "
+                    "the bed's second dividend, the finest hour there "
+                    "is). The bed is "
                     "held, never consumed: capital that pays every night "
                     "forever, craftable or bought at the post.",
         inputs={},
-        outputs={"REST": D("1.5"), "WARMTH": D("3")}, duration_ticks=1,
+        outputs={"REST": D("1.5"), "WARMTH": D("3"), "COMFORT": D("1")},
+        duration_ticks=1,
         requires_facility="SHELTER", good_requirements={"BED": D("1")},
     )
     production.create_recipe(
         session, "SLEEP_DEN", name="Sleep In Den",
         description="The beast's watch: curled in the dark, an hour of rest "
-                    "and animal warmth. Born, not learned (the CARNIVORE's "
+                    "and animal warmth, and the dumb comfort of a den "
+                    "(+0.5 -- a beast sleeps as well as a fire-sitter). "
+                    "Born, not learned (the CARNIVORE's "
                     "den) -- wolves dens in the forest, boars in the "
                     "thicket, and a prowling beast pays the night's price "
                     "like anyone else.",
-        inputs={}, outputs={"REST": D("1"), "WARMTH": D("2")},
+        inputs={},
+        outputs={"REST": D("1"), "WARMTH": D("2"), "COMFORT": D("0.5")},
         duration_ticks=1, requires=["CARNIVORE"],
     )
     production.create_recipe(
@@ -2155,6 +2249,23 @@ def _create_needs(session: Session) -> None:
         entity_type=EntityType.INDIVIDUAL, priority=3,
         condition_symbol="FATIGUE", condition_quantity=FATIGUE_GRANT,
     )
+    # COMFORT (run 54 P2): the one want whose bite is physical. 0.1 an
+    # hour from the COMFORT stock; unmet, SQUALOR accrues toward its
+    # 2.0 equilibrium and the labor ration shrinks x0.85 -- never a
+    # death, always a harder day. Priority last: nobody ever died of
+    # an unloved hour, and the need register reads in kill order.
+    needs.create_need(
+        session, "COMFORT", COMFORT_PER_TICK, ["COMFORT"],
+        name="Comfort",
+        description="The ease clock: a tenth an hour drawn from banked "
+                    "comfort -- fire seats (+0.5 an hour), beds (+1 an "
+                    "hour), feasts (+5 an evening). Miss it and squalor "
+                    "accrues: never fatal, but while it rides the "
+                    "daylight ration shrinks and whole-hour work refuses. "
+                    "The cure is to sit down.",
+        entity_type=EntityType.INDIVIDUAL, priority=4,
+        condition_symbol="SQUALOR", condition_quantity=SQUALOR_GRANT,
+    )
 
 
 def _create_markets(session: Session) -> None:
@@ -2187,14 +2298,15 @@ def _create_markets(session: Session) -> None:
 
 def make_house(session: Session, name: str = "House") -> Entity:
     """One symmetric stone-age seat: coins, a day of berries, a night of
-    warmth, a body (20 HITS, ATTACK 1 / DEFENSE 1 -- the spear is
-    carried, not born), and a bare CAMP parcel -- no fire, no shelter,
-    no tools, no unlocks. Everything beyond the body is the player's
-    to build."""
+    warmth, a day and a night of ease, a body (20 HITS, ATTACK 1 /
+    DEFENSE 1 -- the spear is carried, not born), and a bare CAMP
+    parcel -- no fire, no shelter, no tools, no unlocks. Everything
+    beyond the body is the player's to build."""
     house = services.create_entity(session, name, EntityType.INDIVIDUAL)
     services.create_account(session, house, COIN, initial_balance=SEAT_COIN)
     markets.adjust_holding(session, house, "BERRIES", BERRY_BUFFER)
     markets.adjust_holding(session, house, "WARMTH", WARMTH_BUFFER)
+    markets.adjust_holding(session, house, "COMFORT", COMFORT_SEAT_BUFFER)
     markets.adjust_holding(session, house, "WATER", WATER_SEAT_BUFFER)
     markets.adjust_holding(session, house, "REST", REST_SEAT_BUFFER)
     markets.adjust_holding(session, house, "HITS", HOUSE_HITS)
