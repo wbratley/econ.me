@@ -101,6 +101,7 @@ def create_recipe(
     facility_fuel_output: Decimal | None = None,
     requires_facility_lit: bool = False,
     requires_daylight: bool = False,
+    requires_season: list[str] | None = None,
     requires_conditions: list | None = None,
     requires_place_kind: str | None = None,
     requires_place_key: str | None = None,
@@ -236,6 +237,17 @@ def create_recipe(
         if currency_cost <= 0:
             raise ValueError("currency_cost must be positive when set")
 
+    # The season gate (run 54 E1): seasons the recipe runs in, in
+    # calendar order. NULL/empty = every season (all of history).
+    if requires_season is not None:
+        wanted = {str(s).upper() for s in requires_season}
+        unknown = wanted - set(clock.SEASONS)
+        if unknown:
+            raise ValueError(
+                f"unknown seasons {sorted(unknown)}; the year is "
+                f"{'/'.join(clock.SEASONS)}")
+        requires_season = sorted(wanted, key=clock.SEASONS.index) or None
+
     recipe = Recipe(
         code=code.upper(),
         name=name,
@@ -248,6 +260,7 @@ def create_recipe(
         facility_fuel_output=facility_fuel_output,
         requires_facility_lit=requires_facility_lit,
         requires_daylight=requires_daylight,
+        requires_season=requires_season,
         requires_conditions=[str(c) for c in requires_conditions] if requires_conditions else None,
         requires_place_kind=requires_place_kind.upper() if requires_place_kind else None,
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
@@ -329,6 +342,19 @@ def start_process(
                 f"too dark for {recipe.code} (hour {hour:02d}, night — "
                 f"daylight is hours {clock.DAY_START_HOUR:02d}.."
                 f"{clock.DAY_END_HOUR - 1:02d})"
+            )
+    if recipe.requires_season:
+        # The season gate (run 54 E1): same pass, one tier up -- refused
+        # with a reason that names the season, so an agent reading its
+        # events learns the calendar from the refusal itself.
+        tick = next_tick_number(session)
+        days = clock.season_days_of(session)
+        season = clock.season_of(tick, days)
+        if season not in recipe.requires_season:
+            raise ValueError(
+                f"wrong season for {recipe.code} ({season}, season day "
+                f"{clock.season_day_of(tick, days)} — it runs in "
+                f"{'/'.join(recipe.requires_season)})"
             )
     if recipe.requires_conditions:
         # the register's start-gate (P2): every named condition must be

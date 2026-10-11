@@ -107,7 +107,10 @@ you never branch on nil by accident.
 
 ```lua
 { tick = 42, day = 2, hour = 18, is_day = true, is_night = false,
-  daylight_hours = "06:00-19:00" }
+  daylight_hours = "06:00-19:00",
+  season = "SPRING",       -- run 54 E1: the calendar, cycling forever
+  season_day = 2,          -- 1..days_per_season (engine default 6, votable
+  days_per_season = 6 }    -- via the WorldSetting clock.season_days)
 ```
 
 `ctx.entity`:
