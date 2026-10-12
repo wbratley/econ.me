@@ -23,16 +23,21 @@ requirements can no longer be met — stranding is a real state, the
 pack's business).
 """
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import clock
+from . import combat
 from . import edges as edges_mod
+from . import markets as markets_mod
 from . import places as places_mod
 from . import production
 from . import statuses
 from .models import (
-    Entity, Process, ProcessStatus, SpatialEdge, TravelRoute, TravelRouteStatus,
+    Entity, Good, Holding, Process, ProcessStatus, SpatialEdge, TravelRoute,
+    TravelRouteStatus,
 )
 
 #: The reserved recipe namespace (roadmap S3): a recipe whose code is
@@ -41,6 +46,12 @@ from .models import (
 #: arrival, not goods, so it may declare no outputs (create_recipe
 #: allows this for the namespace).
 TRAVEL_RECIPE_PREFIX = "TRAVEL_"
+
+#: S5a (run 54 E2): the body's own limit. When a travel template omits
+#: carry_capacity, the entity's CARRY stat (a combat stat — packs author
+#: it per creature) is the road's limit. No stat and no template number
+#: = no gate: legacy worlds run exactly as before.
+CARRY_STAT = "CARRY"
 
 #: The night gate's rules (P2): {"night_travel_requires": [condition …],
 #: "relight_ticks": N}. Darkness is ambient — the clock's, not any
@@ -55,6 +66,111 @@ TRAVEL_RULES_KEY = "travel.rules"
 class _NightGateError(ValueError):
     """The dark road refused this hop: a named condition is dark. Caught
     by complete_travel to WAIT (ember window) instead of stranding."""
+
+
+# --- S5a: goods have weight, the road has a limit ---------------------------
+
+
+def _exempt_symbols(session: Session) -> set[str]:
+    """The pack's declared body goods — warmth, rest, water, labor,
+    conditions, hits: the body itself, not cargo. Bare symbols (no Good
+    row) always weigh."""
+    return set(session.execute(
+        select(Good.symbol).where(Good.carry_exempt)  # type: ignore[attr-defined]
+    ).scalars())
+
+
+def carried_load(session: Session, entity: Entity) -> Decimal:
+    """The entity's road load: every positive holding whose symbol is
+    not carry_exempt. The gate and the spill both read this; the shelf
+    itself stays ungated (you may stand loaded — you may not walk so)."""
+    exempt = _exempt_symbols(session)
+    rows = session.execute(
+        select(Holding).where(Holding.entity_id == entity.id,
+                              Holding.quantity > 0)  # type: ignore[attr-defined]
+    ).scalars().all()
+    return sum((h.quantity for h in rows if h.symbol not in exempt),
+               Decimal("0"))
+
+
+def _leg_capacity(session: Session, entity: Entity, mode: str):
+    """One road's limit: the travel template's carry_capacity when the
+    pack set one, else the traveller's CARRY stat, else no gate (None)."""
+    recipe = travel_recipe(session, mode)
+    if recipe is not None and recipe.carry_capacity is not None:
+        return recipe.carry_capacity
+    stats = combat.get_stats(session, entity.id)
+    stat = stats.get(CARRY_STAT)
+    return Decimal(stat) if stat is not None else None
+
+
+def _fmt_qty(value) -> str:
+    """34.5000 -> '34.5', 20.0000 -> '20' — the refusal reads like a
+    pack manual, not a ledger dump."""
+    return f"{value:f}".rstrip("0").rstrip(".")
+
+
+def _carry_gate(session: Session, entity: Entity, hops: list[dict]) -> None:
+    """The departure gate: the load must fit EVERY leg's limit (the
+    walker packs for the whole itinerary, not the first road). The
+    tightest leg names the refusal. Deviation from spatial.md's
+    mid-journey manifest snapshot, argued in the run-54 spec: a walker
+    eating their own rations on the road is lunch, not an exploit — the
+    doc's goal was capacity, and capacity is what ships."""
+    load = carried_load(session, entity)
+    binding = None  # (capacity, mode) — the tightest refusing leg
+    for mode in sorted({h["mode"] for h in hops}):
+        cap = _leg_capacity(session, entity, mode)
+        if cap is not None and load > cap and (binding is None or cap < binding[0]):
+            binding = (cap, mode)
+    if binding is not None:
+        cap, mode = binding
+        raise ValueError(
+            f"you carry {_fmt_qty(load)} of {_fmt_qty(cap)} "
+            f"-- the {mode} road refuses the load")
+
+
+def _spill_over(session: Session, entity: Entity, route_row: TravelRoute,
+                edge: SpatialEdge, place_key: str | None) -> dict | None:
+    """The arrival edge of the gate: a grant while the journey ran
+    (combat loot, a child's gift) can push the load past the NEXT
+    road's limit. The excess drops where the walker stands — burned,
+    visible in a travel_spill event, never a dupable credit — and what
+    fits walks on. Whole bundles go first (largest, then symbol-asc
+    for determinism); the boundary bundle may shed partially. Nothing
+    spills at a final arrival: standing loaded is legal; only the road
+    is gated."""
+    cap = _leg_capacity(session, entity, edge.mode)
+    if cap is None:
+        return None
+    exempt = _exempt_symbols(session)
+    load = carried_load(session, entity)
+    if load <= cap:
+        return None
+    holdings = [h for h in session.execute(
+        select(Holding).where(Holding.entity_id == entity.id,
+                              Holding.quantity > 0)  # type: ignore[attr-defined]
+    ).scalars().all() if h.symbol not in exempt]
+    holdings.sort(key=lambda h: (-h.quantity, h.symbol))
+    excess = load - cap
+    burned: dict[str, Decimal] = {}
+    for holding in holdings:
+        if excess <= 0:
+            break
+        drop = holding.quantity if holding.quantity <= excess else excess
+        markets_mod.adjust_holding(session, entity, holding.symbol, -drop)
+        burned[holding.symbol] = burned.get(holding.symbol, Decimal("0")) + drop
+        excess -= drop
+    if not burned:
+        return None
+    return {
+        "type": "travel_spill",
+        "entity_id": entity.id,
+        "route_id": route_row.id,
+        "place": place_key,
+        "capacity": _fmt_qty(cap),
+        "spilled": {sym: _fmt_qty(qty) for sym, qty in sorted(burned.items())},
+    }
 
 
 def get_travel_rules(session: Session) -> dict:
@@ -162,6 +278,9 @@ def start_route(
     # hop 1 pays the night gate before the itinerary exists -- a refused
     # departure must not leave a route row behind
     _night_gate(session, entity, production.next_tick_number(session))
+    # S5a: the load must fit every road on the itinerary -- same
+    # contract as the night gate (refused departures leave nothing)
+    _carry_gate(session, entity, hops)
 
     allowed = edges_mod.normalize_modes(modes)
     route_row = TravelRoute(
@@ -287,6 +406,17 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
         if entity is None:
             continue
         try:
+            # the flame first (S5a): burning the load while still halted
+            # would foreclose eating the rations down before dawn —
+            # shed only once the road will actually take the walker
+            _night_gate(session, entity, production.next_tick_number(session))
+            next_edge = session.get(
+                SpatialEdge, route_row.hops[route_row.next_index])
+            if next_edge is not None:
+                spilled = _spill_over(session, entity, route_row, next_edge,
+                                      entity.place.key if entity.place else None)
+                if spilled:
+                    events.append(spilled)
             _, departed = _start_hop(session, route_row, entity)
             route_row.status = TravelRouteStatus.ACTIVE
             route_row.waiting_since_tick = None
@@ -348,6 +478,16 @@ def complete_travel(session: Session, tick_number: int) -> list[dict]:
                 route_row.status = TravelRouteStatus.ARRIVED
                 route_row.current_process_id = None
                 continue
+            # S5a: a grant mid-journey (combat loot, a child's gift) can
+            # push the load past the NEXT road's limit -- the excess
+            # drops at the waypoint, visible, and what fits walks on
+            next_edge = session.get(
+                SpatialEdge, route_row.hops[route_row.next_index])
+            if next_edge is not None:
+                spilled = _spill_over(session, entity, route_row, next_edge,
+                                      far.key)
+                if spilled:
+                    events.append(spilled)
             try:
                 _, departed = _start_hop(session, route_row, entity)
                 events.append(departed)

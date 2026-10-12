@@ -92,6 +92,15 @@ class Recipe(Base):
     currency_cost: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
     )
+    # S5a (run 54 E2): a travel template's road limit. The departure
+    # gate sums the traveller's non-exempt holdings and refuses a
+    # journey whose load exceeds this; NULL = the entity's CARRY stat
+    # decides (no stat = no gate — legacy worlds unchanged). Meaningful
+    # only on TRAVEL_* templates, but it is pack data either way: the
+    # engine reads the number, never invents it.
+    carry_capacity: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     scales_with: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

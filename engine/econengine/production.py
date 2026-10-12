@@ -106,6 +106,7 @@ def create_recipe(
     requires_place_key: str | None = None,
     scales_with: dict | None = None,
     currency_cost: Decimal | None = None,
+    carry_capacity: Decimal | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -125,6 +126,13 @@ def create_recipe(
             f"{existing.pack_id or 'the platform'} -- a pack may not claim another installer's key")
     if duration_ticks < 0:
         raise ValueError("duration_ticks must be >= 0")
+    if carry_capacity is not None:
+        carry_capacity = Decimal(carry_capacity).quantize(_QUANTUM)
+        if carry_capacity <= 0:
+            # the road's limit: 0 would strand every walker, and the
+            # gate reads NULL as "the CARRY stat decides" — a negative
+            # limit is not a world, it is a typo
+            raise ValueError("carry_capacity must be positive when set")
     if branches and outputs:
         raise ValueError("recipe declares either outputs or branches, not both")
     # The reserved TRAVEL_ namespace (docs/spatial.md S3): a travel
@@ -253,6 +261,7 @@ def create_recipe(
         requires_place_key=requires_place_key.upper() if requires_place_key else None,
         scales_with=scales_with,
         currency_cost=currency_cost,
+        carry_capacity=carry_capacity,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
