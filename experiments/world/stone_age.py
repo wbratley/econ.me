@@ -153,7 +153,8 @@ COOKED_MEAT,
 JERKY (smoked or bought), EGGS and CHICKEN (the larder: capital
 that lays), WATER, SKINWATER and WATERSKIN (P3: the cup, the skin,
 and the craft that turns a pelt into capacity), SPEAR, BAG, BOW, TRAP,
-CLOTHES, BED, TORCH /
+CLOTHES, FINE_CLOTHES (the ibex coat), IBEX_PELT (the far valley's
+quarry), BED, TORCH /
 LIT_TORCH (the night kit), plus the flows
 WARMTH/SATIETY and the
 conditions HUNGER/EXPOSURE/DISEASE/THIRST. Money is COIN — found, not endowed:
@@ -816,28 +817,45 @@ def _create_map(session: Session) -> None:
     not whether you survive the walk). The valley road also shortens
     the forest to 2h through the post; the deep wood stays the long
     way in. The thicket-forest cut (2h) makes the hunting circuit
-    thicket -> forest -> hearth a day's honest walk."""
-    for key, kind, name, description in (
-        ("HEARTH", "HEARTH", "Hearth clearing",
+    thicket -> forest -> hearth a day's honest walk.
+
+    And past it all, the far valley (run 54 P3): the ridge road
+    climbs from the scrape -- RIDGE_PASS 2h, then the SALT_LICK 2h
+    on and the VALE 2h down -- hearth to lick six hours door to
+    door, a committed day. Two valleys, one ridge, opposite
+    scarcities: the far side has salt and grass and no stone, the
+    home side stone and wood and no salt. Nobody walks six hours
+    for what they already own."""
+    for key, kind, name, region, description in (
+        ("HEARTH", "HEARTH", "Hearth clearing", "home-valley",
          "The fire-ground where every seat wakes: sheltered, warm-stoned, "
          "safe to sleep. Fires are made and tended here."),
-        ("THICKET", "THICKET", "Berry thicket",
+        ("THICKET", "THICKET", "Berry thicket", "home-valley",
          "An hour out: berries, wood, yarn -- the subsistence walk."),
-        ("RIVER", "RIVER", "The river",
+        ("RIVER", "RIVER", "The river", "home-valley",
          "An hour out: fish from the bank, meat without wolves."),
-        ("FLINT", "FLINT", "Flint scrape",
+        ("FLINT", "FLINT", "Flint scrape", "home-valley",
          "Two hours out: the ground gives certain flint to anyone who "
-         "digs."),
-        ("FOREST", "FOREST", "Deep forest",
+         "digs -- and the ridge road climbs from here."),
+        ("FOREST", "FOREST", "Deep forest", "home-valley",
          "The spear game and the wolves' range: two hours by the valley "
          "road (through the post), three by the deep wood. Be firelit "
          "by dark, or be meat."),
-        ("POST", "POST", "Trading post",
+        ("POST", "POST", "Trading post", "home-valley",
          "An hour down the valley: every market trades here, and only "
          "here -- the man keeps a good shelf and a short walk for it."),
+        ("RIDGE_PASS", "RIDGE", "The ridge pass", "far-valley",
+         "Cold, exposed, the high ground -- the door to the far valley. "
+         "Ibex ground: the quarry of the winter coat."),
+        ("SALT_LICK", "SALT", "The salt lick", "far-valley",
+         "Two hours past the ridge: the ground gives certain salt to "
+         "anyone who digs, and the far book trades pelts here."),
+        ("VALE", "PASTURE", "The vale", "far-valley",
+         "Open grass an hour from the lick: no thicket, no forest, no "
+         "stone -- and hens in the tufts."),
     ):
         places.create_place(session, key, kind=kind, name=name,
-                            region_id="home-valley", description=description)
+                            region_id=region, description=description)
     for a, b, cost in (
         ("HEARTH", "THICKET", 1),
         ("HEARTH", "RIVER", 1),
@@ -858,6 +876,15 @@ def _create_map(session: Session) -> None:
         ("FOREST", "POST", 1),
         ("RIVER", "POST", 2),
         ("HEARTH", "POST", 1),
+        # The ridge road (P3): the far valley. Flint scrape -> ridge
+        # -> lick is the salt road (2+2+2 = 6h door to door from the
+        # hearth); the ridge -> vale -> lick fork puts the hen walk
+        # one hour off the salt road. No road bypasses the ridge --
+        # the far valley has exactly one door.
+        ("FLINT", "RIDGE_PASS", 2),
+        ("RIDGE_PASS", "SALT_LICK", 2),
+        ("RIDGE_PASS", "VALE", 2),
+        ("VALE", "SALT_LICK", 1),
     ):
         edges.create_edge(session, a, b, "walk", cost)
     # The walk itself: an hour a hop against the road's true length.
@@ -1008,6 +1035,14 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "CLOTHES", name="Clothes",
                       description="Worn warmth: with a shelter, covers the whole "
                                   "WARMTH need forever, free.")
+    goods.create_good(
+        session, "FINE_CLOTHES", name="Fine Coat",
+        description="The ibex coat, the tanner's masterwork: worn like "
+                    "clothes and twice the wrap -- a FULL warmth an hour "
+                    "without a fire, shelter-tight against the day. One "
+                    "to a body.",
+        max_holding=Decimal("1"),
+    )
     goods.create_good(session, "BED", name="Bed",
                       description="Craftable comfort, mechanically idle — "
                                   "the expansion hook.")
@@ -1219,6 +1254,14 @@ def _create_goods(session: Session) -> None:
         session, "PELT", name="Pelt",
         description="Seized from a killed beast — wolf or boar; the post "
                     "pays for trophies. A boar's is twice a wolf's.",
+        decay_per_tick=Decimal("0.05"),
+    )
+    goods.create_good(
+        session, "IBEX_PELT", name="Ibex Pelt",
+        description="The ridge quarry's hide — richer than a wolf's, and "
+                    "heavy: the coat is the carry question's first real "
+                    "load. The winter coat's whole material; the far book "
+                    "at the lick trades them.",
         decay_per_tick=Decimal("0.05"),
     )
 
@@ -2047,6 +2090,97 @@ def _create_recipes(session: Session) -> None:
         scales_with={"CHICKEN": 4},
     )
 
+    # --- The far valley: two valleys, one ridge (run 54 P3) -------------
+    # Opposite scarcities, six hours apart. The far valley has salt
+    # and grass and no stone; the home valley has stone and wood and
+    # no salt. Nobody walks six hours for what they already own -- the
+    # ridge road exists because both valleys want what the other has.
+    # DIG_SALT is the scrape's bargain at the lick (salt enters the
+    # world as a product, not a shelf); HEN_ROLL is the vale's gamble
+    # (the chicken opener's far source); the ibex are the ridge's
+    # trade -- the pelt that becomes the fine coat, worn like clothes
+    # at twice the wrap. Nothing here gates any survival recipe: the
+    # far valley is a trip, never a toll.
+    production.create_recipe(
+        session, "DIG_SALT", name="Dig Salt",
+        description="An hour at the lick: two certain salt, no gamble. "
+                    "Daylight only, at the salt lick -- the only salt "
+                    "source in the world (the post's shelf sells it; "
+                    "the lick gives it).",
+        inputs={"LABOR": D("1")},
+        outputs={"SALT": D("2")}, duration_ticks=1,
+        requires_daylight=True, requires_place_kind="SALT",
+    )
+    production.create_recipe(
+        session, "HEN_ROLL", name="Roll for a Hen",
+        description="An hour stalking the vale's tufts: three times in "
+                    "ten a hen joins you. Walk her home and pen her -- "
+                    "capital that lays. Daylight only, in the vale.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        requires_daylight=True, requires_place_kind="PASTURE",
+        branches=[
+            {"weight": D("70"), "outputs": {}, "label": "nothing"},
+            {"weight": D("30"), "outputs": {"CHICKEN": D("1")},
+             "label": "a hen joins you"},
+        ],
+    )
+    production.create_recipe(
+        session, "HUNT_IBEX", name="Hunt Ibex",
+        description="The ridge's own quarry, taken with a held spear "
+                    "(never consumed): a rich pelt and the meat that "
+                    "rides it. Daylight only, on the ridge.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        good_requirements={"SPEAR": D("1")},
+        requires_daylight=True, requires_place_kind="RIDGE",
+        branches=[
+            {"weight": D("30"), "outputs": {}, "label": "nothing"},
+            {"weight": D("50"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "label": "small"},
+            {"weight": D("20"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "label": "big"},
+        ],
+    )
+    production.create_recipe(
+        session, "HUNT_IBEX_BOW", name="Hunt Ibex with a Bow",
+        description="The high shot: the bow's steadier table on the "
+                    "ridge's quarry. Held bow, never consumed. Daylight "
+                    "only, on the ridge.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        good_requirements={"BOW": D("1")},
+        requires_daylight=True, requires_place_kind="RIDGE",
+        branches=[
+            {"weight": D("20"), "outputs": {}, "label": "nothing"},
+            {"weight": D("55"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "label": "small"},
+            {"weight": D("25"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "label": "big"},
+        ],
+    )
+    production.create_recipe(
+        session, "MAKE_FINE_CLOTHES", name="Make the Fine Coat",
+        description="The tanner's masterwork: one ibex pelt and two "
+                    "yarn, worn like clothes -- and twice the wrap "
+                    "(a FULL warmth an hour, shelter-tight against the "
+                    "day). Requires the TANNING rank; made at the "
+                    "hearth.",
+        inputs={"LABOR": D("1"), "IBEX_PELT": D("1"), "YARN": D("2")},
+        outputs={"FINE_CLOTHES": D("1")}, duration_ticks=2,
+        requires=["TANNING"], requires_place_kind="HEARTH",
+    )
+    production.create_recipe(
+        session, "HUDDLE_FINE", name="Huddle in the Fine Coat",
+        description="Wrapped in the ibex's winter: a full warmth an "
+                    "hour without a fire -- twice clothes' leak, "
+                    "shelter-tight.",
+        inputs={},
+        outputs={"WARMTH": D("1")}, duration_ticks=1,
+        good_requirements={"FINE_CLOTHES": D("1")},
+    )
+
     # --- The crafts ladder: study is honest work (run 54 P1) ---------
     # Research is a recipe whose output is an unlock: 2 ticks at an
     # honest place, the table's inputs consumed at start, one LABOR per
@@ -2290,6 +2424,14 @@ def _create_markets(session: Session) -> None:
                    "PELT", "WATERSKIN", "SALT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")
+    # The far book (P3): IBEX_PELT trades at the salt lick, and only
+    # there -- book-only, no NPC maker, no anchor prices, no genesis
+    # quotes. The home post keeps every other market (and starts
+    # bidding salt now that the lick can be dug); the far book is
+    # pure price discovery between houses -- the lick's prices are
+    # what the trip was worth.
+    markets.create_market(session, "IBEX_PELT", COIN,
+                          name="Ibex Pelt", place="SALT_LICK")
 
 
 # ---------------------------------------------------------------------------
