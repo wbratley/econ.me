@@ -443,10 +443,10 @@ _FATAL_MARKERS = (
 # pins the tuple to the live dict (test_scripting_gate).
 QUERY_MEMBERS = (
     "balance", "total_supply", "market_price", "best_bid", "best_ask",
-    "holding", "unreserved", "has_unlock", "holders", "age", "lifespan",
-    "population", "parents", "children", "route", "distance_ticks",
-    "public_facilities", "conditions", "carriers", "world_setting",
-    "fiscal_policy", "constitution",
+    "market_shelf", "shelf", "holding", "unreserved", "has_unlock",
+    "holders", "age", "lifespan", "population", "parents", "children",
+    "route", "distance_ticks", "public_facilities", "conditions",
+    "carriers", "world_setting", "fiscal_policy", "constitution",
     "active_script", "script_history", "proposal", "proposals", "tally",
 )
 
@@ -960,6 +960,48 @@ def build_queries(session: Session, tick_number: int | None = None,
     def best_ask(symbol):
         return _book_top(symbol, "sell")
 
+    def market_shelf(symbol):
+        """The delivered depth of a PLACED market (S5b): goods standing
+        on the shelf, how much of it open sells have claimed, and the
+        free remainder a present seller could reclaim. Exact-decimal
+        strings; nil when the market is global or bare — the shelf is a
+        placed-market fact. This is the register a courier reads before
+        a six-hour walk: an ask with nothing behind it is a rumor."""
+        market = markets.get_market(session, str(symbol))
+        if market is None or market.place_id is None:
+            return None
+        shelf = markets.escrowed_quantity(session, market)
+        claimed = Decimal("0")
+        from .models.order import Order, OrderSide, OrderStatus
+        total = session.execute(
+            select(func.coalesce(func.sum(Order.remaining), 0)).where(
+                Order.market_id == market.id,
+                Order.side == OrderSide.SELL,
+                Order.status == OrderStatus.OPEN,
+                Order.remaining > 0,
+            )
+        ).scalar_one()
+        claimed = min(shelf, Decimal(total))
+        return {
+            "shelf": str(shelf),
+            "claimed": str(claimed),
+            "free": str(shelf - claimed),
+        }
+
+    def shelf(symbol):
+        """The CALLER's own goods standing on the shelf of the market
+        this symbol trades at (S5b) — what a seller delivered and has
+        not reclaimed. A stock-reading companion to holding(): the
+        post's pantry is its holdings PLUS this. Nil when the market is
+        global or bare (nothing is ever delivered there)."""
+        if owner_id is None:
+            return None  # no caller: the bare test form has no shelf
+        market = markets.get_market(session, str(symbol))
+        if market is None or market.place_id is None:
+            return None
+        pool = markets.escrowed_quantity(session, market, owner_id, str(symbol))
+        return str(pool)
+
     def holding(entity_id, symbol):
         if _private and str(entity_id) != str(owner_id):
             return None
@@ -1366,6 +1408,8 @@ def build_queries(session: Session, tick_number: int | None = None,
         "market_price": market_price,
         "best_bid": best_bid,
         "best_ask": best_ask,
+        "market_shelf": market_shelf,
+        "shelf": shelf,
         "holding": holding,
         "unreserved": unreserved,
         "has_unlock": has_unlock,

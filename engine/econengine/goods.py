@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import clock, conditions
-from .models import Entity, EntityStatus, EntityType, Good, Holding
+from .models import Entity, EntityStatus, EntityType, Good, Holding, MarketEscrow
 
 _QUANTUM = Decimal("0.0001")
 
@@ -195,6 +195,23 @@ def apply_decay(session: Session, tick_number: int) -> list[dict]:
                 holding.quantity -= lost
                 decayed += lost
                 holders += 1
+        # The shelf rots too (S5b): goods delivered to a placed market
+        # are still goods at a place, and a market is not a cellar. Same
+        # math, same event -- the world's rot ledger has one column.
+        for escrow in session.execute(
+            select(MarketEscrow).where(
+                MarketEscrow.symbol == good.symbol,
+                MarketEscrow.quantity > 0,
+            ).order_by(MarketEscrow.id)
+        ).scalars().all():
+            lost = (escrow.quantity * good.decay_per_tick).quantize(
+                _QUANTUM, rounding=ROUND_HALF_UP
+            )
+            if lost == 0 and escrow.quantity > 0:
+                lost = escrow.quantity
+            if lost > 0:
+                escrow.quantity -= lost
+                decayed += lost
         if decayed > 0:
             event = {
                 "type": "decay",

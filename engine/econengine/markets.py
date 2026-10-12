@@ -6,9 +6,12 @@ Orders are limit-only and good-til-cancelled; partial fills stay OPEN with
 market, side, and limit price) cancel-replaces: the stale orders are
 superseded and the new one carries the level -- a script that runs every
 tick can re-assert its quotes without stacking duplicates (see
-`place_order`, the stone-run7 lesson). There is no escrow: funds and holdings are checked
+`place_order`, the stone-run7 lesson). Money is never escrowed: funds are checked
 live at settlement, and an order that cannot cover a fill is CANCELLED with
-a reason. Holdings reserved as good-requirements of running processes
+a reason. GOODS escrow is the placed-market rule (S5b): a sell on a market
+with a place debits the goods onto the market's shelf at placement and
+fills draw that shelf — sellers must deliver; global markets keep the
+settle-from-holdings path unchanged. Holdings reserved as good-requirements of running processes
 (reserved_quantity) are unavailable to settlement — you cannot sell the
 oven mid-bake. Settlement money moves through services.transfer under
 scripting._suppressed(), so validators cannot veto individual fills
@@ -25,8 +28,9 @@ from sqlalchemy.orm import Session
 
 from . import services
 from .models import (
-    Account, Entity, EntityStatus, Holding, Market, Order, OrderSide, OrderStatus,
-    Process, ProcessStatus, Recipe, RecipeGoodRequirement, Trade,
+    Account, Entity, EntityStatus, Holding, Market, MarketEscrow, Order,
+    OrderSide, OrderStatus, Process, ProcessStatus, Recipe,
+    RecipeGoodRequirement, Trade,
 )
 from .scripting import _suppressed
 from .services import CurrencyMismatchError
@@ -165,6 +169,128 @@ def adjust_holding(session: Session, entity: Entity, symbol: str, delta: Decimal
     return holding
 
 
+# ---------------------------------------------------------------------------
+# Escrow — goods physically at a placed market (S5b, "sellers must
+# deliver"). Global markets never engage it: their fills keep drawing
+# remote holdings exactly as before.
+# ---------------------------------------------------------------------------
+
+def get_escrow(
+    session: Session, market: Market, seller_entity_id: str, symbol: str
+) -> MarketEscrow | None:
+    """The seller's pool for this (market, symbol) — goods standing on
+    the market's shelf, or None when nothing was ever delivered."""
+    return session.execute(
+        select(MarketEscrow).where(
+            MarketEscrow.market_id == market.id,
+            MarketEscrow.seller_entity_id == seller_entity_id,
+            MarketEscrow.symbol == str(symbol).upper(),
+        )
+    ).scalar_one_or_none()
+
+
+def escrowed_quantity(
+    session: Session, market: Market, seller_entity_id: str | None = None,
+    symbol: str | None = None,
+) -> Decimal:
+    """Shelf quantity: the whole market's, or one seller's pool, or one
+    seller's pool for one symbol. The depth behind every open ask."""
+    q = select(func.coalesce(func.sum(MarketEscrow.quantity), 0)).where(
+        MarketEscrow.market_id == market.id
+    )
+    if seller_entity_id is not None:
+        q = q.where(MarketEscrow.seller_entity_id == seller_entity_id)
+    if symbol is not None:
+        q = q.where(MarketEscrow.symbol == str(symbol).upper())
+    return Decimal(session.execute(q).scalar_one())
+
+
+def claimed_quantity(
+    session: Session, market: Market, seller_entity_id: str, symbol: str
+) -> Decimal:
+    """The shelf quantity already claimed by the seller's OPEN sell
+    orders — what fills will draw. Re-quoting a level supersedes the old
+    order (releasing its claim) before the new one claims, so a
+    tick-by-tick re-assertion never double-delivers."""
+    total = session.execute(
+        select(func.coalesce(func.sum(Order.remaining), 0)).where(
+            Order.market_id == market.id,
+            Order.entity_id == seller_entity_id,
+            Order.side == OrderSide.SELL,
+            Order.status == OrderStatus.OPEN,
+            Order.remaining > 0,
+        )
+    ).scalar_one()
+    return Decimal(total)
+
+
+def free_shelf(
+    session: Session, market: Market, seller_entity_id: str, symbol: str
+) -> Decimal:
+    """Delivered-but-unclaimed: what a new sell order can back without
+    another delivery, and what a present seller's reclaim would return."""
+    pool = escrowed_quantity(session, market, seller_entity_id, symbol)
+    return pool - min(pool, claimed_quantity(session, market, seller_entity_id, symbol))
+
+
+def _deliver_to_shelf(
+    session: Session, market: Market, entity: Entity, symbol: str, quantity: Decimal
+) -> None:
+    """Placement-time delivery: holdings down, shelf up — one
+    transaction, so a refused order debits nothing."""
+    with session.begin_nested():
+        adjust_holding(session, entity, symbol, -quantity)
+        row = get_escrow(session, market, entity.id, symbol)
+        if row is None:
+            row = MarketEscrow(
+                market_id=market.id,
+                seller_entity_id=entity.id,
+                symbol=str(symbol).upper(),
+                quantity=Decimal("0"),
+            )
+            session.add(row)
+        row.quantity = (row.quantity + quantity).quantize(_QUANTUM)
+        session.flush()
+
+
+def _reclaim_escrows(session: Session, tick_number: int) -> list[dict]:
+    """The sweep half of "walking back IS the mechanism": escrowed goods
+    not claimed by open sells flow back to the holdings of a seller
+    STANDING at the market's place. Cancelled/expired leftovers wait on
+    the shelf until then — no intent, no recipe. Deterministic order
+    (market symbol, seller id) for replay parity."""
+    from . import places as places_mod
+
+    events: list[dict] = []
+    rows = session.execute(
+        select(MarketEscrow)
+        .join(Market, MarketEscrow.market_id == Market.id)
+        .where(Market.is_active.is_(True), Market.place_id.is_not(None))
+        .order_by(Market.symbol, MarketEscrow.seller_entity_id, MarketEscrow.symbol)
+    ).scalars().all()
+    for row in rows:
+        market = session.get(Market, row.market_id)
+        free = free_shelf(session, market, row.seller_entity_id, row.symbol)
+        if free <= 0:
+            continue
+        seller = session.get(Entity, row.seller_entity_id)
+        if seller is None or seller.place is None or seller.place.id != market.place_id:
+            continue
+        with session.begin_nested():
+            row.quantity = (row.quantity - free).quantize(_QUANTUM)
+            adjust_holding(session, seller, row.symbol, free)
+            session.flush()
+        events.append({
+            "type": "market_reclaim",
+            "entity_id": seller.id,
+            "market": market.symbol,
+            "symbol": row.symbol,
+            "quantity": str(free),
+            "place": places_mod.label(market.place),
+        })
+    return events
+
+
 def place_order(
     session: Session,
     entity_id: str,
@@ -245,6 +371,31 @@ def place_order(
         old.status = OrderStatus.CANCELLED
         old.cancel_reason = "superseded at price level"
 
+    # S5b delivery: a SELL on a placed market debits the goods onto the
+    # market's shelf at placement — the order is backed by delivered
+    # goods, and a fill can never reach holdings that are not there.
+    # The shelf first backs the order out of free (delivered but
+    # unclaimed) quantity — re-quoting a level re-asserts, it does not
+    # re-deliver — and only the shortfall is debited from holdings,
+    # which must be present and unreserved (you cannot deliver the oven
+    # mid-bake). Global markets never engage the shelf.
+    if market.place_id is not None and side == OrderSide.SELL:
+        from . import places as places_mod
+
+        free = free_shelf(session, market, entity_id, market.symbol)
+        shortfall = max(Decimal("0"), quantity - free)
+        if shortfall > 0:
+            holding = get_holding(session, entity_id, market.symbol)
+            held = holding.quantity if holding else Decimal("0")
+            available = held - reserved_quantity(session, entity_id, market.symbol)
+            if available < shortfall:
+                raise InsufficientHoldingsError(
+                    f"you must deliver {quantity} {market.symbol} at "
+                    f"{places_mod.label(market.place)} -- the shelf holds "
+                    f"{free}, you carry {available} unreserved"
+                )
+            _deliver_to_shelf(session, market, entity, market.symbol, shortfall)
+
     order = Order(
         market_id=market.id,
         entity_id=entity_id,
@@ -289,13 +440,16 @@ def cancel_order(session: Session, order_id: str, entity_id: str) -> Order:
 
 def run_auctions(session: Session, tick_number: int) -> list[dict]:
     """Clear every active market once. Returns tick events (trades,
-    cancellations, per-market auction summaries)."""
+    cancellations, per-market auction summaries, shelf reclaims)."""
     events: list[dict] = []
     markets = session.execute(
         select(Market).where(Market.is_active.is_(True)).order_by(Market.symbol)
     ).scalars().all()
     for market in markets:
         events.extend(_clear_market(session, market, tick_number))
+    # After the clears: present sellers take their unclaimed shelf back
+    # (S5b) — the auction has spoken, the leftovers are free goods.
+    events.extend(_reclaim_escrows(session, tick_number))
     return events
 
 
@@ -414,15 +568,29 @@ def _settle(
             bi += 1
             continue
 
-        seller_holding = get_holding(session, sell.entity_id, market.symbol)
-        available = (
-            seller_holding.quantity - reserved_quantity(session, sell.entity_id, market.symbol)
-            if seller_holding else Decimal("0")
-        )
-        if available < qty:
-            events.append(_cancel_at_auction(sell, market, "insufficient holdings at auction"))
-            si += 1
-            continue
+        if market.place_id is not None:
+            # S5b: a placed market fills ONLY from goods delivered to its
+            # shelf — delivery happened at placement, so the pool is the
+            # order's own backing (pool >= claimed >= remaining by
+            # construction; the branch below is the defensive invariant,
+            # not an expected path). Remote holdings are unreachable
+            # here by design: that is the whole feature.
+            shelf = escrowed_quantity(session, market, sell.entity_id, market.symbol)
+            if shelf < qty:
+                events.append(_cancel_at_auction(
+                    sell, market, "goods not on the shelf at auction"))
+                si += 1
+                continue
+        else:
+            seller_holding = get_holding(session, sell.entity_id, market.symbol)
+            available = (
+                seller_holding.quantity - reserved_quantity(session, sell.entity_id, market.symbol)
+                if seller_holding else Decimal("0")
+            )
+            if available < qty:
+                events.append(_cancel_at_auction(sell, market, "insufficient holdings at auction"))
+                si += 1
+                continue
 
         seller_account = session.get(Account, sell.account_id)
         with session.begin_nested():
@@ -432,7 +600,18 @@ def _settle(
                         session, buyer_account, seller_account, cost,
                         reference=f"trade {market.symbol} {qty} @ {price}",
                     )
-            adjust_holding(session, sell.entity, market.symbol, -qty)
+            if market.place_id is not None:
+                # S5b: the shelf pays — pool down in lockstep with
+                # order.remaining, exactly the quantity the buyer takes.
+                escrow = get_escrow(session, market, sell.entity_id, market.symbol)
+                if escrow is None or escrow.quantity < qty:
+                    raise InsufficientHoldingsError(
+                        f"shelf for {sell.entity_id} on {market.symbol} "
+                        f"cannot cover {qty}"
+                    )
+                escrow.quantity = (escrow.quantity - qty).quantize(_QUANTUM)
+            else:
+                adjust_holding(session, sell.entity, market.symbol, -qty)
             adjust_holding(session, buy.entity, market.symbol, qty)
             trade = Trade(
                 market_id=market.id,

@@ -33,12 +33,16 @@ engine still owns the tick.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Callable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from econengine import clock, edges, places as places_mod, scripting, services, tech
+from econengine import (
+    clock, edges, markets as markets_mod, places as places_mod, scripting,
+    services, tech,
+)
 from econengine.catalog import catalog_state
 from econengine.describe import render_event, symbol_names
 from econengine.lua_engine import stdlib_fingerprint, stdlib_source
@@ -386,7 +390,10 @@ def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> li
     """The public book for every active market: last trade (history) plus
     the touch (present) -- best_bid/best_ask are the best OPEN limits
     resting right now, the prices an order must cross to trade. None on a
-    bare side; depth beyond the touch is not public."""
+    bare side; depth beyond the touch is not public. A PLACED market also
+    shows its shelf (S5b): delivered goods standing at the market, how
+    much open sells have claimed, and the free remainder -- the depth an
+    ask can actually pay. Global markets carry no shelf (null)."""
     markets = session.execute(
         select(Market).where(Market.is_active.is_(True)).order_by(Market.symbol)
     ).scalars().all()
@@ -402,11 +409,28 @@ def tool_market_prices(session: Session, user: User, args: dict[str, Any]) -> li
             .group_by(Order.market_id)
         ).all()
         best.update({(mid, side): price for mid, price in rows})
+    # Placed shelves (S5b): pool per market, claimed = open sell depth.
+    shelf: dict[str, tuple[str, str]] = {}
+    for market in markets:
+        if market.place_id is None:
+            continue
+        pool = markets_mod.escrowed_quantity(session, market)
+        claimed = session.execute(
+            select(func.coalesce(func.sum(Order.remaining), 0)).where(
+                Order.market_id == market.id,
+                Order.side == OrderSide.SELL,
+                Order.status == OrderStatus.OPEN,
+                Order.remaining > 0,
+            )
+        ).scalar_one()
+        shelf[market.symbol] = (str(pool), str(min(pool, Decimal(claimed))))
     return [
         {"symbol": m.symbol, "currency": m.currency,
          "last_price": str(m.last_price) if m.last_price is not None else None,
          "best_bid": str(p) if (p := best.get((m.id, OrderSide.BUY))) is not None else None,
-         "best_ask": str(p) if (p := best.get((m.id, OrderSide.SELL))) is not None else None}
+         "best_ask": str(p) if (p := best.get((m.id, OrderSide.SELL))) is not None else None,
+         "shelf": shelf.get(m.symbol, (None, None))[0],
+         "claimed": shelf.get(m.symbol, (None, None))[1]}
         for m in markets
     ]
 

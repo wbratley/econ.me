@@ -31,6 +31,7 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
     "deposit_regen", "entity_incapacitated", "need_satisfied",
     "need_unmet", "order_cancelled", "process_completed",
     "process_failed", "script_error", "script_reverted", "trade",
+    "market_reclaim",
     "travel_arrived", "travel_departed", "travel_stranded", "unlocked",
 )
 
@@ -135,6 +136,12 @@ def _trade(e, names):
 @_renders("order_cancelled")
 def _order_cancelled(e, names):
     return f"order cancelled on {_g(e, 'market', names)}: {e.get('reason', '')}".rstrip(": ")
+
+
+@_renders("market_reclaim")
+def _market_reclaim(e, names):
+    return (f"took {_num(e.get('quantity', 0))} {_g(e, 'symbol', names)} "
+            f"back off the {_g(e, 'market', names)} shelf at {e.get('place', '?')}")
 
 
 @_renders("auction")
