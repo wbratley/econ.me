@@ -11,12 +11,12 @@
    "threats": 0
   },
   "stone_age": {
-   "edges": 9,
-   "goods": 39,
-   "markets": 21,
+   "edges": 13,
+   "goods": 41,
+   "markets": 22,
    "needs": 5,
-   "places": 6,
-   "recipes": 58,
+   "places": 9,
+   "recipes": 64,
    "technologies": 6,
    "threats": 0
   }
@@ -34,7 +34,7 @@
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
   "stone_age_starter.lua": "4fe023d527ea5336",
-  "trading_post.lua": "1284ae3697464a08",
+  "trading_post.lua": "1f4709a33bd7747e",
   "wolf_pack.lua": "8327cd56af59d9c0",
   "world_lib.lua": "b1244db1c263994a"
  },

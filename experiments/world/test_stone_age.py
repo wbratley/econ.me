@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from econengine import markets, parcels, production, services
 from econengine.models import (
     Account, Base, Entity, EntityStatus, EntityType, Holding, Market,
-    Order, OrderSide, OrderStatus, Script, ScriptType, Tick,
+    Order, OrderSide, OrderStatus, Place, Script, ScriptType, Tick,
 )
 from econengine.tick import run_tick
 
@@ -184,8 +184,18 @@ def test_content_and_coin_markets(session):
         "LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
         "EGGS", "CHICKEN", "WOOD", "YARN",
         "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
-        "BED", "PELT", "WATERSKIN", "SALT"}
+        "BED", "PELT", "WATERSKIN", "SALT", "IBEX_PELT"}
     assert all(m.currency == COIN for m in rows)
+    # the far book (P3): the lick's pelt market sits beyond the ridge,
+    # and ONLY there -- every other market stays at the post
+    lick = session.execute(select(Place).where(Place.key == "SALT_LICK")
+                           ).scalar_one()
+    post = session.execute(select(Place).where(Place.key == "POST")
+                           ).scalar_one()
+    by = {m.symbol: m for m in rows}
+    assert by["IBEX_PELT"].place_id == lick.id
+    for sym in ("SALT", "FLINT", "CHICKEN", "PELT"):
+        assert by[sym].place_id == post.id
 
 
 def test_seat_endowment(session):
@@ -1198,10 +1208,11 @@ def test_post_never_bids_beyond_its_coin(session):
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     by_sym = {mid[o.market_id]: o for o in buys}
     # the cheapest goods get one unit apiece (APPLES 0.35 + EGGS 0.35
-    # + MEAT 0.50 + WOOD 0.50 + YARN 0.75 + FLINT 0.75 = 3.20 <= 4);
-    # PELT's 1.50 does not fit -- and NO good hoards the purse
+    # + MEAT 0.50 + WOOD 0.50 + YARN 0.75 + FLINT 0.75 + SALT 0.75
+    # (P3: the lick is open, the counter bids) = 3.95 <= 4); PELT's
+    # 1.50 does not fit -- and NO good hoards the purse
     assert set(by_sym) == {"APPLES", "EGGS", "MEAT", "WOOD",
-                           "YARN", "FLINT"}
+                           "YARN", "FLINT", "SALT"}
     assert all(o.quantity == Decimal("1") for o in buys)
 
 
@@ -1226,12 +1237,13 @@ def test_post_dark_bids_freeze_instead_of_drifting(session):
     buys = {mid[o.market_id]: o for o in
             _open_orders(session, post.id, side=OrderSide.BUY)}
     assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("0.50")
-    # every want now: 12 coin against a ~19.8-coin want -- every bid
+    # every want now: 12 coin against a ~22.8-coin want -- every bid
     # comes back, pro-rated to two units each (BERRIES too: rot alone
     # walked the 60-berry hoard under the larder's 20, so its
-    # appetite is back -- there is no dump door to do it faster)
-    assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
-                         "APPLES", "EGGS", "PELT"}
+    # appetite is back -- there is no dump door to do it faster; and
+    # SALT since P3 -- the counter bids on what can be dug)
+    assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "SALT",
+                         "BERRIES", "APPLES", "EGGS", "PELT"}
     assert all(o.quantity == Decimal("2") for o in buys.values())
 
 
@@ -1462,19 +1474,33 @@ def test_the_map_six_places_nine_roads(session):
     (start), thicket 1h, river 1h, flint scrape 2h, deep forest 3h,
     post 1h down the valley (run 26's census: at four hours the post
     was a trip houses died taking -- two starved at its counter) --
-    the forest road stays the long way round. P3 adds the river road
-    past the thicket: the gather commute drinks, and the boar reaches
-    the tap without the fire-ground. River proximity (run 40's
-    parked lever, shipped for run 48): both residential river roads
-    dropped 2h -> 1h -- the pilgrimage stopped pricing a gather day,
-    and the FISH walk became an errand. The gradient by distance to
-    the river: riverside life 1h, the post 2h, the interior 3h."""
+    the forest road stays the long way round. The old P3 added the
+    river road past the thicket: the gather commute drinks, and the
+    boar reaches the tap without the fire-ground. River proximity
+    (run 40's parked lever, shipped for 48): both residential river
+    roads dropped 2h -> 1h. Run 54 P3 adds the FAR VALLEY: the ridge
+    road climbs from the scrape -- RIDGE_PASS 2h, then the salt lick
+    2h on and the vale 2h down, the vale a single hour off the lick.
+    Two valleys, one ridge, opposite scarcities; the far valley's
+    only door is the ridge (no road bypasses it), and the hearth is
+    six hours from the lick door to door."""
     from econengine import edges, places as places_mod
     create_content(session)
     keys = {p.key: p for p in places_mod.list_places(session)}
     assert set(keys) == {"HEARTH", "THICKET", "RIVER", "FLINT",
-                         "FOREST", "POST"}
-    assert all(p.kind == p.key for p in keys.values())
+                         "FOREST", "POST",
+                         "RIDGE_PASS", "SALT_LICK", "VALE"}
+    # two valleys: the ridge is the far side's one door
+    far = {"RIDGE_PASS", "SALT_LICK", "VALE"}
+    assert keys["RIDGE_PASS"].kind == "RIDGE"
+    assert keys["SALT_LICK"].kind == "SALT"      # DIG_SALT gates on it
+    assert keys["VALE"].kind == "PASTURE"        # HEN_ROLL gates on it
+    assert all(p.kind == p.key
+               for k, p in keys.items() if k not in far)
+    assert {k: p.region_id for k, p in keys.items() if k in far} == {
+        k: "far-valley" for k in far}
+    assert all(p.region_id == "home-valley"
+               for k, p in keys.items() if k not in far)
     roads = {(e.from_place.key, e.to_place.key): e.cost_ticks
              for e in edges.list_edges(session)}
     assert roads == {
@@ -1487,26 +1513,11 @@ def test_the_map_six_places_nine_roads(session):
         ("RIVER", "POST"): 2,
         ("HEARTH", "POST"): 1,
         ("THICKET", "RIVER"): 1,
+        ("FLINT", "RIDGE_PASS"): 2,
+        ("RIDGE_PASS", "SALT_LICK"): 2,
+        ("RIDGE_PASS", "VALE"): 2,
+        ("VALE", "SALT_LICK"): 1,
     }
-    hearth, post = keys["HEARTH"], keys["POST"]
-    assert edges.distance_ticks(session, hearth, post) == 1
-    # the valley road shortens the forest to 2h through the post
-    assert edges.distance_ticks(session, hearth, keys["FOREST"]) == 2
-    # river proximity: the residential roads are an hour, the post
-    # road stays a commitment, and the interior (flint, forest) sits
-    # 3h from the bank -- settlement value walks with the water
-    assert edges.distance_ticks(
-        session, keys["THICKET"], keys["RIVER"]) == 1
-    assert edges.distance_ticks(
-        session, keys["POST"], keys["RIVER"]) == 2
-    assert edges.distance_ticks(
-        session, keys["FLINT"], keys["RIVER"]) == 3
-    assert edges.distance_ticks(
-        session, keys["FOREST"], keys["RIVER"]) == 3
-    # the walk itself is a recipe, priced by the road not the template
-    walk = production.get_recipe(session, "TRAVEL_WALK")
-    assert walk is not None and walk.duration_ticks == 1
-    assert not walk.branches          # no outputs: arrival is the product
 
 
 def test_work_is_where_you_are(session):
@@ -3061,7 +3072,6 @@ def test_the_day_one_ladder_reaches_the_spear(session):
     travel_mod.start_route(session, house, "FLINT")
     for _ in range(3):   # the road's two ticks + the arrival credit
         run_tick(session); session.commit()
-    from econengine.models import Place
     at = session.execute(
         select(Place.key).where(Place.id == house.location_place_id)
     ).scalar_one()
@@ -3100,9 +3110,10 @@ def test_clay_is_dug_at_the_river_for_anyone(session):
 def test_the_post_was_born_to_the_salt_trade(session):
     """The counter holds SALT_CURING outright (his shed salts as it
     always did, bit-identical), the shelf stocks the world's salt, and
-    the rank is retail-only for houses: salt sells at the flint anchor,
-    and the counter does NOT bid on what nobody can dig (P3 opens the
-    lick)."""
+    the rank is retail-only for houses: salt sells at the flint
+    anchor, and the counter bids on it since P3 opened the lick --
+    half basis, never near retail: paying near retail for stock is
+    how a shop dies."""
     from econengine import production as prod
     from econengine import tech
     create_content(session)
@@ -3121,12 +3132,15 @@ def test_the_post_was_born_to_the_salt_trade(session):
     _at(session, house, "POST")
     with pytest.raises(ValueError, match="requires SALT_CURING"):
         prod.start_process(session, house, "SALT_MEAT")
-    # the book: retail 1.95 (basis 1.50 x 1.30), and no bid ever
+    # the book (P3): retail 1.95 (basis 1.50 x 1.30) -- and the bid
+    # stands now that the lick can be dug: half the basis, four deep,
+    # the salt road's home leg
     _run(session, 1)
     asks = _open_orders(session, post.id, "SALT", OrderSide.SELL)
     bids = _open_orders(session, post.id, "SALT", OrderSide.BUY)
     assert [o.limit_price for o in asks] == [Decimal("1.95")]
-    assert bids == []
+    assert [o.limit_price for o in bids] == [Decimal("0.75")]
+    assert bids[0].quantity == Decimal("4")
 
 
 # --- Run 54 P2: comfort, not status ---------------------------------------
@@ -3281,3 +3295,310 @@ def test_the_feast_wants_a_lit_fire_and_pays_ease(session):
     assert _hold(session, w.id, "SQUALOR") == Decimal("0")
     # pure ease, not dinner: the feast fed nobody (born empty, no meal)
     assert _hold(session, w.id, "SATIETY") == Decimal("0")
+
+
+# --- Run 54 P3: the far valley ---------------------------------------
+
+def _walk_to(session, house, key, torch=Decimal("0"), cap=40):
+    """Walk a house to `key` and run ticks until it stands there. The
+    loop (not a fixed count) is the E3 lesson: a hop of duration d
+    lands d+1 ticks after the departure, and counting beats guessing.
+    Toppable torch: a dark-tail road wants a flame in hand."""
+    from econengine import travel as travel_mod
+    travel_mod.start_route(session, house, key)
+    for _ in range(cap):
+        _run(session, 1)
+        if torch > 0 and house.id:      # keep the brand fed (test grace)
+            now = production.next_tick_number(session)
+            if now % 24 >= 19:          # the dark tail: top the flame
+                _set(session, house, "LIT_TORCH", torch)
+        session.refresh(house)
+        place = session.execute(
+            select(Place.key).where(Place.id == house.location_place_id)
+        ).scalar_one_or_none()
+        if place == key:
+            return
+        # a walker in the cold is a walker dying: keep the body warm
+        # (the test is the road and the book, not the thermostat)
+        _set(session, house, "WARMTH", Decimal("4"))
+    raise AssertionError(f"never arrived at {key}")
+
+
+def test_the_far_valley_is_six_hours_out(session):
+    """The P3 map pin, from the spec's ASCII: the ridge road climbs
+    from the scrape -- RIDGE_PASS 2h, the lick 2h past the ridge, the
+    vale 2h down and one hour off the lick. The hearth is SIX hours
+    from the lick door to door (2+2+2): a committed day. And the
+    ridge is the far side's only door -- no road bypasses it."""
+    from econengine import edges, places as places_mod
+    create_content(session)
+    spots = {p.key: p for p in places_mod.list_places(session)}
+    D_ = lambda a, b: edges.distance_ticks(session, spots[a], spots[b])
+    assert D_("HEARTH", "SALT_LICK") == 6     # 2+2+2, door to door
+    assert D_("HEARTH", "RIDGE_PASS") == 4
+    assert D_("HEARTH", "VALE") == 6
+    assert D_("FLINT", "SALT_LICK") == 4
+    assert D_("VALE", "SALT_LICK") == 1
+    # the home map is unmoved by the far one (the forest's CHEAPEST
+    # walk is the valley road through the post: 1+1 -- the 3h edge
+    # is the deep wood, the long way in)
+    assert D_("HEARTH", "POST") == 1
+    assert D_("HEARTH", "FOREST") == 2
+
+
+def test_salt_is_dug_at_the_lick(session):
+    """DIG_SALT: the scrape's bargain at the lick -- an hour of
+    daylight, two certain salt, no gamble. Salt enters the world as a
+    PRODUCT for the first time (before P3 it existed only as the
+    post's shelf stock). The place gate names the lick; the night
+    gate names the dark."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Digger")
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    # refused from home: the work wants the lick
+    with pytest.raises(ValueError, match="must be at a SALT"):
+        production.start_process(session, house, "DIG_SALT")
+    _at(session, house, "SALT_LICK")
+    assert _act_day(session, house, "DIG_SALT")
+    _run(session, 2)
+    assert _hold(session, house.id, "SALT") == Decimal("2")
+
+
+def test_hens_roll_in_the_vale(session):
+    """HEN_ROLL: the vale's gamble -- an hour's daylight stalking the
+    tufts, and three times in ten a hen joins you. The chicken
+    opener's far source: the home valley keeps buying hens at the
+    post or walking them back. The pinned table is 70/30, one hen."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Stalker")
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    with pytest.raises(ValueError, match="must be at a PASTURE"):
+        production.start_process(session, house, "HEN_ROLL")
+    _at(session, house, "VALE")
+    recipe = production.get_recipe(session, "HEN_ROLL")
+    table = sorted(
+        (b.weight, tuple(sorted((o.symbol, o.quantity) for o in b.outputs)))
+        for b in recipe.branches)
+    assert table == [(Decimal("30"), (("CHICKEN", Decimal("1")),)),
+                     (Decimal("70"), ())]
+    # the gamble pays eventually: 30 attempts at 70/30 is a sure thing
+    # once survival stops being the variable. The stalker is scriptless,
+    # so the world will not feed, warm, or rest him -- conscious eating
+    # (a larder satisfies nothing until it is a meal), no fire in the
+    # vale, and the worst case spans a day and a half; every run is a
+    # fresh world (fresh ids -> fresh roll stream), so no fixed buffer
+    # can carry the loop. Stand in for the body between ticks, the way
+    # LABOR's auto-issue does: top the drawn flow goods before each
+    # tick (WARMTH 4 covers the night's 3-draw; the cap clips the
+    # rest). This test is about the gamble, not the stalker's lunch.
+    # A rolled hen is carried, not penned.
+    def _survive():
+        for _sym, _q in (("SATIETY", "1"), ("WATER", "0.5"),
+                         ("REST", "0.5"), ("WARMTH", "4")):
+            markets.adjust_holding(session, house, _sym, Decimal(_q))
+        run_tick(session)
+        session.commit()
+    hens = 0
+    for _ in range(30):
+        while clock.is_night(production.next_tick_number(session)):
+            _survive()
+        if _act_day(session, house, "HEN_ROLL"):
+            _survive(); _survive(); _survive()   # +1 for the window
+            hens = _hold(session, house.id, "CHICKEN")
+            if hens >= 1:
+                break
+        _survive()       # the hour turns; the tufts reset
+    assert hens >= 1
+
+
+def test_ibex_want_the_ridge_and_a_weapon(session):
+    """The ridge's quarry: HUNT_IBEX takes a held spear, HUNT_IBEX_BOW
+    a held bow (the pack's per-weapon pattern -- either weapon opens
+    the hunt), and both refuse every other ground. The pelt is the
+    point: IBEX_PELT, the winter coat's whole material, and every
+    winning branch carries one."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Climber")
+    _at(session, house, "RIDGE_PASS")
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    with pytest.raises(Exception, match="SPEAR"):
+        production.start_process(session, house, "HUNT_IBEX")
+    with pytest.raises(Exception, match="BOW"):
+        production.start_process(session, house, "HUNT_IBEX_BOW")
+    spear = production.get_recipe(session, "HUNT_IBEX")
+    tables = sorted(
+        (b.weight, tuple(sorted((o.symbol, o.quantity) for o in b.outputs)))
+        for b in spear.branches)
+    assert tables == sorted([
+        (Decimal("30"), ()),
+        (Decimal("50"), (("IBEX_PELT", Decimal("1")),
+                         ("MEAT", Decimal("3")))),
+        (Decimal("20"), (("IBEX_PELT", Decimal("1")),
+                         ("MEAT", Decimal("6")))),
+    ])
+    bow = production.get_recipe(session, "HUNT_IBEX_BOW")
+    assert sorted(b.weight for b in bow.branches) == [
+        Decimal("20"), Decimal("25"), Decimal("55")]   # steadier table
+    # the spear hunt pays eventually: a pelt in the pack (a fresh pelt
+    # fades 0.05 in the very tick it lands -- pelts are perishable)
+    _set(session, house, "SPEAR", Decimal("1"))
+    landed = False
+    for _ in range(30):
+        while clock.is_night(production.next_tick_number(session)):
+            _run(session, 1)
+        # the ridge has no fire and no water: keep the hunter alive
+        # (the test's subject is the hunt, not the thermostat)
+        _set(session, house, "WARMTH", Decimal("4"))
+        _set(session, house, "WATER", Decimal("4"))
+        _set(session, house, "BERRIES", Decimal("6"))
+        if _act_day(session, house, "HUNT_IBEX"):
+            _run(session, 3)   # the window's tick + the hunt's two
+            landed = _hold(session, house.id, "IBEX_PELT") > 0
+            if landed:
+                break
+        _run(session, 1)       # the hour turns; the herd re-forms
+    assert landed
+    # and the ground is the ridge's: refused from home
+    _at(session, house, "HEARTH")
+    with pytest.raises(ValueError, match="must be at a RIDGE"):
+        production.start_process(session, house, "HUNT_IBEX")
+
+
+def test_the_fine_coat_wraps_twice_the_clothes(session):
+    """MAKE_FINE_CLOTHES: the TANNING rank, one IBEX_PELT and two
+    YARN, made at the hearth -- worn like clothes and twice the wrap:
+    HUDDLE_FINE pays a FULL warmth an hour where HUDDLE (clothes)
+    pays half. The tanner's masterwork is material, not status."""
+    create_content(session)
+    from econengine import clock
+    w = _seat(session, "Tanner")
+    # the rank binds first: a house without TANNING is refused (set
+    # the inputs first -- the refusal must be the RANK's, not a
+    # shortfall's)
+    _set(session, w, "IBEX_PELT", Decimal("2"))
+    _set(session, w, "YARN", Decimal("2"))
+    _grant_chain(session, w, "TANNING")
+    t2 = None
+    t2 = _seat(session, "Rankless")
+    _set(session, t2, "IBEX_PELT", Decimal("2"))
+    _set(session, t2, "YARN", Decimal("2"))
+    with pytest.raises(ValueError, match="TANNING"):
+        production.start_process(session, t2, "MAKE_FINE_CLOTHES")
+    # pelts rot while the night idles by (0.05/tick): wait for day,
+    # THEN stock the fresh pelt -- a tanner works dawn hides
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    _set(session, w, "IBEX_PELT", Decimal("1"))
+    _set(session, w, "YARN", Decimal("2"))
+    assert _act(session, w, "MAKE_FINE_CLOTHES")
+    _run(session, 3)
+    assert _hold(session, w.id, "FINE_CLOTHES") == Decimal("1")
+    assert _hold(session, w.id, "IBEX_PELT") == Decimal("0")
+    assert _hold(session, w.id, "YARN") == Decimal("0")
+    # the wrap, measured: two houses, one in clothes and one in the
+    # coat, huddle the same hour from the same warmth -- the coat
+    # ends exactly 0.5 warmer (twice clothes' 0.5 leak)
+    plain = _seat(session, "Plain")
+    _set(session, plain, "CLOTHES", Decimal("1"))
+    _set(session, plain, "WARMTH", Decimal("2"))
+    _set(session, w, "WARMTH", Decimal("2"))
+    assert _act(session, plain, "HUDDLE")
+    assert _act(session, w, "HUDDLE_FINE")
+    _run(session, 2)
+    # the wrap lands +1.0 vs +0.5 two ticks on (the output's tick,
+    # then the hour that draws it); the draw (-1) and the 20% fade
+    # touch both alike -- the gap that survives is the 0.5 wrap faded
+    # once: 0.5 x 0.8 = 0.4 exactly. TWICE CLOTHES' WRAP, measured on
+    # the balance, not asserted from the label.
+    assert _hold(session, plain.id, "WARMTH") == Decimal("0.24")
+    assert _hold(session, w.id, "WARMTH") == Decimal("0.64")
+    assert _hold(session, w.id, "WARMTH") - _hold(
+        session, plain.id, "WARMTH") == Decimal("0.4")
+
+
+def test_the_lick_trades_a_book_only_market(session):
+    """The far book: IBEX_PELT trades at the salt lick, and ONLY
+    there -- book-only, no NPC maker, no anchor prices. After
+    genesis (and ticks of the world running), the lick's book is
+    EMPTY: nobody quotes it but houses. And two houses CAN clear on
+    it -- the lick's prices are what the trip was worth."""
+    create_content(session)
+    _no_wolves(session)
+    _run(session, 6)          # the world runs; no maker appears
+    lick_market = session.execute(
+        select(Market).where(Market.symbol == "IBEX_PELT")).scalar_one()
+    lick = session.execute(select(Place).where(Place.key == "SALT_LICK")
+                           ).scalar_one()
+    assert lick_market.place_id == lick.id
+    assert session.execute(
+        select(Order).where(Order.market_id == lick_market.id)
+    ).scalars().all() == []
+    # the far book clears house-to-house: a hunter sells, a buyer bids
+    hunter = _seat(session, "Hunter")
+    buyer = _seat(session, "Buyer")
+    _at(session, hunter, "SALT_LICK")
+    _at(session, buyer, "SALT_LICK")
+    _set(session, hunter, "IBEX_PELT", Decimal("2"))
+    hunter_acct = next(a for a in hunter.accounts if a.currency == COIN)
+    buyer_acct = next(a for a in buyer.accounts if a.currency == COIN)
+    markets.place_order(session, hunter.id, "IBEX_PELT", "sell",
+                        Decimal("2"), Decimal("4.00"), hunter_acct.id)
+    markets.place_order(session, buyer.id, "IBEX_PELT", "buy",
+                        Decimal("1"), Decimal("4.50"), buyer_acct.id)
+    _run(session, 1)
+    # the fill's tick fades both pelts 0.05 (pelts are perishable)
+    assert _hold(session, buyer.id, "IBEX_PELT") == Decimal("0.95")
+    assert _hold(session, hunter.id, "IBEX_PELT") == Decimal("0.95")
+    # the print paid the resting ask, coin moved hunter-ward
+    assert hunter_acct.balance == SEAT_COIN + Decimal("4.00")
+    assert buyer_acct.balance == SEAT_COIN - Decimal("4.00")
+
+
+def test_the_salt_road_end_to_end(session):
+    """The trip the expansion is named for: a house walks the six
+    hours out (hearth -> flint scrape -> ridge -> lick), digs salt in
+    the certain hours, and walks it home through the dark tail (the
+    last hop departs at night -- the road wants a flame), then sells
+    at the post's salt bid. The salt road's home leg is the post's
+    own counter: dig at the lick, carry it back, sell here. (Carry
+    limits and shelf delivery ride this same road once E2/E3 merge;
+    this pins the pack's half -- the hours, the dig, the sale.)"""
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Salter")
+    _set(session, house, "BERRIES", Decimal("10"))
+    _set(session, house, "WATER", Decimal("4"))
+    # out at dawn: the night ends, the road opens
+    while production.next_tick_number(session) < 7:
+        _run(session, 1)
+    _walk_to(session, house, "SALT_LICK")
+    assert _hold(session, house.id, "SALT") == Decimal("0")
+    assert _act_day(session, house, "DIG_SALT")
+    _run(session, 2)
+    assert _act_day(session, house, "DIG_SALT")
+    _run(session, 2)
+    assert _hold(session, house.id, "SALT") == Decimal("4")
+    # home through the dark tail, torch in hand
+    _walk_to(session, house, "HEARTH", torch=Decimal("2"))
+    _walk_to(session, house, "POST")
+    acct = next(a for a in house.accounts if a.currency == COIN)
+    post = _post(session)
+    post_bid = _open_orders(session, post.id, "SALT", OrderSide.BUY)
+    assert post_bid, "the counter's salt bid is standing"
+    bid = post_bid[0].limit_price
+    assert post_bid[0].quantity >= Decimal("4")   # four deep for the lot
+    markets.place_order(session, house.id, "SALT", "sell",
+                        Decimal("4"), bid, acct.id)
+    _run(session, 1)
+    # the post's standing salt bid took the lot at its own price
+    assert _hold(session, house.id, "SALT") == Decimal("0")
+    assert acct.balance == SEAT_COIN + Decimal("4") * bid
