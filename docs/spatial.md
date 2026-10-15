@@ -178,7 +178,7 @@ location becomes a real state the pack chose to make meaningful.
 | **S2** | Presence gates on recipes and markets | requirement-pass extension + describe | gates off unless data present |
 | **S3** | Topology + travel (edges, route, travel processes) | `travel` intent + routing + process marks | new behavior, opt-in |
 | **S4** | Located danger + the stone-age map | threat/spawn/combat scoping + pack content | wolves with home ranges |
-| **S5** | Local markets made real: carrying + fulfillment presence | travel inputs/limits + order checks | couriers parked |
+| **S5** | Local markets made real: carrying (**S5a shipped**) + fulfillment presence (S5b) | departure gate + arrival spill (shipped); order checks (next) | couriers parked |
 | **S6** | The Luanti boundary | none (platform) — node↔voxel mapping, fork copies | gated on platform era |
 
 Each step is PR-sized, independently shippable, and ordered so the
@@ -279,16 +279,34 @@ existing uses.
 
 ### S5 — Local markets made real
 
-- Carrying: travel recipes declare `carry_capacity` (units of goods
-  the traveler may take along, by mode — WALK small, CART large).
-  Departure snapshots the manifest; arrival credits it. Self-carry
-  only in this step.
-- Fulfillment presence: an order on a placed market fills only from
-  goods present at the market's place — sellers must deliver. This is
-  where regional price differences become earnable.
+**S5a (shipped, run 54 E2): carrying.** Goods have weight, the road
+has a limit — with one deliberate deviation from this step's original
+shape: **the gate reads the load at departure, not a mid-journey
+manifest snapshot.** A walker eating their own rations on the road is
+lunch, not an exploit; the goal was capacity, and capacity is what
+ships. Concretely:
+
+- `Good.carry_exempt` — body goods never weigh (pack-declared data:
+  warmth, rest, water, labor, conditions, hits… bare symbols are
+  cargo).
+- Travel templates gain `carry_capacity` (NULL = the traveller's
+  `CARRY` stat decides; no stat = no gate, legacy worlds unchanged).
+- The departure gate refuses a journey whose non-exempt load exceeds
+  **every** leg's limit — the tightest leg names the refusal ("you
+  carry 34.5 of 20"). No route row is left behind.
+- A grant mid-journey (combat loot, a child's gift) that pushes the
+  load past the NEXT road's limit spills at the waypoint: whole
+  bundles first (largest, then symbol-asc), a `travel_spill` event
+  records what dropped, and what fits walks on. Nothing spills at a
+  final arrival — standing loaded is legal; only the road is gated.
+
+- Fulfillment presence (S5b): an order on a placed market fills only
+  from goods present at the market's place — sellers must deliver
+  (escrow at placement, reclaim by walking back). This is where
+  regional price differences become earnable.
 - Parked (named, not built): courier contracts (delivering for
-  another entity), escrowed trade windows, vehicle entities with
-  their own damage. None block the payoff above.
+  another entity), vehicle entities with their own damage. None
+  block the payoff above.
 
 ### S6 — The Luanti boundary (platform era, gated)
 

@@ -934,6 +934,7 @@ def _create_goods(session: Session) -> None:
         auto_issue_quantity=Decimal("1"),
         auto_issue_entity_type=EntityType.INDIVIDUAL,
         auto_issue_daylight_only=True,
+        carry_exempt=True,  # the body's ration, not cargo (S5a)
     )
     # Food -- everything edible rots. MEAT fastest (raw), COOKED slightly
     # slower, BERRIES in between: preserving food is a real problem, and
@@ -1055,7 +1056,9 @@ def _create_goods(session: Session) -> None:
                       description="A pitch-wrapped brand: inert in the pack, "
                                   "two hours of carried light once lit. "
                                   "Light it at any lit fire, or chain a "
-                                  "fresh one off your own flame.")
+                                  "fresh one off your own flame.",
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "LIT_TORCH", name="Lit Torch",
                       description="A burning brand in the hand: the dark road "
                                   "opens, a wolf at the door thinks twice — "
@@ -1065,7 +1068,9 @@ def _create_goods(session: Session) -> None:
                                   "carry of two about three. A body carries "
                                   "two flames.",
                       decay_per_tick=TORCH_DECAY,
-                      max_holding=TORCH_CARRY)
+                      max_holding=TORCH_CARRY,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     # The water kit (P3): the cup, the skin, the craft. WATER is the
     # cupped-hands carry (free, four hours -- everyone is born holding
     # a full one); SKINWATER rides only in a waterskin (eight hours,
@@ -1078,14 +1083,18 @@ def _create_goods(session: Session) -> None:
                                   "in any body's hands (DRINK at the river "
                                   "fills it, free). The WATER need draws "
                                   "it 0.25 an hour -- six a day.",
-                      max_holding=WATER_CUP)
+                      max_holding=WATER_CUP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "SKINWATER", name="Skinful of Water",
                       description="Water that rides a waterskin: eight "
                                   "carried hours (FILL_SKIN at the river "
                                   "-- the skin must be held), seeping a "
                                   "little as it travels.",
                       decay_per_tick=WATERSKIN_DECAY,
-                      max_holding=WATERSKIN_CAP)
+                      max_holding=WATERSKIN_CAP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "WATERSKIN", name="Waterskin",
                       description="A pelt sewn shut: the craft that turns "
                                   "one wolf into eight carried hours of "
@@ -1111,7 +1120,9 @@ def _create_goods(session: Session) -> None:
                       decay_per_tick=Decimal("0.2"),
                       auto_issue_quantity=Decimal("1"),
                       auto_issue_entity_type=EntityType.BUSINESS,
-                      max_holding=WARMTH_CAP)
+                      max_holding=WARMTH_CAP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "SATIETY", name="Satiety",
                       description="The stomach. Only EAT recipes fill it "
                                   "(berries thin, jerky dense, raw meat a "
@@ -1119,7 +1130,9 @@ def _create_goods(session: Session) -> None:
                                   "every hour and it spills on its own. Meals "
                                   "are free, instant and night-legal -- but "
                                   "they do not happen by themselves.",
-                      decay_per_tick=Decimal("0.1"))
+                      decay_per_tick=Decimal("0.1"),
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     # The merchant's belt (run 49). SHOP_KEY: the one thing the
     # shop's own errands read -- whoever holds it keeps the counter
     # and works the shed. No market row, max 1, never consumed: the
@@ -1151,12 +1164,14 @@ def _create_goods(session: Session) -> None:
         description="The memory of missed meals.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("15"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     goods.create_good(
         session, "EXPOSURE", name="Exposure",
         description="The memory of cold nights.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("18"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     goods.create_good(
         session, "DISEASE", name="Disease",
@@ -1164,6 +1179,7 @@ def _create_goods(session: Session) -> None:
                     "at this threshold.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     # THIRST (P3): the dry-larder killer. Meals part-hydrate (berries
     # and apples wet, jerky nearly dry), so the pressure lands on the
@@ -1177,6 +1193,7 @@ def _create_goods(session: Session) -> None:
                     "about two days.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     # FATIGUE (P4): the sleepless clock, the THIRST twin. Grant 0.5/
     # unmet hour, decay 0.05 -> equilibrium 10, dies at 7.5 -- the
@@ -1194,6 +1211,7 @@ def _create_goods(session: Session) -> None:
                     "bed -- and let the register fade.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     # COMFORT + SQUALOR (run 54 P2): comfort, not status. COMFORT is a
     # stock like any -- banked by fire seats, beds and feasts, drawn a
@@ -1237,6 +1255,7 @@ def _create_goods(session: Session) -> None:
         "under shelter, in a bed; standing idle restores nothing. A "
         "body holds at most a day and a third of it.",
         max_holding=REST_CAP,
+        carry_exempt=True,  # of the body, not cargo (S5a)
     )
     # Wolves (run 20): creatures, not pressure. A wolf is an ENTITY --
     # stats, health, needs, a hunting program -- and combat happens
@@ -1249,6 +1268,7 @@ def _create_goods(session: Session) -> None:
         description="Health of the body: every creature spawns with a "
                     "stock, combat drains it, and zero is death -- the "
                     "same estate rule as any other. It does not grow back.",
+        carry_exempt=True,  # of the body, not cargo (S5a)
     )
     goods.create_good(
         session, "PELT", name="Pelt",

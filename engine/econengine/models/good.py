@@ -60,6 +60,15 @@ class Good(Base):
     max_holding: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
     )
+    # S5a (run 54 E2): body goods don't weigh against the road. A travel
+    # departure that gates on carry capacity sums only NON-exempt
+    # holdings — warmth, rest, water, labor, conditions, hits are the
+    # body itself, not cargo. Pack-declared data: a bare symbol (no Good
+    # row) is ordinary cargo; the engine has no opinion about which
+    # goods are "of the body".
+    carry_exempt: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
