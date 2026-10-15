@@ -57,6 +57,8 @@ local food   = berries + apples + cooked + jerky
 local water  = std.holding_qty("WATER") + std.holding_qty("SKINWATER")
 local skin   = std.holding_qty("WATERSKIN")
 local spear  = std.holding_qty("SPEAR")    -- the hunt's key (held, never spent)
+local comfort = std.holding_qty("COMFORT")  -- ease banked (run 54 P2)
+local squalor = std.holding_qty("SQUALOR")  -- the unloved hours' memory
 local flint  = std.holding_qty("FLINT")
 local yarn   = std.holding_qty("YARN")
 local protein = meat + cooked + jerky      -- the meat-family shelf (raw MEAT
@@ -155,7 +157,13 @@ end
 --     refills the stock a sleeping body only holds). A wolf that
 --     finds a sleeper finds prey: sleeping holds no torch and little
 --     warmth -- the price of the watch is vigilance's absence.
-if (std.is_night() or warmth < 4) and #fires > 0
+-- P2: EASE is a want with a bite now -- an unloved hour accrues
+-- squalor, and squalor shrinks the daylight ration until whole-hour
+-- work refuses. The cure is the same seat: fire hours pay comfort
+-- (+0.5, sleep +0.5, a bed +1), so the floor sits for ease exactly
+-- as it sits for warmth -- an hour of the afternoon when the ease
+-- runs dry. The seat is free; the hour is not.
+if (std.is_night() or warmth < 4 or comfort < 0.1) and #fires > 0
    and (place == home or can_walk) then
   if place ~= home then
     ctx.action.travel(home)
@@ -271,6 +279,18 @@ if not std.is_night() then
     else
       ctx.action.start_process("HUNT_SPEAR")
     end
+  -- 2c. The feast (run 54 P2): comfort is the one want worth being
+  --     SAFE for, and the feast is its one bulk buy. When ease has run
+  --     dry (an unloved hour accrues squalor, and squalor shrinks the
+  --     ration) and the surplus shelf is FAT (eight strips is two days
+  --     of dense food -- a bank, not a meal), spend an afternoon at
+  --     the fire: four strips and a log into five points of ease. A
+  --     squalid body cannot start it -- the throttle refuses the
+  --     labor; the seat is the cure, the feast is the reward.
+  elseif comfort < 0.1 and squalor == 0 and jerky > 8 and #fires > 0
+     and place == home and std.hour() < 15
+     and not std.running_recipe("FEAST") then
+    ctx.action.start_process("FEAST")
   elseif (food < 8 or wood < 6) and not dusk_closing
      and not std.running_recipe("GATHER") then
     if place ~= woods then

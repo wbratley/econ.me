@@ -784,7 +784,9 @@ def test_the_commons_fire_stands(session):
     assert stoke.facility_fuel_output == Decimal("4")
     assert stoke.duration_ticks == 0 and not stoke.requires_daylight
     warm = production.get_recipe(session, "WARM_BY_FIRE")
-    assert warm.outputs[0].quantity == WARMTH_CAP and warm.requires_facility_lit
+    warm_out = {o.symbol: o.quantity for o in warm.outputs}
+    assert warm_out["WARMTH"] == WARMTH_CAP and warm.requires_facility_lit
+    assert warm_out["COMFORT"] == Decimal("0.5")   # P2: a fire hour is a nice hour
     for code in ("COOK_MEAT", "SMOKE_MEAT"):
         assert production.get_recipe(session, code).requires_facility_lit
     from econengine.goods import get_good
@@ -3125,3 +3127,157 @@ def test_the_post_was_born_to_the_salt_trade(session):
     bids = _open_orders(session, post.id, "SALT", OrderSide.BUY)
     assert [o.limit_price for o in asks] == [Decimal("1.95")]
     assert bids == []
+
+
+# --- Run 54 P2: comfort, not status ---------------------------------------
+
+def test_the_fire_seat_pays_ease_besides_warmth(session):
+    """A fire hour is a nice hour (P2): WARM_BY_FIRE co-outputs COMFORT
+    +0.5 alongside its +6 warmth -- comfort is the dividend of safety,
+    not a scoreboard. Pre-stocked ease keeps the need met through the
+    seam (the first seated hour's draw precedes its credit)."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Easy")
+    _set(session, w, "COMFORT", Decimal("0.1"))
+    assert _act(session, w, "WARM_BY_FIRE")     # no labor: the free seat
+    _run(session, 2)                            # the hour lands at t2's top
+    # 0.1 stocked -0.1 drawn, +0.5 seated, -0.1 drawn again, fading 5%
+    assert _hold(session, w.id, "COMFORT") == Decimal("0.38")
+    assert _hold(session, w.id, "SQUALOR") == Decimal("0")
+
+
+def test_the_bed_pays_the_finest_hour(session):
+    """SLEEP_IN_BED's second dividend: +1 comfort an hour on top of its
+    rest and warmth -- the comfort top rung, where capital finally buys
+    ease. The den pays the same as a fire seat (+0.5): the dumb comfort
+    of a curled beast."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Sleeper")
+    camp = _camp(session, w)
+    parcels.add_facility(session, camp, "SHELTER")
+    markets.adjust_holding(session, w, "BED", Decimal("1"))
+    _set(session, w, "COMFORT", Decimal("0.2"))
+    production.start_process(session, w, "SLEEP_IN_BED", camp.id)
+    _run(session, 2)
+    # 0.2 -0.1 = 0.1, -5% fade -> 0.095; +1.0 landed, -0.1 drawn,
+    # -5% of 0.995 -> 0.9452 exactly
+    assert _hold(session, w.id, "COMFORT") == Decimal("0.9452")
+    den = production.get_recipe(session, "SLEEP_DEN")
+    comfort_out = {o.symbol: o.quantity for o in den.outputs}["COMFORT"]
+    assert comfort_out == Decimal("0.5")
+
+
+def test_the_comfort_deficit_accrues_squalor(session):
+    """The one want whose bite is physical: an unbanked comfort stock
+    accrues SQUALOR 0.02 an hour; a stocked one satisfies the need and
+    accrues nothing. Comfort fades 5% a tick on its own -- ease fades
+    faster than misery."""
+    create_content(session)
+    _no_wolves(session)
+    bare = _seat(session, "Bare")
+    stocked = _seat(session, "Stocked")
+    _set(session, bare, "COMFORT", 0)          # born at ease: stripped bare
+    _set(session, stocked, "COMFORT", Decimal("5"))
+    _run(session, 5)
+    # bare: 0.02 granted a tick, decaying 1% -> 0.0980 after five
+    assert Decimal("0.09") < _hold(session, bare.id, "SQUALOR") < Decimal("0.1")
+    # stocked: the need met every tick, nothing accrued, the stock still fat
+    assert _hold(session, stocked.id, "SQUALOR") == Decimal("0")
+    # five hours of ease: drawn 0.5, faded to 3.4390 -- fat, and fading
+    assert _hold(session, stocked.id, "COMFORT") == Decimal("3.4390")
+
+
+def test_squalor_shrinks_the_daylight_ration(session):
+    """The bite (the engine's two effective-quantity read sites, wired
+    by one Good row): while any SQUALOR rides, the LABOR modifier x0.85
+    shrinks the auto-issued ration -- a daylight tick tops a squalid
+    house at 0.85 hours (0.4250 after labor's fast fade) where a clean
+    house draws the full hour. Conditions scale CAPABILITY, not matter:
+    labor bought or banked still spends at face value."""
+    from econengine import conditions
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 8)         # hour 7 first: the seats wake clean (an
+    squalid = _seat(session, "Squalid")   # unattended night would accrue
+    clean = _seat(session, "Clean")       # squalor and beg the question)
+    _set(session, squalid, "SQUALOR", Decimal("2"))
+    _set(session, squalid, "LABOR", 0)
+    _set(session, clean, "LABOR", 0)
+    assert conditions.effective_factor(session, squalid.id, "LABOR") == Decimal("0.85")
+    assert conditions.effective_factor(session, clean.id, "LABOR") == Decimal("1")
+    _run(session, 1)                              # the ration issues at its top
+    assert _hold(session, squalid.id, "LABOR") == Decimal("0.4250")
+    assert _hold(session, clean.id, "LABOR") == Decimal("0.5000")
+    _at(session, squalid, "THICKET")
+    # the starved ration cannot start whole-hour work...
+    with pytest.raises(Exception, match="LABOR"):
+        production.start_process(session, squalid, "GATHER")
+    # ...but matter is matter: a banked hour spends at face value
+    _set(session, squalid, "LABOR", 1)
+    assert production.start_process(session, squalid, "GATHER")
+
+
+def test_squalor_never_kills(session):
+    """The one condition with no kill line: hold a hundred squalor --
+    seven times any death threshold in the pack -- keep the body fed,
+    and it stays ACTIVE forever, working at x0.85. Squalor is why
+    you'd want to be safe rather than merely not-dead; nothing in the
+    world pretends otherwise."""
+    from econengine import conditions, models as eng_models
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Miserable")
+    good = session.execute(select(eng_models.Good)
+                           .where(eng_models.Good.symbol == "SQUALOR")
+                           ).scalar_one()
+    assert good.incapacitates_at is None
+    assert good.modifies_pattern == "LABOR"
+    assert good.modifies_factor == Decimal("0.85")
+    _set(session, w, "SQUALOR", Decimal("100"))
+    for _ in range(20):                          # a fed, squalid day
+        for sym, qty in (("SATIETY", 6), ("WARMTH", 6), ("REST", 6),
+                         ("SKINWATER", 6)):
+            _set(session, w, sym, qty)
+        for cond in ("HUNGER", "EXPOSURE", "FATIGUE", "THIRST"):
+            _set(session, w, cond, 0)
+        _run(session, 1)
+    assert w.status == EntityStatus.ACTIVE
+    assert _hold(session, w.id, "SQUALOR") > Decimal("80")
+    assert conditions.effective_factor(session, w.id, "LABOR") == Decimal("0.85")
+
+
+def test_the_feast_wants_a_lit_fire_and_pays_ease(session):
+    """FEAST: four strips of the never-rotting surplus and a log on the
+    commons, two honest hours of turning and sharing, five whole points
+    of ease -- and no satiety: the feast is eaten on a fed body, or it
+    is just dinner. The fire must be lit (the same gate as the seat and
+    the sleeper); a dark fire refuses the evening."""
+    from econengine import parcels as parcels_mod
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 8)         # hour 7 first: a seat woken here holds no
+    w = _seat(session, "Host")   # squalor -- an unattended dawn would have
+    _set(session, w, "COMFORT", Decimal("0.5"))  # accrued it (the bite!)
+    for fire in session.execute(select(parcels_mod.Facility)).scalars():
+        if fire.facility_type == "FIRE":
+            fire.fuel = Decimal("0")            # a dark commons
+    session.commit()
+    markets.adjust_holding(session, w, "JERKY", Decimal("4"))
+    markets.adjust_holding(session, w, "WOOD", Decimal("1"))
+    with pytest.raises(Exception, match="dark"):
+        production.start_process(session, w, "FEAST")
+    for fire in session.execute(select(parcels_mod.Facility)).scalars():
+        if fire.facility_type == "FIRE":
+            fire.fuel = Decimal("6")            # relit: the evening runs
+    session.commit()
+    assert _act_day(session, w, "FEAST")
+    assert _hold(session, w.id, "JERKY") == Decimal("0")    # the surplus spent
+    _run(session, 3)                             # two hours + the landing
+    # 0.5 stocked fades to 0.266 over the two cooking hours; +5 lands,
+    # -0.1 drawn, -5% of the 5.166 remainder -> 4.9077 exactly
+    assert _hold(session, w.id, "COMFORT") == Decimal("4.9077")
+    assert _hold(session, w.id, "SQUALOR") == Decimal("0")
+    # pure ease, not dinner: the feast fed nobody (born empty, no meal)
+    assert _hold(session, w.id, "SATIETY") == Decimal("0")
