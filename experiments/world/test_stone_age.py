@@ -3387,18 +3387,33 @@ def test_hens_roll_in_the_vale(session):
         for b in recipe.branches)
     assert table == [(Decimal("30"), (("CHICKEN", Decimal("1")),)),
                      (Decimal("70"), ())]
-    # the gamble pays eventually (deterministic RNG: it always does
-    # under this content) -- and a rolled hen is carried, not penned
+    # the gamble pays eventually: 30 attempts at 70/30 is a sure thing
+    # once survival stops being the variable. The stalker is scriptless,
+    # so the world will not feed, warm, or rest him -- conscious eating
+    # (a larder satisfies nothing until it is a meal), no fire in the
+    # vale, and the worst case spans a day and a half; every run is a
+    # fresh world (fresh ids -> fresh roll stream), so no fixed buffer
+    # can carry the loop. Stand in for the body between ticks, the way
+    # LABOR's auto-issue does: top the drawn flow goods before each
+    # tick (WARMTH 4 covers the night's 3-draw; the cap clips the
+    # rest). This test is about the gamble, not the stalker's lunch.
+    # A rolled hen is carried, not penned.
+    def _survive():
+        for _sym, _q in (("SATIETY", "1"), ("WATER", "0.5"),
+                         ("REST", "0.5"), ("WARMTH", "4")):
+            markets.adjust_holding(session, house, _sym, Decimal(_q))
+        run_tick(session)
+        session.commit()
     hens = 0
     for _ in range(30):
         while clock.is_night(production.next_tick_number(session)):
-            _run(session, 1)
+            _survive()
         if _act_day(session, house, "HEN_ROLL"):
-            _run(session, 3)   # started in the window: +1 for the window
+            _survive(); _survive(); _survive()   # +1 for the window
             hens = _hold(session, house.id, "CHICKEN")
             if hens >= 1:
                 break
-        _run(session, 1)       # the hour turns; the tufts reset
+        _survive()       # the hour turns; the tufts reset
     assert hens >= 1
 
 
