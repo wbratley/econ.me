@@ -51,6 +51,7 @@ def create_good(
     modifies_factor: Decimal | None = None,
     incapacitates_at: Decimal | None = None,
     max_holding: Decimal | None = None,
+    carry_exempt: bool = False,
 ) -> Good:
     existing = get_good(session, symbol)
     if existing is not None:
@@ -96,6 +97,7 @@ def create_good(
         modifies_factor=modifies_factor,
         incapacitates_at=incapacitates_at,
         max_holding=max_holding,
+        carry_exempt=bool(carry_exempt),
     )
     session.add(good)
     session.flush()

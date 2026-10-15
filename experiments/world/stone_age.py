@@ -11,7 +11,9 @@ the world is POOR and the needs are FATAL:
     every condition's equilibrium (grant/decay, the run5 lesson) sits
     ABOVE its incapacitation threshold: chronic neglect eventually
     seizes the entity. HUNGER (starvation), EXPOSURE (cold), DISEASE
-    (raw meat) all have real teeth.
+    (raw meat) all have real teeth. (Run 54 P2: SQUALOR is the one
+    deliberate exception -- comfort's bite throttles LABOR and never
+    touches the death register. No prestige, no scoreboard.)
   * Survival consumes most of the daylight LABOR budget (1
     auto-issued labor-hour per HOUR OF DAYLIGHT -- 14 a day, none at
     night): bare-handed living runs close to the line the genesis
@@ -151,7 +153,8 @@ COOKED_MEAT,
 JERKY (smoked or bought), EGGS and CHICKEN (the larder: capital
 that lays), WATER, SKINWATER and WATERSKIN (P3: the cup, the skin,
 and the craft that turns a pelt into capacity), SPEAR, BAG, BOW, TRAP,
-CLOTHES, BED, TORCH /
+CLOTHES, FINE_CLOTHES (the ibex coat), IBEX_PELT (the far valley's
+quarry), BED, TORCH /
 LIT_TORCH (the night kit), plus the flows
 WARMTH/SATIETY and the
 conditions HUNGER/EXPOSURE/DISEASE/THIRST. Money is COIN — found, not endowed:
@@ -217,6 +220,13 @@ MANUAL_KEY = "world.manual"
 # deficit against FOOD+WARMTH, so these buffers only postpone the reckoning;
 # capital (fire, clothes, shelter, tools) is the only way to a surplus.
 BERRY_BUFFER = Decimal("8")
+# Born at ease (run 54 P2): a day and a night of comfort banked at birth
+# -- the buffer that keeps the FIRST night's sleep-credit seam (the
+# hour before the first fire-sleep lands) from accruing the first
+# squalor. One unmet hour costs days at the 0.85 ration (squalor decays
+# a percent a tick); a body that starts easy and sits by its fires
+# never learns that price.
+COMFORT_SEAT_BUFFER = Decimal("2")
 WARMTH_BUFFER = Decimal("6")
 
 # --- The commons fire (P1, the fire rework: ROADMAP.md) --------------------
@@ -287,10 +297,28 @@ EMBER_TICKS = 2
 #             3 dead. Sleep pays in hours the house already spends
 #             idle at night: no third time-tax (P3's lesson), the
 #             night becomes a budget instead.
+#
+#   SQUALOR (run 54 P2): comfort's bite is the ONLY condition with no
+#             kill line -- misery that shows up at work, never at the
+#             grave. Grant 0.02/tick unmet, decay 0.01 -> chronic-
+#             neglect equilibrium 2.0: visible in telemetry, felt in
+#             every labor hour, survivable forever. The bite is the
+#             LABOR modifier (x0.85): while any rides, the daylight
+#             ration tops at 0.85 hours and a whole-hour recipe refuses
+#             -- the squalid house cannot work OR feast its way out;
+#             it must SIT (fire seats and beds are labor-free, and the
+#             fire is free). Ease is the dividend of safety: surplus
+#             food into a fine evening, warmth into a nice hour. No
+#             prestige, no scoreboard -- comfort is why you'd want to
+#             be safe rather than merely not-dead.
 FOOD_PER_TICK = Decimal("0.5")
 WARMTH_PER_TICK = Decimal("1")
 WARMTH_PER_NIGHT_TICK = Decimal("3")
 EAT_RAW_DISEASE_WEIGHT = Decimal("25")   # out of 100 per raw meal
+COMFORT_PER_TICK = Decimal("0.1")       # ease drawn from the stock hourly
+SQUALOR_GRANT = Decimal("0.02")         # per unmet tick
+SQUALOR_DECAY = Decimal("0.01")         # -> equilibrium 2.0, forever
+FEAST_COMFORT = Decimal("5")            # a fine evening, banked whole
 
 # --- Water (P3, ROADMAP.md) -----------------------------------------------
 # Thirst is the larder's counterweight: preservation is DRY, and the
@@ -632,6 +660,11 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
                                     # has something to buy (run 4: OSS
                                     # died holding 17 COIN beside an
                                     # empty, rotted larder)
+             # The keeper's shelf stock (run 54 P1): the world's whole
+             # salt supply until P3's lick opens -- eight rocks, each
+             # priced like flint. Two of them buy the SALT_CURING rank
+             # over this very counter (STUDY_SALT).
+             "SALT": Decimal("8"),
              # The water kit's anchor (P3): one waterskin on the shelf
              # -- the price a thirsty house with coin reads. Water
              # itself is never sold: the river is free, and the SKIN
@@ -683,6 +716,16 @@ def spawn_trading_post(session: Session) -> Entity:
     markets.adjust_holding(session, post, "SHOP_KEY", Decimal("1"))
     markets.adjust_holding(session, post, "SHOP_OPEN", Decimal("1"))
     markets.adjust_holding(session, post, "WOOD", Decimal("6"))
+    # Born to the trade (run 54 P1): the man behind the counter holds
+    # SALT_CURING outright -- his shed salts as it always did, no study
+    # owed. Houses learn it over his own shelf (STUDY_SALT at the POST)
+    # for the day they raise a shed of their own (P4). Tech is in
+    # hands, not on shelves -- but these hands were born to it.
+    tech.grant_unlock(
+        session, post,
+        tech.get_technology(session, "SALT_CURING"),
+        production.next_tick_number(session),
+    )
     combat.create_stat(session, post.id, "HITS", Decimal("20"))
     combat.create_stat(session, post.id, "ATTACK", Decimal("4"))
     combat.create_stat(session, post.id, "DEFENSE", Decimal("4"))
@@ -774,28 +817,45 @@ def _create_map(session: Session) -> None:
     not whether you survive the walk). The valley road also shortens
     the forest to 2h through the post; the deep wood stays the long
     way in. The thicket-forest cut (2h) makes the hunting circuit
-    thicket -> forest -> hearth a day's honest walk."""
-    for key, kind, name, description in (
-        ("HEARTH", "HEARTH", "Hearth clearing",
+    thicket -> forest -> hearth a day's honest walk.
+
+    And past it all, the far valley (run 54 P3): the ridge road
+    climbs from the scrape -- RIDGE_PASS 2h, then the SALT_LICK 2h
+    on and the VALE 2h down -- hearth to lick six hours door to
+    door, a committed day. Two valleys, one ridge, opposite
+    scarcities: the far side has salt and grass and no stone, the
+    home side stone and wood and no salt. Nobody walks six hours
+    for what they already own."""
+    for key, kind, name, region, description in (
+        ("HEARTH", "HEARTH", "Hearth clearing", "home-valley",
          "The fire-ground where every seat wakes: sheltered, warm-stoned, "
          "safe to sleep. Fires are made and tended here."),
-        ("THICKET", "THICKET", "Berry thicket",
+        ("THICKET", "THICKET", "Berry thicket", "home-valley",
          "An hour out: berries, wood, yarn -- the subsistence walk."),
-        ("RIVER", "RIVER", "The river",
+        ("RIVER", "RIVER", "The river", "home-valley",
          "An hour out: fish from the bank, meat without wolves."),
-        ("FLINT", "FLINT", "Flint scrape",
+        ("FLINT", "FLINT", "Flint scrape", "home-valley",
          "Two hours out: the ground gives certain flint to anyone who "
-         "digs."),
-        ("FOREST", "FOREST", "Deep forest",
+         "digs -- and the ridge road climbs from here."),
+        ("FOREST", "FOREST", "Deep forest", "home-valley",
          "The spear game and the wolves' range: two hours by the valley "
          "road (through the post), three by the deep wood. Be firelit "
          "by dark, or be meat."),
-        ("POST", "POST", "Trading post",
+        ("POST", "POST", "Trading post", "home-valley",
          "An hour down the valley: every market trades here, and only "
          "here -- the man keeps a good shelf and a short walk for it."),
+        ("RIDGE_PASS", "RIDGE", "The ridge pass", "far-valley",
+         "Cold, exposed, the high ground -- the door to the far valley. "
+         "Ibex ground: the quarry of the winter coat."),
+        ("SALT_LICK", "SALT", "The salt lick", "far-valley",
+         "Two hours past the ridge: the ground gives certain salt to "
+         "anyone who digs, and the far book trades pelts here."),
+        ("VALE", "PASTURE", "The vale", "far-valley",
+         "Open grass an hour from the lick: no thicket, no forest, no "
+         "stone -- and hens in the tufts."),
     ):
         places.create_place(session, key, kind=kind, name=name,
-                            region_id="home-valley", description=description)
+                            region_id=region, description=description)
     for a, b, cost in (
         ("HEARTH", "THICKET", 1),
         ("HEARTH", "RIVER", 1),
@@ -816,6 +876,15 @@ def _create_map(session: Session) -> None:
         ("FOREST", "POST", 1),
         ("RIVER", "POST", 2),
         ("HEARTH", "POST", 1),
+        # The ridge road (P3): the far valley. Flint scrape -> ridge
+        # -> lick is the salt road (2+2+2 = 6h door to door from the
+        # hearth); the ridge -> vale -> lick fork puts the hen walk
+        # one hour off the salt road. No road bypasses the ridge --
+        # the far valley has exactly one door.
+        ("FLINT", "RIDGE_PASS", 2),
+        ("RIDGE_PASS", "SALT_LICK", 2),
+        ("RIDGE_PASS", "VALE", 2),
+        ("VALE", "SALT_LICK", 1),
     ):
         edges.create_edge(session, a, b, "walk", cost)
     # The walk itself: an hour a hop against the road's true length.
@@ -865,6 +934,7 @@ def _create_goods(session: Session) -> None:
         auto_issue_quantity=Decimal("1"),
         auto_issue_entity_type=EntityType.INDIVIDUAL,
         auto_issue_daylight_only=True,
+        carry_exempt=True,  # the body's ration, not cargo (S5a)
     )
     # Food -- everything edible rots. MEAT fastest (raw), COOKED slightly
     # slower, BERRIES in between: preserving food is a real problem, and
@@ -912,6 +982,23 @@ def _create_goods(session: Session) -> None:
                                   "clothes and beds.")
     goods.create_good(session, "FLINT", name="Flint",
                       description="Sharp stone for spearheads and cutting tools.")
+    # The potter's ground (run 54 P1): riverbank clay, dug by the hour
+    # -- decayless, heavy once carrying lands (E2), and useless without
+    # the POTTERY rank: the study consumes it, the wheelless art.
+    goods.create_good(session, "CLAY", name="Clay",
+                      description="Riverbank clay, dug at the water: the potter's "
+                                  "raw ground. Keeps forever; teaches nothing "
+                                  "by itself -- the rank is studied, not held.")
+    # The keeper's rock (run 54 P1): salt keeps forever and cures meat
+    # that keeps forever. Until P3's lick opens the source, the post's
+    # shelf is the world's whole supply -- a rank you buy over the very
+    # counter that holds it.
+    goods.create_good(session, "SALT", name="Salt",
+                      description="The keeper's rock: drawn through raw meat "
+                                  "until it keeps forever. The post's shelf "
+                                  "holds the world's supply (P3 opens the "
+                                  "salt lick); the SALT_CURING rank is "
+                                  "studied over that shelf.")
     # Capital -- durable, never consumed by use (traps are the exception:
     # a consumed input of HUNT_TRAPS, the one-shot technology).
     goods.create_good(session, "SPEAR", name="Spear",
@@ -949,6 +1036,14 @@ def _create_goods(session: Session) -> None:
     goods.create_good(session, "CLOTHES", name="Clothes",
                       description="Worn warmth: with a shelter, covers the whole "
                                   "WARMTH need forever, free.")
+    goods.create_good(
+        session, "FINE_CLOTHES", name="Fine Coat",
+        description="The ibex coat, the tanner's masterwork: worn like "
+                    "clothes and twice the wrap -- a FULL warmth an hour "
+                    "without a fire, shelter-tight against the day. One "
+                    "to a body.",
+        max_holding=Decimal("1"),
+    )
     goods.create_good(session, "BED", name="Bed",
                       description="Craftable comfort, mechanically idle — "
                                   "the expansion hook.")
@@ -961,7 +1056,9 @@ def _create_goods(session: Session) -> None:
                       description="A pitch-wrapped brand: inert in the pack, "
                                   "two hours of carried light once lit. "
                                   "Light it at any lit fire, or chain a "
-                                  "fresh one off your own flame.")
+                                  "fresh one off your own flame.",
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "LIT_TORCH", name="Lit Torch",
                       description="A burning brand in the hand: the dark road "
                                   "opens, a wolf at the door thinks twice — "
@@ -971,7 +1068,9 @@ def _create_goods(session: Session) -> None:
                                   "carry of two about three. A body carries "
                                   "two flames.",
                       decay_per_tick=TORCH_DECAY,
-                      max_holding=TORCH_CARRY)
+                      max_holding=TORCH_CARRY,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     # The water kit (P3): the cup, the skin, the craft. WATER is the
     # cupped-hands carry (free, four hours -- everyone is born holding
     # a full one); SKINWATER rides only in a waterskin (eight hours,
@@ -984,14 +1083,18 @@ def _create_goods(session: Session) -> None:
                                   "in any body's hands (DRINK at the river "
                                   "fills it, free). The WATER need draws "
                                   "it 0.25 an hour -- six a day.",
-                      max_holding=WATER_CUP)
+                      max_holding=WATER_CUP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "SKINWATER", name="Skinful of Water",
                       description="Water that rides a waterskin: eight "
                                   "carried hours (FILL_SKIN at the river "
                                   "-- the skin must be held), seeping a "
                                   "little as it travels.",
                       decay_per_tick=WATERSKIN_DECAY,
-                      max_holding=WATERSKIN_CAP)
+                      max_holding=WATERSKIN_CAP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "WATERSKIN", name="Waterskin",
                       description="A pelt sewn shut: the craft that turns "
                                   "one wolf into eight carried hours of "
@@ -1017,7 +1120,9 @@ def _create_goods(session: Session) -> None:
                       decay_per_tick=Decimal("0.2"),
                       auto_issue_quantity=Decimal("1"),
                       auto_issue_entity_type=EntityType.BUSINESS,
-                      max_holding=WARMTH_CAP)
+                      max_holding=WARMTH_CAP,
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     goods.create_good(session, "SATIETY", name="Satiety",
                       description="The stomach. Only EAT recipes fill it "
                                   "(berries thin, jerky dense, raw meat a "
@@ -1025,7 +1130,9 @@ def _create_goods(session: Session) -> None:
                                   "every hour and it spills on its own. Meals "
                                   "are free, instant and night-legal -- but "
                                   "they do not happen by themselves.",
-                      decay_per_tick=Decimal("0.1"))
+                      decay_per_tick=Decimal("0.1"),
+                      carry_exempt=True,  # of the body, not cargo (S5a)
+    )
     # The merchant's belt (run 49). SHOP_KEY: the one thing the
     # shop's own errands read -- whoever holds it keeps the counter
     # and works the shed. No market row, max 1, never consumed: the
@@ -1057,12 +1164,14 @@ def _create_goods(session: Session) -> None:
         description="The memory of missed meals.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("15"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     goods.create_good(
         session, "EXPOSURE", name="Exposure",
         description="The memory of cold nights.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("18"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     goods.create_good(
         session, "DISEASE", name="Disease",
@@ -1070,6 +1179,7 @@ def _create_goods(session: Session) -> None:
                     "at this threshold.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     # THIRST (P3): the dry-larder killer. Meals part-hydrate (berries
     # and apples wet, jerky nearly dry), so the pressure lands on the
@@ -1083,6 +1193,7 @@ def _create_goods(session: Session) -> None:
                     "about two days.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
     )
     # FATIGUE (P4): the sleepless clock, the THIRST twin. Grant 0.5/
     # unmet hour, decay 0.05 -> equilibrium 10, dies at 7.5 -- the
@@ -1100,6 +1211,36 @@ def _create_goods(session: Session) -> None:
                     "bed -- and let the register fade.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
+        carry_exempt=True,  # a register, not cargo (S5a)
+    )
+    # COMFORT + SQUALOR (run 54 P2): comfort, not status. COMFORT is a
+    # stock like any -- banked by fire seats, beds and feasts, drawn a
+    # tenth an hour by the need, fading 5% a tick on its own (ease
+    # fades faster than misery). SQUALOR is its deficit's memory and
+    # the one condition with NO kill line: it throttles LABOR x0.85
+    # (held_modifiers: while ANY rides, the daylight ration tops at
+    # 0.85 and whole-hour work refuses) and never touches the death
+    # register. The cure is the easiest work there is: sit down.
+    goods.create_good(
+        session, "COMFORT", name="Comfort",
+        description="Ease banked in the body: an hour by a fed fire "
+                    "(+0.5), a night in a bed (+1 an hour), a feast "
+                    "(+5, an evening's whole dividend). Drawn a tenth an "
+                    "hour by the COMFORT need, and fading fast on its "
+                    "own -- ease is the first thing a hard week spends.",
+        decay_per_tick=Decimal("0.05"),
+    )
+    goods.create_good(
+        session, "SQUALOR", name="Squalor",
+        description="The memory of unearned ease. It never kills -- it "
+                    "makes everything harder instead: while any rides, "
+                    "the daylight ration shrinks (x0.85) and a whole "
+                    "hour's work refuses its first labor. The cure is the "
+                    "easiest work there is: take a seat by a fed fire, or "
+                    "sleep in a bed, and let it fade.",
+        decay_per_tick=SQUALOR_DECAY,
+        modifies_pattern="LABOR",
+        modifies_factor=Decimal("0.85"),
     )
     # REST (P4): the night's stock, SATIETY's shape. Cap 8 (a day and
     # a third of waking -- the buffer a good night rebuilds), drained
@@ -1114,6 +1255,7 @@ def _create_goods(session: Session) -> None:
         "under shelter, in a bed; standing idle restores nothing. A "
         "body holds at most a day and a third of it.",
         max_holding=REST_CAP,
+        carry_exempt=True,  # of the body, not cargo (S5a)
     )
     # Wolves (run 20): creatures, not pressure. A wolf is an ENTITY --
     # stats, health, needs, a hunting program -- and combat happens
@@ -1126,11 +1268,20 @@ def _create_goods(session: Session) -> None:
         description="Health of the body: every creature spawns with a "
                     "stock, combat drains it, and zero is death -- the "
                     "same estate rule as any other. It does not grow back.",
+        carry_exempt=True,  # of the body, not cargo (S5a)
     )
     goods.create_good(
         session, "PELT", name="Pelt",
         description="Seized from a killed beast — wolf or boar; the post "
                     "pays for trophies. A boar's is twice a wolf's.",
+        decay_per_tick=Decimal("0.05"),
+    )
+    goods.create_good(
+        session, "IBEX_PELT", name="Ibex Pelt",
+        description="The ridge quarry's hide — richer than a wolf's, and "
+                    "heavy: the coat is the carry question's first real "
+                    "load. The winter coat's whole material; the far book "
+                    "at the lick trades them.",
         decay_per_tick=Decimal("0.05"),
     )
 
@@ -1276,6 +1427,44 @@ def _create_recipes(session: Session) -> None:
                     "jerky-dense, never sickening). Wolves hold it; "
                     "nothing grants it to anyone else.")
 
+    # The crafts ladder (run 54 P1): research is a recipe whose output
+    # is an unlock -- five ENTITY-scope ranks, so specialization is a
+    # choice that lives in one body: you cannot buy my knapping, only my
+    # arrows. Tech is in hands, not on shelves -- unlocks never transfer
+    # (not tradeable, not inheritable; only a STUDY grants, and the
+    # study is honest inputs at an honest place). The ladder gates the
+    # CRAFT AISLE only: subsistence (fire, torches, the bag, gathering,
+    # fishing, the hunts once you hold the tools, eating, sleep) never
+    # grows a research prerequisite -- the run-52 doctrine's third rail.
+    tech.create_technology(
+        session, "KNAPPING", name="Knapping",
+        description="The first craft: striking flint to an edge. Learnt at "
+                    "the scrape in an afternoon of honest stone (STUDY at "
+                    "the FLINT scrape, 2 flint) -- and then the spear and "
+                    "the axe are yours to make.")
+    tech.create_technology(
+        session, "FIRE_HARDENING", prerequisites=["KNAPPING"],
+        name="Fire Hardening",
+        description="The second edge: slow fire tempers wood true. Wants "
+                    "KNAPPING first (the hand that cannot knapp cannot "
+                    "temper) -- and then the bow and the trap are yours.")
+    tech.create_technology(
+        session, "TANNING", name="Tanning",
+        description="The hide trade: scraping, smoking, greasing a pelt "
+                    "into leather. Learnt at a fire over yarn and hide -- "
+                    "and then clothes and waterskins are yours to sew.")
+    tech.create_technology(
+        session, "POTTERY", prerequisites=["FIRE_HARDENING"],
+        name="Pottery",
+        description="The river's art: clay coaxed to hold water and food. "
+                    "Wants FIRE_HARDENING first (a kiln is a fire you "
+                    "understand) -- and then the cooking pot is yours.")
+    tech.create_technology(
+        session, "SALT_CURING", name="Salt Curing",
+        description="The keeper's trade: salt drawn through meat until it "
+                    "keeps forever. Learnt over the post's own shelf -- and "
+                    "then your own salt shed (P4) is yours to raise.")
+
     # --- Subsistence: gather and hunt --------------------------------------
     # One gather = one loot-table roll of ONE resource (you find what you
     # find). The thicket carries the larder's shelf (P5) and the night's
@@ -1352,6 +1541,17 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")},
         outputs={"FLINT": D("2")}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="FLINT",
+    )
+    # The potter's errand (run 54 P1): the same certain-hours bargain as
+    # the scrape, one place over -- the river gives clay to anyone who
+    # digs, but the potter's rank is studied, not held.
+    production.create_recipe(
+        session, "DIG_CLAY", name="Dig Clay",
+        description="An hour at the bank: two certain clay, no gamble. "
+                    "Daylight only, at the river.",
+        inputs={"LABOR": D("1")},
+        outputs={"CLAY": D("2")}, duration_ticks=1,
+        requires_daylight=True, requires_place_kind="RIVER",
     )
     # Hunting: slow (2 ticks), risky bare-handed (55% total loss), better
     # with a SPEAR held (never consumed) and best with TRAPs (consumed --
@@ -1495,10 +1695,14 @@ def _create_recipes(session: Session) -> None:
         session, "WARM_BY_FIRE", name="Warm by the Fire",
         description="Take a seat at a lit fire: an hour's seated warmth, +6 "
                     "(a body holds at most six -- two cold hours' grace once "
-                    "you stand up). No labor, night-legal, at the hearth; a "
+                    "you stand up) and ease besides (+0.5 comfort -- a fire "
+                    "hour is a nice hour). No labor, night-legal, at the "
+                    "hearth; a "
                     "fire seats four at once, warming hour by hour. This is "
                     "how nights are survived: not banked, SAT.",
-        inputs={}, outputs={"WARMTH": WARM_BY_FIRE_WARMTH}, duration_ticks=1,
+        inputs={},
+        outputs={"WARMTH": WARM_BY_FIRE_WARMTH, "COMFORT": D("0.5")},
+        duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
         requires_place_kind="HEARTH",
     )
@@ -1579,6 +1783,7 @@ def _create_recipes(session: Session) -> None:
                     "is the post's own back room (no house can bind it).",
         inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
         duration_ticks=4, requires_facility="SALT_SHED",
+        requires=["SALT_CURING"],
     )
     # THE BACKDOOR IS OFF (run 52): run 49's wholesale channel --
     # WHOLESALE_BUY coin-for-stock and WHOLESALE_DUMP stock-for-coin,
@@ -1660,6 +1865,32 @@ def _create_recipes(session: Session) -> None:
         outputs={"SATIETY": D("3.6"), "WATER": D("0.2")},
         duration_ticks=0,
     )
+    # The feast (run 54 P2): surplus into ease, at the fire everybody
+    # smells. Four strips of the never-rotting surplus and a log on the
+    # commons, two honest hours of turning and sharing -- and the whole
+    # evening's dividend lands as comfort, five whole points of it (no
+    # satiety: the feast is eaten on a fed body, or it is just dinner).
+    # Comfort is why you'd want to be safe rather than merely not-dead
+    # -- the one want whose bite is physical (SQUALOR throttles LABOR,
+    # never kills), and the feast is its one bulk buy. A squalid house
+    # cannot feast its way out: the labor throttle refuses the start,
+    # and the cure is the free seat by the fire it has been skipping.
+    production.create_recipe(
+        session, "FEAST", name="Feast",
+        description="A fine evening at the commons fire: four strips of "
+                    "jerky, a log on the flames, two hours of turning and "
+                    "sharing -- and five whole points of comfort banked "
+                    "(no food value: the feast is eaten on a fed body, or "
+                    "it is just dinner). Surplus into ease, the natural "
+                    "conversion -- the one thing worth being SAFE for. "
+                    "Wants the fire lit and an afternoon: labor draws by "
+                    "the hour, and dusk refuses the second one.",
+        inputs={"JERKY": D("4"), "WOOD": D("1")},
+        per_tick_inputs={"LABOR": D("1")},
+        outputs={"COMFORT": FEAST_COMFORT}, duration_ticks=2,
+        requires_facility="FIRE", requires_facility_lit=True,
+        requires_place_kind="HEARTH",
+    )
     # The fragment meal (run 46, lever 3): the deadlock -- Lagertha
     # starved holding a basket of 0.8 berries + 0.7 apples + 0.6 meat,
     # every kind under its own meal's threshold, because meals are
@@ -1680,7 +1911,7 @@ def _create_recipes(session: Session) -> None:
                     "makes raw meat safe).",
         inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "MEAT": D("0.5")},
         outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
-        duration_ticks=0,
+        duration_ticks=0, requires=["POTTERY"],
     )
     # The rancher's pot (run 47, Lagertha's lever): the same fragment
     # meal with an EGG where the meat leg is short. Four hens lay
@@ -1697,7 +1928,7 @@ def _create_recipes(session: Session) -> None:
                     "does.",
         inputs={"BERRIES": D("0.5"), "APPLES": D("0.5"), "EGGS": D("0.5")},
         outputs={"SATIETY": D("2.4"), "WATER": D("0.4")},
-        duration_ticks=0,
+        duration_ticks=0, requires=["POTTERY"],
     )
     # Eating raw: free (no LABOR -- desperation does not wait), instant
     # (duration 0: SATIETY lands before this tick's consumption pass), and
@@ -1792,33 +2023,41 @@ def _create_recipes(session: Session) -> None:
         session, "SLEEP_BY_FIRE", name="Sleep By Fire",
         description="A watch sleep at a lit commons fire: an hour of rest "
                     "(+1) wrapped by the flames' warmth (+3 -- the fire "
-                    "does double duty, covering the night's draw exactly). "
+                    "does double duty, covering the night's draw exactly) "
+                    "and ease (+0.5 -- sleep at a fire is a fire hour). "
                     "Free and labor-free; the fire wants feeding, and the "
                     "sleeping hold no torch -- a wolf that finds a sleeper "
                     "finds prey.",
-        inputs={}, outputs={"REST": D("1"), "WARMTH": D("3")},
+        inputs={},
+        outputs={"REST": D("1"), "WARMTH": D("3"), "COMFORT": D("0.5")},
         duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
     )
     production.create_recipe(
         session, "SLEEP_IN_BED", name="Sleep In Bed",
         description="The comfort top rung: a bed under a roof. An hour of "
-                    "deep rest (+1.5 -- recovery half again as fast) and "
-                    "tight warmth (+3, the night fully covered). The bed is "
+                    "deep rest (+1.5 -- recovery half again as fast), tight "
+                    "warmth (+3, the night fully covered) and ease (+1 -- "
+                    "the bed's second dividend, the finest hour there "
+                    "is). The bed is "
                     "held, never consumed: capital that pays every night "
                     "forever, craftable or bought at the post.",
         inputs={},
-        outputs={"REST": D("1.5"), "WARMTH": D("3")}, duration_ticks=1,
+        outputs={"REST": D("1.5"), "WARMTH": D("3"), "COMFORT": D("1")},
+        duration_ticks=1,
         requires_facility="SHELTER", good_requirements={"BED": D("1")},
     )
     production.create_recipe(
         session, "SLEEP_DEN", name="Sleep In Den",
         description="The beast's watch: curled in the dark, an hour of rest "
-                    "and animal warmth. Born, not learned (the CARNIVORE's "
+                    "and animal warmth, and the dumb comfort of a den "
+                    "(+0.5 -- a beast sleeps as well as a fire-sitter). "
+                    "Born, not learned (the CARNIVORE's "
                     "den) -- wolves dens in the forest, boars in the "
                     "thicket, and a prowling beast pays the night's price "
                     "like anyone else.",
-        inputs={}, outputs={"REST": D("1"), "WARMTH": D("2")},
+        inputs={},
+        outputs={"REST": D("1"), "WARMTH": D("2"), "COMFORT": D("0.5")},
         duration_ticks=1, requires=["CARNIVORE"],
     )
     production.create_recipe(
@@ -1828,6 +2067,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "YARN": D("3"),
                                           "FLINT": D("1")},
         outputs={"CLOTHES": D("1")}, duration_ticks=2,
+        requires=["TANNING"],
     )
     production.create_recipe(
         session, "HUDDLE", name="Huddle",
@@ -1870,6 +2110,156 @@ def _create_recipes(session: Session) -> None:
         scales_with={"CHICKEN": 4},
     )
 
+    # --- The far valley: two valleys, one ridge (run 54 P3) -------------
+    # Opposite scarcities, six hours apart. The far valley has salt
+    # and grass and no stone; the home valley has stone and wood and
+    # no salt. Nobody walks six hours for what they already own -- the
+    # ridge road exists because both valleys want what the other has.
+    # DIG_SALT is the scrape's bargain at the lick (salt enters the
+    # world as a product, not a shelf); HEN_ROLL is the vale's gamble
+    # (the chicken opener's far source); the ibex are the ridge's
+    # trade -- the pelt that becomes the fine coat, worn like clothes
+    # at twice the wrap. Nothing here gates any survival recipe: the
+    # far valley is a trip, never a toll.
+    production.create_recipe(
+        session, "DIG_SALT", name="Dig Salt",
+        description="An hour at the lick: two certain salt, no gamble. "
+                    "Daylight only, at the salt lick -- the only salt "
+                    "source in the world (the post's shelf sells it; "
+                    "the lick gives it).",
+        inputs={"LABOR": D("1")},
+        outputs={"SALT": D("2")}, duration_ticks=1,
+        requires_daylight=True, requires_place_kind="SALT",
+    )
+    production.create_recipe(
+        session, "HEN_ROLL", name="Roll for a Hen",
+        description="An hour stalking the vale's tufts: three times in "
+                    "ten a hen joins you. Walk her home and pen her -- "
+                    "capital that lays. Daylight only, in the vale.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        requires_daylight=True, requires_place_kind="PASTURE",
+        branches=[
+            {"weight": D("70"), "outputs": {}, "label": "nothing"},
+            {"weight": D("30"), "outputs": {"CHICKEN": D("1")},
+             "label": "a hen joins you"},
+        ],
+    )
+    production.create_recipe(
+        session, "HUNT_IBEX", name="Hunt Ibex",
+        description="The ridge's own quarry, taken with a held spear "
+                    "(never consumed): a rich pelt and the meat that "
+                    "rides it. Daylight only, on the ridge.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        good_requirements={"SPEAR": D("1")},
+        requires_daylight=True, requires_place_kind="RIDGE",
+        branches=[
+            {"weight": D("30"), "outputs": {}, "label": "nothing"},
+            {"weight": D("50"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "label": "small"},
+            {"weight": D("20"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "label": "big"},
+        ],
+    )
+    production.create_recipe(
+        session, "HUNT_IBEX_BOW", name="Hunt Ibex with a Bow",
+        description="The high shot: the bow's steadier table on the "
+                    "ridge's quarry. Held bow, never consumed. Daylight "
+                    "only, on the ridge.",
+        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+        good_requirements={"BOW": D("1")},
+        requires_daylight=True, requires_place_kind="RIDGE",
+        branches=[
+            {"weight": D("20"), "outputs": {}, "label": "nothing"},
+            {"weight": D("55"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "label": "small"},
+            {"weight": D("25"),
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "label": "big"},
+        ],
+    )
+    production.create_recipe(
+        session, "MAKE_FINE_CLOTHES", name="Make the Fine Coat",
+        description="The tanner's masterwork: one ibex pelt and two "
+                    "yarn, worn like clothes -- and twice the wrap "
+                    "(a FULL warmth an hour, shelter-tight against the "
+                    "day). Requires the TANNING rank; made at the "
+                    "hearth.",
+        inputs={"LABOR": D("1"), "IBEX_PELT": D("1"), "YARN": D("2")},
+        outputs={"FINE_CLOTHES": D("1")}, duration_ticks=2,
+        requires=["TANNING"], requires_place_kind="HEARTH",
+    )
+    production.create_recipe(
+        session, "HUDDLE_FINE", name="Huddle in the Fine Coat",
+        description="Wrapped in the ibex's winter: a full warmth an "
+                    "hour without a fire -- twice clothes' leak, "
+                    "shelter-tight.",
+        inputs={},
+        outputs={"WARMTH": D("1")}, duration_ticks=1,
+        good_requirements={"FINE_CLOTHES": D("1")},
+    )
+
+    # --- The crafts ladder: study is honest work (run 54 P1) ---------
+    # Research is a recipe whose output is an unlock: 2 ticks at an
+    # honest place, the table's inputs consumed at start, one LABOR per
+    # tick while it runs (the ration feeds the study; night labor fades
+    # and so does night study -- no daylight gate needed, the ration IS
+    # the gate). Unlocks never transfer: only a STUDY grants, and every
+    # craft below it is refused with the rank named. Idempotent: a
+    # second study runs, eats, and grants nothing -- knowledge kept is
+    # not knowledge re-earned.
+    production.create_recipe(
+        session, "STUDY_KNAPPING", name="Study Knapping",
+        description="An afternoon at the scrape striking flint to an edge: "
+                    "the first craft. Two stones and two hours, and the "
+                    "spear and axe are yours to make.",
+        inputs={"FLINT": D("2")}, outputs={}, duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="FLINT", unlocks=["KNAPPING"],
+    )
+    production.create_recipe(
+        session, "STUDY_FIRE", name="Study Fire Hardening",
+        description="An evening at the fire watching wood temper true: the "
+                    "second edge. Wants a log, a flint, and knapping in "
+                    "your hands already -- then the bow and trap are yours.",
+        inputs={"WOOD": D("1"), "FLINT": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["FIRE_HARDENING"],
+    )
+    production.create_recipe(
+        session, "STUDY_TANNING", name="Study Tanning",
+        description="A smoky afternoon at the fire scraping and greasing "
+                    "hide into leather: the hide trade. Cord and a pelt, "
+                    "and clothes and waterskins are yours to sew.",
+        inputs={"YARN": D("2"), "PELT": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["TANNING"],
+    )
+    production.create_recipe(
+        session, "STUDY_POTTERY", name="Study Pottery",
+        description="An afternoon at the bank coaxing clay to hold water: "
+                    "the river's art. Clay and a log, fire-hardening in "
+                    "your hands already -- then the pot is yours.",
+        inputs={"CLAY": D("2"), "WOOD": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="RIVER", unlocks=["POTTERY"],
+    )
+    production.create_recipe(
+        session, "STUDY_SALT", name="Study Salt Curing",
+        description="A day at the counter watching salt draw through meat "
+                    "until it keeps: the keeper's trade, learnt over the "
+                    "post's own shelf. Then a shed of your own is yours "
+                    "to raise (P4).",
+        inputs={"SALT": D("2")}, outputs={}, duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="POST", unlocks=["SALT_CURING"],
+    )
+
     # --- Tools ---------------------------------------------------------------
     # SPEAR (held, never worn) and BAG (held) upgrade hunt and gather;
     # AXE (held) makes the wood certain and fights at +2 when the spear
@@ -1883,7 +2273,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"SPEAR": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["KNAPPING"],
     )
     production.create_recipe(
         session, "MAKE_AXE", name="Make Axe",
@@ -1892,7 +2282,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("1"), "YARN": D("1")},
         outputs={"AXE": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["KNAPPING"],
     )
     production.create_recipe(
         session, "MAKE_BAG", name="Make Bag",
@@ -1912,6 +2302,7 @@ def _create_recipes(session: Session) -> None:
                     "held, never consumed, filled at the bank.",
         inputs={"LABOR": D("1"), "PELT": D("1")},
         outputs={"WATERSKIN": D("1")}, duration_ticks=2,
+        requires=["TANNING"],
     )
     production.create_recipe(
         session, "MAKE_TRAP", name="Make Trap",
@@ -1919,6 +2310,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "WOOD": D("2"),
                                        "YARN": D("1")},
         outputs={"TRAP": D("1")}, duration_ticks=1,
+        requires=["FIRE_HARDENING"],
     )
     production.create_recipe(
         session, "MAKE_BED", name="Make Bed",
@@ -1934,7 +2326,7 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "FLINT": D("1"),
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"BOW": D("1")}, duration_ticks=3,
-        requires_daylight=True,
+        requires_daylight=True, requires=["FIRE_HARDENING"],
     )
 
 
@@ -2011,6 +2403,23 @@ def _create_needs(session: Session) -> None:
         entity_type=EntityType.INDIVIDUAL, priority=3,
         condition_symbol="FATIGUE", condition_quantity=FATIGUE_GRANT,
     )
+    # COMFORT (run 54 P2): the one want whose bite is physical. 0.1 an
+    # hour from the COMFORT stock; unmet, SQUALOR accrues toward its
+    # 2.0 equilibrium and the labor ration shrinks x0.85 -- never a
+    # death, always a harder day. Priority last: nobody ever died of
+    # an unloved hour, and the need register reads in kill order.
+    needs.create_need(
+        session, "COMFORT", COMFORT_PER_TICK, ["COMFORT"],
+        name="Comfort",
+        description="The ease clock: a tenth an hour drawn from banked "
+                    "comfort -- fire seats (+0.5 an hour), beds (+1 an "
+                    "hour), feasts (+5 an evening). Miss it and squalor "
+                    "accrues: never fatal, but while it rides the "
+                    "daylight ration shrinks and whole-hour work refuses. "
+                    "The cure is to sit down.",
+        entity_type=EntityType.INDIVIDUAL, priority=4,
+        condition_symbol="SQUALOR", condition_quantity=SQUALOR_GRANT,
+    )
 
 
 def _create_markets(session: Session) -> None:
@@ -2026,15 +2435,23 @@ def _create_markets(session: Session) -> None:
         "YARN": "Yarn", "FLINT": "Flint", "SPEAR": "Spear", "AXE": "Stone Axe",
         "BAG": "Bag", "BOW": "Bow", "CHICKEN": "Hen",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
-        "PELT": "Pelt", "WATERSKIN": "Waterskin",
+        "PELT": "Pelt", "WATERSKIN": "Waterskin", "SALT": "Salt",
     }
     for symbol in ("LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
                    "EGGS", "WOOD",
                    "YARN", "FLINT", "SPEAR", "AXE", "BAG", "BOW", "CHICKEN",
                    "TRAP", "CLOTHES", "BED",
-                   "PELT", "WATERSKIN"):
+                   "PELT", "WATERSKIN", "SALT"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")
+    # The far book (P3): IBEX_PELT trades at the salt lick, and only
+    # there -- book-only, no NPC maker, no anchor prices, no genesis
+    # quotes. The home post keeps every other market (and starts
+    # bidding salt now that the lick can be dug); the far book is
+    # pure price discovery between houses -- the lick's prices are
+    # what the trip was worth.
+    markets.create_market(session, "IBEX_PELT", COIN,
+                          name="Ibex Pelt", place="SALT_LICK")
 
 
 # ---------------------------------------------------------------------------
@@ -2043,14 +2460,15 @@ def _create_markets(session: Session) -> None:
 
 def make_house(session: Session, name: str = "House") -> Entity:
     """One symmetric stone-age seat: coins, a day of berries, a night of
-    warmth, a body (20 HITS, ATTACK 1 / DEFENSE 1 -- the spear is
-    carried, not born), and a bare CAMP parcel -- no fire, no shelter,
-    no tools, no unlocks. Everything beyond the body is the player's
-    to build."""
+    warmth, a day and a night of ease, a body (20 HITS, ATTACK 1 /
+    DEFENSE 1 -- the spear is carried, not born), and a bare CAMP
+    parcel -- no fire, no shelter, no tools, no unlocks. Everything
+    beyond the body is the player's to build."""
     house = services.create_entity(session, name, EntityType.INDIVIDUAL)
     services.create_account(session, house, COIN, initial_balance=SEAT_COIN)
     markets.adjust_holding(session, house, "BERRIES", BERRY_BUFFER)
     markets.adjust_holding(session, house, "WARMTH", WARMTH_BUFFER)
+    markets.adjust_holding(session, house, "COMFORT", COMFORT_SEAT_BUFFER)
     markets.adjust_holding(session, house, "WATER", WATER_SEAT_BUFFER)
     markets.adjust_holding(session, house, "REST", REST_SEAT_BUFFER)
     markets.adjust_holding(session, house, "HITS", HOUSE_HITS)

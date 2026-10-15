@@ -57,6 +57,8 @@ local food   = berries + apples + cooked + jerky
 local water  = std.holding_qty("WATER") + std.holding_qty("SKINWATER")
 local skin   = std.holding_qty("WATERSKIN")
 local spear  = std.holding_qty("SPEAR")    -- the hunt's key (held, never spent)
+local comfort = std.holding_qty("COMFORT")  -- ease banked (run 54 P2)
+local squalor = std.holding_qty("SQUALOR")  -- the unloved hours' memory
 local flint  = std.holding_qty("FLINT")
 local yarn   = std.holding_qty("YARN")
 local protein = meat + cooked + jerky      -- the meat-family shelf (raw MEAT
@@ -80,9 +82,11 @@ if satiety < 1.5 then
     ctx.action.start_process("EAT_COOKED")
   elseif jerky >= 1 then
     ctx.action.start_process("EAT_JERKY")
-  elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5 then
+  elseif berries >= 0.5 and apples >= 0.5 and meat >= 0.5
+       and std.has_unlock("POTTERY") then
     ctx.action.start_process("FORAGE_POT")
-  elseif berries >= 0.5 and apples >= 0.5 and eggs >= 0.5 then
+  elseif berries >= 0.5 and apples >= 0.5 and eggs >= 0.5
+       and std.has_unlock("POTTERY") then
     -- the rancher's pot: an egg takes the meat leg's place (run 47:
     -- a flock could not out-climb the stomach eaten whole, but half
     -- an egg boils as thick as a hunted meal)
@@ -153,7 +157,13 @@ end
 --     refills the stock a sleeping body only holds). A wolf that
 --     finds a sleeper finds prey: sleeping holds no torch and little
 --     warmth -- the price of the watch is vigilance's absence.
-if (std.is_night() or warmth < 4) and #fires > 0
+-- P2: EASE is a want with a bite now -- an unloved hour accrues
+-- squalor, and squalor shrinks the daylight ration until whole-hour
+-- work refuses. The cure is the same seat: fire hours pay comfort
+-- (+0.5, sleep +0.5, a bed +1), so the floor sits for ease exactly
+-- as it sits for warmth -- an hour of the afternoon when the ease
+-- runs dry. The seat is free; the hour is not.
+if (std.is_night() or warmth < 4 or comfort < 0.1) and #fires > 0
    and (place == home or can_walk) then
   if place ~= home then
     ctx.action.travel(home)
@@ -193,15 +203,43 @@ if place == home and meat >= 2 and cooked < 6 then
   ctx.action.start_process("COOK_MEAT")
 end
 
+-- 2a. The first craft (run 54 P1): knapping is studied, not born.
+--     The floor's spear rung now runs through the scrape: bank the
+--     materials (yarn and a woodpile that spares four), walk the two
+--     hours, dig if the pocket is short, and spend an afternoon
+--     striking edges. Until the rank is held the haft is refused --
+--     so the floor climbs before it crafts. Early in the day only:
+--     the scrape errand plus the study plus the walk home is a whole
+--     working day.
+local knapping = std.has_unlock("KNAPPING")
+if not knapping and spear < 1 and yarn >= 1 and wood >= 4
+   and can_walk and std.hour() < 11 then
+  if place == "FLINT" then
+    if flint >= 3 then
+      ctx.action.start_process("STUDY_KNAPPING")
+    else
+      ctx.action.start_process("DIG_FLINT")
+    end
+  else
+    ctx.action.travel("FLINT")
+  end
+end
+
 -- 2b. The spear rung (run 47's lever: meat must exist, and the floor
---     must make it). An afternoon's hafting when the woodpile can
---     spare the two logs -- the floor's one piece of capital; the
---     rest of the hunt ladder (bag, axe, bow, traps) stays the
---     player's invention. At home, by day, early enough that three
---     honest hours still end in light.
-if spear < 1 and flint >= 1 and wood >= 4 and yarn >= 1
-   and place == home and not std.is_night() and std.hour() < 15 then
-  ctx.action.start_process("MAKE_SPEAR")
+--     must make it; run 54 P1: the haft wants the KNAPPING rank,
+--     studied at the scrape above). An afternoon's hafting when the
+--     woodpile can spare the two logs -- the floor's one piece of
+--     capital; the rest of the hunt ladder (bag, axe, bow, traps,
+--     and every other rank) stays the player's invention. Early
+--     enough that three honest hours still end in light; the walk
+--     home from the scrape is part of the errand.
+if spear < 1 and knapping and flint >= 1 and wood >= 4 and yarn >= 1
+   and not std.is_night() and std.hour() < 15 then
+  if place ~= home then
+    ctx.action.travel(home)
+  else
+    ctx.action.start_process("MAKE_SPEAR")
+  end
 end
 
 -- 3. Everything else is gathering at the thicket: food first, then wood
@@ -241,6 +279,18 @@ if not std.is_night() then
     else
       ctx.action.start_process("HUNT_SPEAR")
     end
+  -- 2c. The feast (run 54 P2): comfort is the one want worth being
+  --     SAFE for, and the feast is its one bulk buy. When ease has run
+  --     dry (an unloved hour accrues squalor, and squalor shrinks the
+  --     ration) and the surplus shelf is FAT (eight strips is two days
+  --     of dense food -- a bank, not a meal), spend an afternoon at
+  --     the fire: four strips and a log into five points of ease. A
+  --     squalid body cannot start it -- the throttle refuses the
+  --     labor; the seat is the cure, the feast is the reward.
+  elseif comfort < 0.1 and squalor == 0 and jerky > 8 and #fires > 0
+     and place == home and std.hour() < 15
+     and not std.running_recipe("FEAST") then
+    ctx.action.start_process("FEAST")
   elseif (food < 8 or wood < 6) and not dusk_closing
      and not std.running_recipe("GATHER") then
     if place ~= woods then

@@ -59,6 +59,8 @@ def create_need(
     condition_symbol: str | None = None,
     condition_quantity: Decimal = Decimal("0"),
     night_quantity_per_tick: Decimal | None = None,
+    season_quantity_per_tick: dict | None = None,
+    season_night_quantity_per_tick: dict | None = None,
 ) -> Need:
     existing = get_need(session, code)
     if existing is not None:
@@ -81,6 +83,29 @@ def create_need(
         if night_quantity_per_tick <= 0:
             raise ValueError("night_quantity_per_tick must be positive when set")
 
+    def season_map(raw: dict | None, arg: str) -> dict[str, str] | None:
+        """Normalize a {SEASON: qty} draw-override map: seasons in the
+        engine calendar, quantities positive, stored as exact-decimal
+        strings in calendar order (JSON dicts are order-stable here)."""
+        if raw is None:
+            return None
+        cleaned = {str(s).upper(): Decimal(q).quantize(_QUANTUM) for s, q in raw.items()}
+        unknown = set(cleaned) - set(clock.SEASONS)
+        if unknown:
+            raise ValueError(
+                f"unknown seasons {sorted(unknown)} in {arg}; the year is "
+                f"{'/'.join(clock.SEASONS)}")
+        bad = {s: q for s, q in cleaned.items() if q <= 0}
+        if bad:
+            raise ValueError(f"{arg} quantities must be positive: {bad}")
+        return {
+            s: str(cleaned[s]) for s in clock.SEASONS if s in cleaned
+        } or None
+
+    season_quantity_per_tick = season_map(season_quantity_per_tick, "season_quantity_per_tick")
+    season_night_quantity_per_tick = season_map(
+        season_night_quantity_per_tick, "season_night_quantity_per_tick")
+
     need = Need(
         code=code.upper(),
         name=name,
@@ -88,6 +113,8 @@ def create_need(
         entity_type=entity_type,
         quantity_per_tick=quantity_per_tick,
         night_quantity_per_tick=night_quantity_per_tick,
+        season_quantity_per_tick=season_quantity_per_tick,
+        season_night_quantity_per_tick=season_night_quantity_per_tick,
         priority=priority,
         condition_symbol=condition_symbol.upper() if condition_symbol else None,
         condition_quantity=condition_quantity,
@@ -104,7 +131,31 @@ def get_need(session: Session, code: str) -> Need | None:
     ).scalar_one_or_none()
 
 
-def run_consumption(session: Session, tick_number: int) -> list[dict]:
+def required_quantity(
+    need: Need, tick_number: int, days_per_season: int | None = None
+) -> Decimal:
+    """The draw THIS tick: the most specific applicable rate wins --
+    season-night beats season beats global-night beats base (run 54 E1:
+    a winter night is its own intensity; a winter day overrides nothing
+    about the night, and a seasonless world draws its plain rates
+    forever)."""
+    days = days_per_season or clock.SEASON_DAYS
+    season = clock.season_of(tick_number, days)
+    if clock.is_night(tick_number):
+        season_night = need.season_night_quantity_per_tick or {}
+        if season in season_night:
+            return Decimal(season_night[season])
+        if need.night_quantity_per_tick is not None:
+            return need.night_quantity_per_tick
+    season_day = need.season_quantity_per_tick or {}
+    if season in season_day:
+        return Decimal(season_day[season])
+    return need.quantity_per_tick
+
+
+def run_consumption(
+    session: Session, tick_number: int, days_per_season: int | None = None
+) -> list[dict]:
     """Draw down satisfying holdings for every active need and rewrite each
     matching entity's satisfaction score; on an unmet tick, credit the
     need's declared condition scaled by the shortfall. Returns one
@@ -120,9 +171,9 @@ def run_consumption(session: Session, tick_number: int) -> list[dict]:
             query = query.where(Entity.entity_type == need.entity_type)
         # The clock (run 18): a need with a night draw pulls the heavier
         # rate during dark hours — the same cold, a colder intensity.
-        required = need.quantity_per_tick
-        if need.night_quantity_per_tick is not None and clock.is_night(tick_number):
-            required = need.night_quantity_per_tick
+        # Seasons (run 54 E1) resolve through the same specificity
+        # ladder — one definition of "what this tick draws".
+        required = required_quantity(need, tick_number, days_per_season)
         for entity in session.execute(query).scalars():
             consumed = Decimal("0")
             for satisfier in need.satisfiers:  # relationship is symbol-ordered

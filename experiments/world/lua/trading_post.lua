@@ -72,6 +72,10 @@ local GENESIS_BASIS = {
   YARN      = 1.50,
   FLINT     = 1.50,
   PELT      = 3.00,
+  SALT      = 1.50,   -- run 54 P3: the lick is open and salt can be
+                       -- DUG six hours out -- the counter bids on what
+                       -- someone can dig, still priced like flint (a
+                       -- certain dig at a longer walk)
 }
 local STOCK = {          -- the larder's shape: bids stop at the max
   JERKY = {min = 6, max = 12},   -- (a larder, not a landfill); the min
@@ -84,11 +88,13 @@ local STOCK = {          -- the larder's shape: bids stop at the max
   MEAT = {min = 0, max = 20},
   YARN = {min = 0, max = 12},
   FLINT = {min = 0, max = 12},
+  SALT = {min = 0, max = 12},   -- the salt road's home leg: dig at
+                                -- the lick, carry it back, sell here
   PELT = {min = 0, max = 8},
 }
 local RETAIL = { "JERKY", "BERRIES", "APPLES", "EGGS", "CHICKEN",
-                 "WATERSKIN" }
-local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
+                 "WATERSKIN", "SALT" }
+local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "SALT", "BERRIES",
                  "APPLES", "EGGS", "PELT" }
 -- Genesis one-offs with no larder future (they rot, or they are
 -- gone when gone): haggled directly, like the old book.

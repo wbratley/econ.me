@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from econengine import describe, edges, places, production, services, travel
+from econengine import combat, describe, edges, goods, places, production, services, travel
 from econengine import markets as markets_mod
 from econengine.lua_engine import Intent, LuaEngine
 from econengine.models import (
@@ -557,3 +557,120 @@ def test_failed_hop_draw_rolls_back_whole(session):
     # FOOD draw rolled back -- the traveller keeps what the dead hop drew
     food = markets_mod.get_holding(session, entity.id, "FOOD")
     assert food is not None and food.quantity == Decimal("1")
+
+
+# --- S5a: goods have weight, the road has a limit ----------------------------
+#
+# Deviation from spatial.md's mid-journey manifest snapshot (argued in the
+# run-54 spec): the gate reads the load ONCE at departure, and the arrival
+# pass sheds what a mid-journey grant pushed over the next road's limit.
+# No snapshot table, no in-flight state -- a walker eating their own
+# rations on the road is lunch, not an exploit.
+
+
+def test_the_departure_gate_names_the_load(session):
+    _map(session)
+    _walk_recipe(session, carry_capacity=Decimal("20"))
+    entity = _entity(session)                 # at HEARTH
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("25"))
+
+    out = _travel(session, entity, "THICKET")
+    assert out["status"] == "rejected"
+    assert "you carry 25 of 20" in out["reason"]
+
+
+def test_a_recipe_limit_of_zero_is_a_typo_not_a_world(session):
+    with pytest.raises(ValueError, match="carry_capacity must be positive"):
+        _walk_recipe(session, carry_capacity=Decimal("0"))
+
+
+def test_body_goods_do_not_weigh(session):
+    """The pack declares which goods are of the body (engine stays
+    opinion-free): exempt holdings never count against the road."""
+    _map(session)
+    _walk_recipe(session, carry_capacity=Decimal("20"))
+    goods.create_good(session, "REST", carry_exempt=True)
+    entity = _entity(session)
+    markets_mod.adjust_holding(session, entity, "REST", Decimal("30"))
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("20"))
+
+    # 30 rest rides free; 20 wood fills the road exactly
+    assert _travel(session, entity, "THICKET")["status"] == "applied"
+
+
+def test_capacity_defaults_to_the_carry_stat(session):
+    """A template without a number reads the traveller's CARRY stat —
+    the same stat combat already uses to seize estates."""
+    _map(session)
+    _walk_recipe(session)                     # carry_capacity None
+    entity = _entity(session)
+    combat.create_stat(session, entity.id, "CARRY", Decimal("20"))
+
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("25"))
+    assert _travel(session, entity, "THICKET")["status"] == "rejected"
+
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("-5"))
+    assert _travel(session, entity, "THICKET")["status"] == "applied"
+
+
+def test_legacy_worlds_stay_ungated(session):
+    """No template number, no CARRY stat: the world predates weight and
+    the road refuses nothing on its account."""
+    _map(session)
+    _walk_recipe(session)
+    entity = _entity(session)
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("999"))
+    assert _travel(session, entity, "THICKET")["status"] == "applied"
+
+
+def test_midjourney_loot_spills_at_the_waypoint(session):
+    """The arrival edge of the gate: combat loot or a child's gift can
+    push the load past the NEXT road's limit. The excess drops where
+    the walker stands — visible, never a dupable credit — and what
+    fits walks on."""
+    _map(session)
+    _walk_recipe(session, carry_capacity=Decimal("20"))
+    entity = _entity(session)                 # HEARTH -> THICKET -> RIVER
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("10"))
+    assert _travel(session, entity, "RIVER", modes="WALK")["status"] == "applied"
+
+    run_tick(session)                          # hop 1 runs
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("20"))
+    # load 30 at the THICKET waypoint: the next walk leg carries 20
+    events = []
+    for _ in range(6):
+        events.extend(run_tick(session).events)
+    spill = next(e for e in events if e["type"] == "travel_spill")
+    assert spill["place"] == "THICKET"
+    assert spill["spilled"] == {"WOOD": "10"}
+    assert spill["capacity"] == "20"
+    arrived = next(e for e in events if e.get("type") == "travel_arrived"
+                   and e["place"] == "RIVER")
+    assert arrived["remaining_hops"] == 0
+    # the walker arrived carrying exactly the road's limit
+    wood = markets_mod.get_holding(session, entity.id, "WOOD")
+    assert wood is not None and wood.quantity == Decimal("20")
+
+
+def test_nothing_spills_at_a_final_arrival(session):
+    """Standing loaded is legal — only the road is gated. Loot gained on
+    the last leg is kept (and the walker simply cannot depart again
+    until the shelf thins)."""
+    _map(session)
+    _walk_recipe(session, carry_capacity=Decimal("20"))
+    entity = _entity(session)
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("10"))
+    assert _travel(session, entity, "THICKET")["status"] == "applied"
+
+    run_tick(session)
+    markets_mod.adjust_holding(session, entity, "WOOD", Decimal("20"))
+    tick = run_tick(session)                   # arrival at THICKET, final hop
+    assert tick.events and not [
+        e for e in tick.events if e["type"] == "travel_spill"]
+    wood = markets_mod.get_holding(session, entity.id, "WOOD")
+    assert wood is not None and wood.quantity == Decimal("30")
+
+    # the shelf is ungated, the next road is not
+    out = _travel(session, entity, "RIVER", modes="WALK")
+    assert out["status"] == "rejected"
+    assert "you carry 30 of 20" in out["reason"]

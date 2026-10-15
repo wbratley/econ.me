@@ -32,7 +32,8 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
     "need_unmet", "order_cancelled", "process_completed",
     "process_failed", "script_error", "script_reverted", "trade",
     "market_reclaim",
-    "travel_arrived", "travel_departed", "travel_stranded", "unlocked",
+    "travel_arrived", "travel_departed", "travel_halted",
+    "travel_spill", "travel_stranded", "unlocked",
 )
 
 #: Intent types resolved by ``scripting.resolve_intent`` that no
@@ -265,6 +266,26 @@ def _travel_arrived(e, names):
 def _travel_stranded(e, names):
     where = e.get("place") or "an unplaced spot"
     return f"stranded at {where} — {e.get('reason', '?')}"
+
+
+@_renders("travel_halted")
+def _travel_halted(e, names):
+    where = e.get("place") or "an unplaced spot"
+    return f"held at {where} — {e.get('reason', 'the dark road wants a flame')}"
+
+
+@_renders("travel_spill")
+def _travel_spill(e, names):
+    where = e.get("place") or "an unplaced spot"
+    spilled = e.get("spilled") or {}
+    if spilled:
+        what = ", ".join(f"{_num(q)} {_g({'symbol': s}, 'symbol', names)}"
+                          for s, q in spilled.items())
+        cap = e.get("capacity")
+        limit = f" of a {cap} limit" if cap is not None else ""
+        return (f"spilled {what} at {where}{limit} — "
+                f"the next road carries only what fits")
+    return f"spilled cargo at {where} — the next road carries only what fits"
 
 
 def render_event(event: dict, names: dict[str, str] | None = None) -> str:

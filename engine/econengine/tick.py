@@ -109,6 +109,29 @@ def set_compute_budget_ms(session: Session, budget_ms: int | None) -> WorldSetti
     return setting
 
 
+# The season calendar's votable knob (run 54 E1): days per season,
+# WorldSetting clock.season_days. Missing/None = the engine default
+# (clock.SEASON_DAYS). Same shape as the compute budget -- the tick
+# loop reads it once per tick and threads it through every clock
+# surface (script ctx, need draws, recipe gates).
+def set_season_days(session: Session, days: int | None) -> WorldSetting | None:
+    if days is not None and int(days) < 1:
+        raise ValueError("clock.season_days must be >= 1 when set")
+    setting = session.get(WorldSetting, clock.SEASON_DAYS_KEY)
+    if days is None:
+        if setting is not None:
+            session.delete(setting)
+            session.flush()
+        return None
+    if setting is None:
+        setting = WorldSetting(key=clock.SEASON_DAYS_KEY, value=int(days))
+        session.add(setting)
+    else:
+        setting.value = int(days)
+    session.flush()
+    return setting
+
+
 def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     lua_engine = lua_engine or LuaEngine()
     started_at = datetime.now(timezone.utc)
@@ -266,7 +289,8 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     # it or not, drawn down in the same pass window, before needs so the
     # night's warmth draws and the fire's burn settle in one cadence.
     events.extend(parcels.burn_facility_fuel(session, tick_number=number))
-    events.extend(needs.run_consumption(session, tick_number=number))
+    events.extend(needs.run_consumption(
+        session, tick_number=number, days_per_season=clock.season_days_of(session)))
     # Threats pressurize after needs and before decay: this tick's says
     # are already in the event list, and the decay pass fades the fresh
     # pressure in the same tick it lands (net drift = pressure − decay).
@@ -341,7 +365,7 @@ def _tick_scripts(session: Session, script_type: ScriptType):
 def _build_script_ctx(session: Session, entity: Entity, script: Script, entity_events: list, tick_number: int) -> dict:
     return {
         "tick": tick_number,
-        "clock": clock.clock_facts(tick_number),
+        "clock": clock.clock_facts(tick_number, clock.season_days_of(session)),
         "entity": {
             "id": entity.id,
             "name": entity.name,
