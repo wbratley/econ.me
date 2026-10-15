@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey, UniqueConstraint, Enum as SAEnum
+from sqlalchemy import Boolean, Integer, String, Numeric, DateTime, ForeignKey, UniqueConstraint, JSON, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 from .entity import EntityType
@@ -34,6 +34,18 @@ class Need(Base):
     # warmth-hours where a mild day draws 1). NULL = the draw never varies.
     night_quantity_per_tick: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
+    )
+    # Season calendar (run 54 E1): per-season draw overrides, stored as
+    # {SEASON: "1.0000"} string maps for exact decimals. Resolution:
+    # season-night beats season beats global night beats base -- the
+    # most specific applicable draw wins (a winter night is its own
+    # intensity; a plain winter day overrides nothing about the night).
+    # NULL = the draw never varies by season.
+    season_quantity_per_tick: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
+    season_night_quantity_per_tick: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
     )
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0

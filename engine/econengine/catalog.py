@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from econengine.conditions import is_condition
+from econengine import clock
 from econengine.models import (
     Good, Market, Need, Place, Recipe, SpatialEdge, Technology, Threat,
 )
@@ -142,6 +143,9 @@ def recipe_effects(recipe: Recipe) -> list[str]:
         lines.append(f"must run at a {recipe.requires_facility} facility")
     if recipe.requires_daylight:
         lines.append("needs daylight (refused at night, hours 20..05)")
+    if recipe.requires_season:
+        lines.append(f"runs only in {'/'.join(recipe.requires_season)} "
+                     f"(closed in {'/'.join(s for s in clock.SEASONS if s not in recipe.requires_season)})")
     if recipe.requires_place_key is not None:
         # the exact spot, by pack key — the name join lives in the places
         # surface (world.places() / ctx.places); the key is the handle

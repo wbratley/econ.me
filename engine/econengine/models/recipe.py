@@ -31,6 +31,12 @@ class Recipe(Base):
     requires_daylight: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Season calendar (run 54 E1): the seasons (clock.SEASONS names) this
+    # recipe runs in; NULL/None = every season, all of history. Checked
+    # at start like requires_daylight, refused with a reason that names
+    # the season -- "the river is ice". Data, not policy: a pack closes
+    # its thicket for the winter; the engine only owns the calendar.
+    requires_season: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Spatial presence gates (docs/spatial.md S2): the entity's current
     # place must match — kind is the coarse gate ("any HEARTH"), key pins
     # the exact spot. Stored as the place KEY (data, resolved at gate

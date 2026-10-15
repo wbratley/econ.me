@@ -122,7 +122,7 @@ def tool_entity_state(session: Session, user: User, args: dict[str, Any]) -> dic
     ).order_by(Script.created_at.desc()).first()
 
     return {
-        "clock": clock.clock_facts(latest + 1),
+        "clock": clock.clock_facts(latest + 1, clock.season_days_of(session)),
         "entity": {
             "id": entity.id,
             "name": entity.name,
