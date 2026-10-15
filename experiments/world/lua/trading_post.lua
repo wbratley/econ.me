@@ -72,6 +72,10 @@ local GENESIS_BASIS = {
   YARN      = 1.50,
   FLINT     = 1.50,
   PELT      = 3.00,
+  SALT      = 1.50,   -- run 54 P1: priced like flint (a certain dig
+                       -- at a walk) until P3's lick opens the source;
+                       -- retail-only until then -- the counter does not
+                       -- bid on what nobody can dig
 }
 local STOCK = {          -- the larder's shape: bids stop at the max
   JERKY = {min = 6, max = 12},   -- (a larder, not a landfill); the min
@@ -87,7 +91,7 @@ local STOCK = {          -- the larder's shape: bids stop at the max
   PELT = {min = 0, max = 8},
 }
 local RETAIL = { "JERKY", "BERRIES", "APPLES", "EGGS", "CHICKEN",
-                 "WATERSKIN" }
+                 "WATERSKIN", "SALT" }
 local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "BERRIES",
                  "APPLES", "EGGS", "PELT" }
 -- Genesis one-offs with no larder future (they rot, or they are

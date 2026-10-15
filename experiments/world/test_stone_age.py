@@ -184,7 +184,7 @@ def test_content_and_coin_markets(session):
         "LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
         "EGGS", "CHICKEN", "WOOD", "YARN",
         "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
-        "BED", "PELT", "WATERSKIN"}
+        "BED", "PELT", "WATERSKIN", "SALT"}
     assert all(m.currency == COIN for m in rows)
 
 
@@ -307,7 +307,12 @@ def test_axe_chops_certain_wood_and_fights_at_two(session):
         session.commit()
     with pytest.raises(Exception, match="AXE"):
         production.start_process(session, w, "CHOP_WOOD")
-    # the craft: flint + wood + yarn + an afternoon
+    # the craft: flint + wood + yarn + an afternoon (the KNAPPING rung
+    # granted outright -- the ladder's own tests climb it honestly)
+    from econengine import tech
+    tech.grant_unlock(
+        session, w, tech.get_technology(session, "KNAPPING"),
+        production.next_tick_number(session))
     for sym in ("FLINT", "WOOD", "YARN"):
         markets.adjust_holding(session, w, sym, Decimal("1"))
     assert _act_day(session, w, "MAKE_AXE")
@@ -409,6 +414,7 @@ def test_forage_pot_feeds_the_fragment_basket(session):
     create_content(session)
     _no_wolves(session)
     w = _biz(session, "Basketcase")   # no needs: SATIETY lands and stays
+    _grant_chain(session, w, "KNAPPING", "FIRE_HARDENING", "POTTERY")
     for sym, qty in (("BERRIES", "0.8"), ("APPLES", "0.7"), ("MEAT", "0.6")):
         markets.adjust_holding(session, w, sym, Decimal(qty))
     # no single-kind meal is affordable: the basket fits no recipe...
@@ -438,6 +444,7 @@ def test_the_starter_boils_the_fragment_basket(session):
     create_content(session)
     _no_wolves(session)
     seat = _seat(session, "Fragment")
+    _grant_chain(session, seat, "KNAPPING", "FIRE_HARDENING", "POTTERY")
     session.add(Script(
         name=f"starter-behaviour-{seat.id}",
         script_type=ScriptType.BEHAVIOUR,
@@ -496,7 +503,11 @@ def test_the_starter_hafts_the_spear_rung(session):
     _no_wolves(session)
     _to_tick(session, 8)                 # hour 7: three honest hours fit
     seat = _starter_seat(session, "Haft")
-    _set(session, seat, "FLINT", 1)
+    from econengine import tech
+    tech.grant_unlock(
+        session, seat, tech.get_technology(session, "KNAPPING"),
+        production.next_tick_number(session))  # the rank: its climb has
+    _set(session, seat, "FLINT", 1)      # its own tests (the crafts ladder)
     _set(session, seat, "WOOD", 6)      # two for the spear, the fire keeps its
     _set(session, seat, "YARN", 1)
     _set(session, seat, "WARMTH", 7)
@@ -593,6 +604,7 @@ def test_the_rancher_basket_boils_the_egg_pot(session):
     create_content(session)
     _no_wolves(session)
     seat = _starter_seat(session, "Rancher")
+    _grant_chain(session, seat, "KNAPPING", "FIRE_HARDENING", "POTTERY")
     markets.adjust_holding(session, seat, "BERRIES",
                            Decimal("0.8") - BERRY_BUFFER)
     markets.adjust_holding(session, seat, "APPLES", Decimal("0.7"))
@@ -618,6 +630,7 @@ def test_the_pot_takes_the_meat_leg_first(session):
     create_content(session)
     _no_wolves(session)
     seat = _starter_seat(session, "Both")
+    _grant_chain(session, seat, "KNAPPING", "FIRE_HARDENING", "POTTERY")
     markets.adjust_holding(session, seat, "BERRIES",
                            Decimal("0.8") - BERRY_BUFFER)
     markets.adjust_holding(session, seat, "APPLES", Decimal("0.7"))
@@ -1319,6 +1332,12 @@ def test_the_salt_shed_binds_the_post_alone(session):
     _no_wolves(session)
     house = _seat(session, "Neighbor")
     _at(session, house, "POST")
+    # the rank is granted so the FACILITY refusal is this test's
+    # subject (the crafts-ladder tests cover the rank gate)
+    from econengine import tech
+    tech.grant_unlock(
+        session, house, tech.get_technology(session, "SALT_CURING"),
+        production.next_tick_number(session))
     markets.adjust_holding(session, house, "MEAT", Decimal("4"))
     with pytest.raises(ValueError, match="SALT_SHED"):
         production.start_process(session, house, "SALT_MEAT")
@@ -1345,7 +1364,7 @@ def test_the_genesis_basis_prices_the_opening_book(session):
     expected = {"JERKY": "0.90", "BERRIES": "0.50", "APPLES": "0.70",
                 "EGGS": "0.70", "CHICKEN": "3.00", "WATERSKIN": "4.50",
                 "WOOD": "1.00", "MEAT": "1.00", "YARN": "1.50",
-                "FLINT": "1.50", "PELT": "3.00"}
+                "FLINT": "1.50", "PELT": "3.00", "SALT": "1.50"}
     assert lua == expected
     _run(session, 1)
     post = _post(session)
@@ -2339,6 +2358,12 @@ def test_the_skin_is_a_dead_wolf_and_carries_a_day(session):
     _no_wolves(session)
     house = _seat(session, "Skinner")
     _at(session, house, "HEARTH")
+    # the TANNING rung granted outright: this test's subject is the
+    # skin itself, not the ladder up to it
+    from econengine import tech
+    tech.grant_unlock(
+        session, house, tech.get_technology(session, "TANNING"),
+        production.next_tick_number(session))
     markets.adjust_holding(session, house, "PELT", Decimal("1"))
     assert _act(session, house, "MAKE_WATERSKIN")
     _run(session, 3)                        # 2 ticks + the completion tick
@@ -2866,3 +2891,237 @@ def test_the_counter_answers_a_house_that_speaks(session):
             if e.get("entity_id") == post.id
             and "heard at the counter" in str(
                 (e.get("params") or {}).get("text"))]
+
+
+# ===========================================================================
+# THE CRAFTS LADDER (run 54 P1)
+# ===========================================================================
+# Research is a recipe whose output is an unlock: five ENTITY-scope
+# ranks, studied at honest places for honest inputs. The ladder gates
+# the CRAFT AISLE only -- subsistence never grows a research
+# prerequisite (run 52's doctrine, third rail), and the day-one pin is
+# the balance contract: a bare house reaches a craftable spear by the
+# end of day 1.
+
+def _has(session, entity_id, code):
+    from econengine import tech
+    return tech.has_unlock(
+        session, entity_id, tech.get_technology(session, code))
+
+
+def _grant_chain(session, entity, *codes):
+    """Grant ranks in ladder order (grant_unlock enforces the DAG:
+    FIRE_HARDENING wants KNAPPING under it). For tests whose subject
+    is the craft, not the climb -- the ladder has its own tests."""
+    from econengine import tech
+    tick = production.next_tick_number(session)
+    for code in codes:
+        tech.grant_unlock(
+            session, entity, tech.get_technology(session, code), tick)
+
+
+def test_the_craft_aisle_is_refused_without_the_rank(session):
+    """KNAPPING gates MAKE_SPEAR/MAKE_AXE; FIRE_HARDENING gates
+    MAKE_BOW/MAKE_TRAP; TANNING gates MAKE_CLOTHES/MAKE_WATERSKIN --
+    and the refusal NAMES the rank, so a seat reading its events learns
+    the ladder from the no itself."""
+    from econengine import production as prod
+    create_content(session)
+    house = _seat(session, "Bare Hands")
+    # dawn first: the daylight gate raises before the rank gate
+    from econengine import clock
+    while clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    # the materials are on hand: the refusal is the rank's, not inputs'
+    for sym, qty in (("FLINT", 2), ("WOOD", 4), ("YARN", 3), ("PELT", 1),
+                     ("BERRIES", 1), ("APPLES", 1), ("MEAT", 1), ("EGGS", 1)):
+        markets.adjust_holding(session, house, sym, Decimal(str(qty)))
+    _at(session, house, "HEARTH")
+    for code, rank in (("MAKE_SPEAR", "KNAPPING"), ("MAKE_AXE", "KNAPPING"),
+                       ("MAKE_BOW", "FIRE_HARDENING"),
+                       ("MAKE_TRAP", "FIRE_HARDENING"),
+                       ("MAKE_CLOTHES", "TANNING"),
+                       ("MAKE_WATERSKIN", "TANNING")):
+        with pytest.raises(ValueError, match=f"requires {rank}"):
+            prod.start_process(session, house, code)
+    # and the pot aisle is the potter's alone
+    for code in ("FORAGE_POT", "FORAGE_POT_EGGS"):
+        with pytest.raises(ValueError, match="requires POTTERY"):
+            prod.start_process(session, house, code)
+
+
+def test_study_grants_the_rank_and_re_study_is_idempotent(session):
+    """STUDY_KNAPPING at the scrape: 2 flint and 2 hours, and the
+    unlock event lands. A second study runs, eats its flint, and
+    grants nothing -- knowledge kept is not knowledge re-earned."""
+    create_content(session)
+    house = _seat(session, "Student")
+    markets.adjust_holding(session, house, "FLINT", Decimal("4"))
+    _at(session, house, "FLINT")
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 3)  # the 2-tick study + the completion tick
+    assert _has(session, house.id, "KNAPPING")
+    unlocks = [e for e in _events(session, "unlocked")
+               if e["entity_id"] == house.id]
+    assert [u["technology"] for u in unlocks] == ["KNAPPING"]
+    assert unlocks[0]["scope"] == "entity"
+    # the craft it gated now starts (materials aside, the rank is held)
+    markets.adjust_holding(session, house, "WOOD", Decimal("2"))
+    markets.adjust_holding(session, house, "YARN", Decimal("1"))
+    _at(session, house, "HEARTH")
+    assert _act_day(session, house, "MAKE_SPEAR")
+    # re-study: idempotent -- no second grant, no second event (the
+    # haft ate one of the four; two more buy the re-run, one survives)
+    markets.adjust_holding(session, house, "FLINT", Decimal("2"))
+    _at(session, house, "FLINT")
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 3)
+    assert _hold(session, house.id, "FLINT") == Decimal("1")  # it still ate
+    assert [e for e in _events(session, "unlocked")
+            if e["entity_id"] == house.id
+            and e["technology"] == "KNAPPING"]  # still exactly one
+    assert len([e for e in _events(session, "unlocked")
+                if e["entity_id"] == house.id]) == 1
+
+
+def test_the_ladder_has_a_prerequisite_chain(session):
+    """FIRE_HARDENING wants KNAPPING first, POTTERY wants
+    FIRE_HARDENING: the DAG binds research exactly as it binds admin
+    grants -- the engine enforces it at STUDY start, naming the rung."""
+    from econengine import production as prod
+    create_content(session)
+    house = _seat(session, "Climber")
+    markets.adjust_holding(session, house, "FLINT", Decimal("4"))
+    markets.adjust_holding(session, house, "WOOD", Decimal("2"))
+    markets.adjust_holding(session, house, "CLAY", Decimal("2"))
+    markets.adjust_holding(session, house, "YARN", Decimal("2"))
+    markets.adjust_holding(session, house, "PELT", Decimal("1"))
+    _at(session, house, "HEARTH")
+    with pytest.raises(ValueError,
+                       match="technology FIRE_HARDENING requires KNAPPING"):
+        prod.start_process(session, house, "STUDY_FIRE")
+    _at(session, house, "RIVER")
+    with pytest.raises(ValueError,
+                       match="technology POTTERY requires FIRE_HARDENING"):
+        prod.start_process(session, house, "STUDY_POTTERY")
+    # climb the rungs: knapping, then fire (accepted), then pottery
+    _at(session, house, "FLINT")
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 3)
+    _at(session, house, "HEARTH")
+    assert _act_day(session, house, "STUDY_FIRE")
+    _run(session, 3)
+    assert _has(session, house.id, "FIRE_HARDENING")
+    _at(session, house, "RIVER")
+    assert _act_day(session, house, "STUDY_POTTERY")
+    _run(session, 3)
+    assert _has(session, house.id, "POTTERY")
+    # and the pot aisle opens to the house that climbed
+    markets.adjust_holding(session, house, "BERRIES", Decimal("1"))
+    markets.adjust_holding(session, house, "APPLES", Decimal("1"))
+    markets.adjust_holding(session, house, "MEAT", Decimal("1"))
+    assert _act(session, house, "FORAGE_POT")
+
+
+def test_survival_never_grows_a_research_prerequisite(session):
+    """The ungated set, pinned: fire, torch, bag, gather, fish, hunt,
+    drink, eat -- a bare house with bare materials starts every one,
+    no rank asked. If a gate lands here the pack has broken the
+    run-52 doctrine (solo survival must not cost research)."""
+    from econengine import production as prod
+    create_content(session)
+    house = _seat(session, "Scavenger")
+    for sym, qty in (("WOOD", 4), ("YARN", 3)):
+        markets.adjust_holding(session, house, sym, Decimal(str(qty)))
+    markets.adjust_holding(session, house, "BERRIES", Decimal("6"))
+    for place, code in (("HEARTH", "MAKE_FIRE"), ("HEARTH", "MAKE_TORCH"),
+                        ("THICKET", "GATHER"), ("RIVER", "FISH"),
+                        ("RIVER", "DRINK"), ("FOREST", "HUNT"),
+                        ("HEARTH", "MAKE_BAG")):
+        _at(session, house, place)
+        assert _act_day(session, house, code), f"{code} refused"
+    _at(session, house, "HEARTH")
+    assert _act(session, house, "EAT_BERRIES")
+
+
+def test_the_day_one_ladder_reaches_the_spear(session):
+    """The P1 balance pin, from the spec: a bare house -- a day and a
+    half of buffer food, nothing else -- walks to the scrape (2h),
+    digs flint (1h), studies knapping (2h): the spear is CRAFTABLE by
+    the end of day 1 (tick 24). The rank must never be a treadmill."""
+    from econengine import travel as travel_mod
+    create_content(session)
+    house = _seat(session, "Learner")
+    # dawn of day 1 (ticks 1-6 are the night; the road wants daylight)
+    while production.next_tick_number(session) < 7:
+        run_tick(session); session.commit()
+    # the walk: HEARTH -> FLINT, two hours by the valley road
+    travel_mod.start_route(session, house, "FLINT")
+    for _ in range(3):   # the road's two ticks + the arrival credit
+        run_tick(session); session.commit()
+    from econengine.models import Place
+    at = session.execute(
+        select(Place.key).where(Place.id == house.location_place_id)
+    ).scalar_one()
+    assert at == "FLINT"
+    # dig (1h) -> 2 flint; study (2h) -> KNAPPING in hand
+    assert _act_day(session, house, "DIG_FLINT")
+    _run(session, 2)
+    assert _hold(session, house.id, "FLINT") == Decimal("2")
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 3)
+    assert _has(session, house.id, "KNAPPING")
+    # still inside day 1, and the spear starts the moment the whetstone
+    # work has materials (wood and yarn gathered on any walk)
+    tick = production.next_tick_number(session)
+    assert tick <= 24, f"the ladder took until tick {tick}"
+    # the spear's own head plus the haft's wood and yarn (gathered on
+    # any walk): the rank was the ladder's business, materials are not
+    markets.adjust_holding(session, house, "FLINT", Decimal("1"))
+    markets.adjust_holding(session, house, "WOOD", Decimal("2"))
+    markets.adjust_holding(session, house, "YARN", Decimal("1"))
+    _at(session, house, "HEARTH")
+    assert _act_day(session, house, "MAKE_SPEAR")
+
+
+def test_clay_is_dug_at_the_river_for_anyone(session):
+    """DIG_CLAY: the scrape's bargain one place over -- an hour of
+    daylight labor at the bank, two certain clay, no gamble."""
+    create_content(session)
+    house = _seat(session, "Digger")
+    _at(session, house, "RIVER")
+    assert _act_day(session, house, "DIG_CLAY")
+    _run(session, 2)
+    assert _hold(session, house.id, "CLAY") == Decimal("2")
+
+
+def test_the_post_was_born_to_the_salt_trade(session):
+    """The counter holds SALT_CURING outright (his shed salts as it
+    always did, bit-identical), the shelf stocks the world's salt, and
+    the rank is retail-only for houses: salt sells at the flint anchor,
+    and the counter does NOT bid on what nobody can dig (P3 opens the
+    lick)."""
+    from econengine import production as prod
+    from econengine import tech
+    create_content(session)
+    post = _post(session)
+    assert "SALT_CURING" in tech.entity_unlocks(session, post.id)
+    # his back room runs as before
+    markets.adjust_holding(session, post, "MEAT", Decimal("2"))
+    assert prod.start_process(session, post, "SALT_MEAT")
+    # the shelf: 8 salt on genesis, a market at the post
+    assert _hold(session, post.id, "SALT") == Decimal("8")
+    assert session.execute(
+        select(Market).where(Market.symbol == "SALT")).scalar_one()
+    # a house is refused the shed's craft for want of the rank (the
+    # facility is the post's own, but the rank binds first where held)
+    house = _seat(session, "Saltless")
+    _at(session, house, "POST")
+    with pytest.raises(ValueError, match="requires SALT_CURING"):
+        prod.start_process(session, house, "SALT_MEAT")
+    # the book: retail 1.95 (basis 1.50 x 1.30), and no bid ever
+    _run(session, 1)
+    asks = _open_orders(session, post.id, "SALT", OrderSide.SELL)
+    bids = _open_orders(session, post.id, "SALT", OrderSide.BUY)
+    assert [o.limit_price for o in asks] == [Decimal("1.95")]
+    assert bids == []
