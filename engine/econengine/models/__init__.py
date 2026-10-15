@@ -7,6 +7,7 @@ from .script import Script, ScriptType
 from .tick import Tick
 from .observer import EventObserver
 from .market import Market
+from .market_escrow import MarketEscrow
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
@@ -42,6 +43,7 @@ __all__ = [
     "Tick",
     "EventObserver",
     "Market",
+    "MarketEscrow",
     "Holding",
     "Order",
     "OrderSide",

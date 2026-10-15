@@ -167,6 +167,8 @@ to your own entity). Prefer the `std.*` wrappers for the common ones.
 | `market_price` | `(symbol)` | last print, string or nil |
 | `best_bid` | `(symbol)` | best OPEN buy, string or nil |
 | `best_ask` | `(symbol)` | best OPEN sell, string or nil |
+| `market_shelf` | `(symbol)` | placed market's delivered depth: `{shelf, claimed, free}` (strings) or nil |
+| `shelf` | `(symbol)` | YOUR goods standing on that market's shelf, string or nil |
 | `holding` | `(entity_id, symbol)` | string or nil |
 | `unreserved` | `(entity_id, symbol)` | held minus process reservations, string or nil |
 | `has_unlock` | `(entity_id, code)` | boolean |

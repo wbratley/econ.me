@@ -246,7 +246,10 @@ end
 
 -- 4. What should stand now? The post's own books price it: retail =
 --    basis x MARGIN x adjust, capped; stock that isn't held isn't
---    quoted. Bids stand only under the larder's max.
+--    quoted. Since S5b the counter's pantry is split: goods still in
+--    the back room (holdings) plus goods already delivered to its own
+--    shelf (ctx.query.shelf) -- stock either way, and both rot.
+--    Bids stand only under the larder's max.
 local acct, coin = nil, 0
 for _, a in ipairs(ctx.accounts) do
   if a.currency == "COIN" then acct, coin = a.id, tonumber(a.balance) end
@@ -258,17 +261,24 @@ local function ask_of(sym)
   return r2(math.min(a, ASK_CAP))
 end
 
+-- Stock on the counter = pantry + own shelf (S5b): what sits in the
+-- back room plus what was already carried out front.
+local function stock(sym)
+  local s = ctx.query.shelf(sym)
+  return std.holding_qty(sym) + (s and tonumber(s) or 0)
+end
+
 local want = {}
 if not dark then
   for _, sym in ipairs(RETAIL) do
-    local qty = math.floor(std.holding_qty(sym))
+    local qty = math.floor(stock(sym))
     if qty > 0 then
       want["sell_" .. sym] = { qty = qty, price = ask_of(sym),
                                symbol = sym, side = "sell" }
     end
   end
   for sym in pairs(LEGACY_ASK) do
-    local qty = math.floor(std.holding_qty(sym))
+    local qty = math.floor(stock(sym))
     if qty > 0 then
       want["sell_" .. sym] = { qty = qty, price = r2(S.ask[sym]),
                                symbol = sym, side = "sell" }

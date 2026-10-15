@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 from econengine import markets, parcels, production, services
 from econengine.models import (
     Account, Base, Entity, EntityStatus, EntityType, Holding, Market,
-    Order, OrderSide, OrderStatus, Place, Script, ScriptType, Tick,
+    MarketEscrow, Order, OrderSide, OrderStatus, Place, Script, ScriptType,
+    Tick,
 )
 from econengine.tick import run_tick
 
@@ -53,11 +54,20 @@ def session():
 
 
 def _hold(session, entity_id, symbol):
+    """Total stock: pantry plus the entity's own delivered shelf (S5b).
+    The post's counter splits back room and front shelf; both are its
+    stock, and both rot where the good rots."""
+    from sqlalchemy import func as _func
     qty = session.execute(
         select(Holding.quantity)
         .where(Holding.entity_id == entity_id, Holding.symbol == symbol)
     ).scalar_one_or_none()
-    return qty if qty is not None else Decimal("0")
+    shelf = session.execute(
+        select(_func.coalesce(_func.sum(MarketEscrow.quantity), 0))
+        .where(MarketEscrow.seller_entity_id == entity_id,
+               MarketEscrow.symbol == symbol)
+    ).scalar_one()
+    return (qty if qty is not None else Decimal("0")) + Decimal(shelf)
 
 
 def _post(session):
@@ -1446,11 +1456,11 @@ def test_post_jerky_never_rots_and_feeds(session):
     larder)."""
     create_content(session)
     post = _post(session)
-    assert markets.get_holding(session, post.id, "JERKY").quantity \
+    assert _hold(session, post.id, "JERKY") \
         == Decimal("30")
     # BERRIES and COOKED_MEAT rot beside an untouched JERKY stack
     _run(session, 10)
-    assert markets.get_holding(session, post.id, "JERKY").quantity \
+    assert _hold(session, post.id, "JERKY") \
         == Decimal("30")
     assert markets.get_holding(session, post.id, "BERRIES").quantity \
         < POST_FOOD["BERRIES"]

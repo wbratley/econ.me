@@ -47,6 +47,13 @@ def test_unknown_event_type_renders_not_raises():
     assert render_event({"type": "a_future_shape", "x": 1}) == "a future shape"
 
 
+def test_market_reclaim_renders_the_walk_back():
+    e = {"type": "market_reclaim", "entity_id": "x", "market": "JERKY",
+         "symbol": "JERKY", "quantity": "4", "place": "The Salt Lick"}
+    assert render_event(e, {"JERKY": "Jerky"}) == \
+        "took 4 Jerky back off the Jerky shelf at The Salt Lick"
+
+
 def test_trade_renders_the_fill():
     e = {"type": "trade", "side": "sell", "market": "ORE", "quantity": "2",
          "price": "5", "cost": "10"}
