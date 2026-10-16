@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from econ.api.deps import get_current_user, get_session
 from econ.api.epochs import player_eliminated_in_running_epoch
-from econ.api.onboarding import get_join_config
+from econ.api.onboarding import apply_founder_seat, get_join_config
 from econ.api.schemas import JoinResult
 from econengine import services
 from econengine.models import EntityType, User
@@ -72,6 +72,10 @@ def join_world(
     account = services.create_account(
         session, entity, cfg["currency"], cfg["endowment"],
     )
+    # The seat (join.config): holdings, stats, parcel, place -- the same
+    # endowment a content pack's make-house gives a dynasty, in the same
+    # order (account first, then the seat, then the starter below).
+    apply_founder_seat(session, entity, cfg)
 
     behaviour = None
     starter = cfg["starter_behaviour"]

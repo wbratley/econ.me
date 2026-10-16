@@ -13,13 +13,13 @@ from decimal import Decimal
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
-from econengine.models import Base, User
+from econengine.models import Base, Entity, EntityStat, Holding, Parcel, Place, Tick, User
 
 
 @pytest.fixture
@@ -230,3 +230,152 @@ def test_join_config_requires_admin(client):
     r = client.put("/admin/join-config", json={"endowment": "999"},
                    headers=_auth("u-alice"))
     assert r.status_code == 403
+
+
+# ===========================================================================
+# the seat: join.config endows a body, not just an account
+# ===========================================================================
+
+@pytest.fixture
+def stone_client():
+    """The client fixture with the stone-age world installed: join.config
+    is the pack's (the make-house seat plus the starter), and the physics
+    (map, goods, wolves) is real -- so a joiner's survival is measured
+    against the world, not a stub."""
+    from experiments.world import stone_age
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    app.state._test_engine = engine
+
+    def override_get_session():
+        with Session(engine) as session:
+            yield session
+
+    def override_get_current_user(
+        credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+        session: Session = Depends(get_session),
+    ) -> User:
+        user = session.get(User, credentials.credentials)
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    with Session(engine) as session:
+        session.add_all([
+            User(id="u-admin", email="admin@x", name="Admin",
+                 provider="test", provider_id="1", is_admin=True),
+            User(id="u-alice", email="alice@x", name="Alice",
+                 provider="test", provider_id="2"),
+        ])
+        stone_age.create_content(session)
+        session.commit()
+
+    try:
+        yield TestClient(app), engine
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_join_config_seat_fields_round_trip(client):
+    """The seat fields merge like the rest of the config: PUT them, GET
+    them back, and an untouched PUT leaves them alone."""
+    r = _join_config(client,
+                    endowment="10", currency="COIN",
+                    holdings={"BERRIES": "8", "WATER": "4"},
+                    stats={"ATTACK": "1", "CARRY": "20"},
+                    parcel={"type": "LAND", "name": "Camp", "place": "HEARTH"},
+                    place="HEARTH")
+    assert r.status_code == 200, r.text
+    cfg = client.get("/admin/join-config", headers=_auth("u-admin")).json()
+    assert cfg["holdings"] == {"BERRIES": "8", "WATER": "4"}
+    assert cfg["stats"] == {"ATTACK": "1", "CARRY": "20"}
+    assert cfg["parcel"] == {"type": "LAND", "name": "Camp",
+                             "place": "HEARTH"}
+    assert cfg["place"] == "HEARTH"
+    # merge: setting the endowment does not clobber the seat
+    _join_config(client, endowment="12")
+    cfg = client.get("/admin/join-config", headers=_auth("u-admin")).json()
+    assert cfg["endowment"] == "12"
+    assert cfg["holdings"] == {"BERRIES": "8", "WATER": "4"}
+
+
+def test_join_seat_is_the_make_house_seat(stone_client):
+    """The pack's join.config IS the make-house seat: a joiner lands with
+    what a dynasty gets -- SEAT_COIN, the food buffers, the body's stats,
+    a CAMP parcel, the hearth, and the starter that keeps it alive. Same
+    constants, same order (account, holdings, stats, parcel, place,
+    behaviour)."""
+    client, engine = stone_client
+    r = _join(client)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    eid = body["entity"]["id"]
+    assert body["account"]["currency"] == "COIN"
+    assert Decimal(body["account"]["balance"]) == 10    # SEAT_COIN
+    assert body["behaviour"] is not None                # the starter
+    with Session(engine) as s:
+        holdings = {h.symbol: Decimal(h.quantity)
+                    for h in s.execute(
+                        select(Holding).where(Holding.entity_id == eid)
+                    ).scalars()}
+        assert holdings["BERRIES"] == 8     # BERRY_BUFFER
+        assert holdings["WARMTH"] == 6      # WARMTH_BUFFER
+        assert holdings["COMFORT"] == 2     # COMFORT_SEAT_BUFFER
+        assert holdings["WATER"] == 4       # WATER_SEAT_BUFFER
+        assert holdings["REST"] == 4        # REST_SEAT_BUFFER
+        assert holdings["HITS"] == 20       # HOUSE_HITS
+        stats = {st.stat: st.value
+                 for st in s.execute(
+                     select(EntityStat).where(EntityStat.entity_id == eid)
+                 ).scalars()}
+        assert stats["ATTACK"] == 1
+        assert stats["DEFENSE"] == 1
+        assert stats["HITS"] == 20
+        assert stats["CARRY"] == 20
+        parcel = s.execute(
+            select(Parcel).where(Parcel.owner_id == eid)
+        ).scalars().first()
+        assert parcel is not None
+        assert parcel.parcel_type == "LAND"
+        assert parcel.name == "Camp"
+        assert s.get(Place, parcel.place_id).key == "HEARTH"
+        house = s.get(Entity, eid)
+        assert s.get(Place, house.location_place_id).key == "HEARTH"
+
+
+def test_joiner_who_writes_nothing_survives(stone_client):
+    """The hens-test stalker died exactly this way: a scriptless entity
+    under the world's physics accrues HUNGER to its kill line (15) in
+    about 30 ticks. The join path must not ship that: a founder who never
+    writes a script survives a full day and a half with hunger under the
+    line, because the seat carries the starter that feeds it."""
+    client, engine = stone_client
+    eid = _join(client).json()["entity"]["id"]
+    for _ in range(30):
+        t = client.post("/admin/ticks", headers=_auth("u-admin"))
+        assert t.status_code == 201, t.text
+    with Session(engine) as s:
+        # the world actually ran
+        assert s.execute(
+            select(Tick).where(Tick.number == 30)
+        ).scalar_one_or_none() is not None
+        house = s.get(Entity, eid)
+        assert house.status.value == "active"
+        hunger = {h.symbol: Decimal(h.quantity)
+                  for h in s.execute(
+                      select(Holding).where(
+                          Holding.entity_id == eid,
+                          Holding.symbol == "HUNGER"))
+                  .scalars()}
+        # HUNGER accrues only on fully-unmet ticks; a founder the starter
+        # keeps fed never accrues it, and there is no row at all. A
+        # missing row is no hunger -- either way it must be under the line.
+        assert hunger.get("HUNGER", Decimal("0")) < 15

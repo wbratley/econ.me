@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator
 
@@ -530,16 +530,29 @@ class ComputeBudgetRead(BaseModel):
 
 class JoinConfigWrite(BaseModel):
     """Operator-set founder package: what a new player starts with. All
-    fields optional; absent fields are left unchanged (merge semantics)."""
+    fields optional; absent fields are left unchanged (merge semantics).
+
+    The seat fields (``holdings``, ``stats``, ``parcel``, ``place``) are
+    data too: ``POST /join`` lands each one through the engine's declared
+    passes (holdings / stats / parcels / places), exactly as a content
+    pack's make-house does -- nothing is mechanism."""
     endowment: Optional[Decimal] = None
     currency: Optional[str] = None
     starter_behaviour: Optional[str] = None
+    holdings: Optional[Dict[str, str]] = None
+    stats: Optional[Dict[str, str]] = None
+    parcel: Optional[Dict[str, str]] = None
+    place: Optional[str] = None
 
 
 class JoinConfigRead(BaseModel):
     endowment: Decimal
     currency: str
     starter_behaviour: Optional[str] = None
+    holdings: Optional[Dict[str, str]] = None
+    stats: Optional[Dict[str, str]] = None
+    parcel: Optional[Dict[str, str]] = None
+    place: Optional[str] = None
 
     @field_serializer("endowment")
     def _endowment(self, v: Decimal) -> str:
