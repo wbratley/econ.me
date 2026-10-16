@@ -795,6 +795,27 @@ def create_content(session: Session, verify: bool = True) -> None:
                              value={"enabled": True}))
     # The legible manual (below): tech tree, conditions, effects.
     session.add(WorldSetting(key=MANUAL_KEY, value={"text": MANUAL}))
+    # The join path is a seat, not a corpse: join.config carries exactly
+    # what make_house gives a dynasty -- same constants, same order -- as
+    # data. A player who joins and writes nothing lands a house that
+    # survives, not a stalker that starves at the kill line.
+    session.add(WorldSetting(key="join.config", value={
+        "currency": COIN,
+        "endowment": str(SEAT_COIN),
+        "holdings": {
+            "BERRIES": str(BERRY_BUFFER),
+            "WARMTH": str(WARMTH_BUFFER),
+            "COMFORT": str(COMFORT_SEAT_BUFFER),
+            "WATER": str(WATER_SEAT_BUFFER),
+            "REST": str(REST_SEAT_BUFFER),
+            "HITS": str(HOUSE_HITS),
+        },
+        "stats": {"ATTACK": "1", "DEFENSE": "1",
+                  "HITS": str(HOUSE_HITS), "CARRY": "20"},
+        "parcel": {"type": "LAND", "name": "Camp", "place": "HEARTH"},
+        "place": "HEARTH",
+        "starter_behaviour": _read_lua(STARTER),
+    }))
     # 15.4: everything above was installed by this pack -- say so on
     # every row, so the catalog attributes content and a later install
     # attempt on a claimed key is refused with the owner's name.

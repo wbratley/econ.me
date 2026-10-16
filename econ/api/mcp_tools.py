@@ -62,7 +62,7 @@ from econ.api.epochs import get_epoch_state, player_eliminated_in_running_epoch
 from econ.api.governance import governance_state
 from econ.api.leaderboard import leaderboard_state
 from econengine.catalog import catalog_state
-from econ.api.onboarding import get_join_config
+from econ.api.onboarding import apply_founder_seat, get_join_config
 from econ.api.rounds import (
     NotEligibleError, current_round_state, set_user_ready, unset_user_ready,
 )
@@ -559,6 +559,9 @@ def tool_join(session: Session, user: User, args: dict[str, Any]) -> dict:
     entity = services.create_entity(session, "Founder", EntityType.INDIVIDUAL)
     entity.owner_id = user.id
     account = services.create_account(session, entity, cfg["currency"], cfg["endowment"])
+    # The seat (join.config): holdings, stats, parcel, place -- same
+    # endowment, same order as the content pack's make-house.
+    apply_founder_seat(session, entity, cfg)
 
     starter = cfg["starter_behaviour"]
     behaviour = None
