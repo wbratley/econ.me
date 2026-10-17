@@ -183,7 +183,7 @@ from sqlalchemy.orm import Session
 
 from econengine import (
     combat, edges, goods, markets, needs, parcels, places, production,
-    scripting, services, spawns, statuses, tech, travel,
+    scripting, services, spawns, statuses, tech, threats, travel,
 )
 from experiments.world import manifest
 from econengine.models import (
@@ -636,6 +636,41 @@ your resting order there: your script runs every tick, so re-asserting
 the same quote is maintenance, not stacking -- ladder different prices
 if you want depth.
 
+== THE WHITE SEASON ==
+The year turns in six-day seasons: SPRING, SUMMER, AUTUMN, then WINTER
+-- the white season, days 19 through 24 of every 24-day year. Facts of
+the turn, nothing else:
+
+WHAT CLOSES. Gathering and fishing stop: GATHER, GATHER with a Bag, and
+FISH run only in the open seasons -- the thicket stands bare and the
+river lids over with ice (the refusal names the season and when the
+recipe runs). What KEEPS: chopping wood (the treeline still gives
+deadwood -- the fire must not die), drinking at the river (the ice
+hole), every hunt (the game moves down to the valley), fire, sleep,
+craft, and trade. Winter closes the pantry door, not the world.
+
+WHAT THE DRAWS BECOME. Warmth runs a tier up in winter: 2 an hour by
+day, 4 an hour by night (the open seasons stay 1 and 3). Shelter and
+clothes together leave the winter day half an hour short -- the
+evening fire's job, the same stance as always, priced higher. The fine
+coat closes the winter day exactly. A winter night wants roughly four
+seated fire-hours against warmth's cap of six: wood runs eight to ten
+a day, and the evening fire becomes the village's whole social life.
+
+WHAT KEEPS YOU. The preserved aisle is the winter larder: six winter
+days drink about 72 satiety, and fresh food rots -- bank preserved
+food across the autumn (hunt, smoke, salt). Jerky never rots. Eggs
+keep laying. A salt shed of your own (Build Salt Shed: six logs, four
+salt, the salter's rank) salts meat at your hearth instead of the
+post's back room. The post shelf stays the desperate house's lender
+of last resort -- famine-priced, but never empty by design.
+
+THE RIDGE STORMS. The ridge pass is the storm line: anyone caught on
+it in the dark hours takes the blizzard's cold (half an exposure an
+hour, and nothing deters weather -- the torch lights the road, it
+does not calm it). The salt road is a DAY road in winter, or not at
+all.
+
 == PRIVACY ==
 You see your own holdings, needs, and accounts. You CANNOT see any
 other entity's holdings or money: ctx.query.holding on another entity
@@ -856,6 +891,22 @@ def _create_map(session: Session) -> None:
     ):
         places.create_place(session, key, kind=kind, name=name,
                             region_id=region, description=description)
+    # The storm line (run 54 P4): the ridge is high ground, and the
+    # high ground storms. A BLIZZARD ambient finds anyone standing on
+    # the pass -- or mid-hop on a road that starts there -- during the
+    # dark hours, and hands them half an EXPOSURE an hour. Day trips
+    # never feel it; camping the pass after dark, or the salt road's
+    # night tail gone wrong, is the weather the map promised: the trip
+    # has weather now, not just length. Nothing deters weather -- the
+    # torch lights the road, it does not calm it.
+    threats.create_threat(
+        session, "BLIZZARD", "EXPOSURE", Decimal("0.5"),
+        place_key="RIDGE_PASS", name="Blizzard",
+        description="The ridge storms at night: half an exposure an hour "
+                    "for anyone caught on the pass in the dark. Weather "
+                    "has no predator and no deterrent -- only daylight "
+                    "and a roof do.",
+    )
     for a, b, cost in (
         ("HEARTH", "THICKET", 1),
         ("HEARTH", "RIVER", 1),
@@ -1229,6 +1280,9 @@ def _create_goods(session: Session) -> None:
                     "hour by the COMFORT need, and fading fast on its "
                     "own -- ease is the first thing a hard week spends.",
         decay_per_tick=Decimal("0.05"),
+        carry_exempt=True,  # of the body, not cargo (S5a -- a P2xE2
+                           # merge-order miss: comfort landed after the
+                           # exemption list was written)
     )
     goods.create_good(
         session, "SQUALOR", name="Squalor",
@@ -1493,9 +1547,11 @@ def _create_recipes(session: Session) -> None:
         session, "GATHER", name="Gather",
         description="One loot-table roll of a single resource: you find what "
                     "you find. Bare-handed subsistence. Daylight only, at "
-                    "the berry thicket.",
+                    "the berry thicket, in the open seasons -- the white "
+                    "season locks the thicket bare.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_daylight=True, requires_place_kind="THICKET",
+        requires_season=["SPRING", "SUMMER", "AUTUMN"],
         branches=[
             {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"APPLES": D("5")}, "label": "apples"},
@@ -1507,10 +1563,13 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "GATHER_BAG", name="Gather with a Bag",
         description="The doubled table -- and a small chance the ground itself "
-                    "has minted a coin. Daylight only, at the berry thicket.",
+                    "has minted a coin. Daylight only, at the berry thicket, "
+                    "in the open seasons -- the white season locks the "
+                    "thicket bare.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=1,
         good_requirements={"BAG": D("1")},
         requires_daylight=True, requires_place_kind="THICKET",
+        requires_season=["SPRING", "SUMMER", "AUTUMN"],
         branches=[
             {"weight": D("35"), "outputs": {"BERRIES": D("12")}, "label": "berries"},
             {"weight": D("27"), "outputs": {"APPLES": D("10")}, "label": "apples"},
@@ -1621,9 +1680,11 @@ def _create_recipes(session: Session) -> None:
         session, "FISH", name="Fish",
         description="Two hours' certain-ish meat from the bank: slower than "
                     "a bad hunt, far more certain, and nothing here hunts "
-                    "YOU. Daylight only, at the river.",
+                    "YOU. Daylight only, at the river, in the open seasons "
+                    "-- winter lids the river with ice.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         requires_daylight=True, requires_place_kind="RIVER",
+        requires_season=["SPRING", "SUMMER", "AUTUMN"],
         branches=[
             {"weight": D("30"), "outputs": {}, "label": "nothing"},
             {"weight": D("45"), "outputs": {"MEAT": D("2")}, "label": "small"},
@@ -1784,6 +1845,23 @@ def _create_recipes(session: Session) -> None:
         inputs={"MEAT": D("2")}, outputs={"JERKY": D("2")},
         duration_ticks=4, requires_facility="SALT_SHED",
         requires=["SALT_CURING"],
+    )
+    # The white season's build (run 54 P4): a house may raise its OWN
+    # shed on its own camp -- six logs, four salt, the SALT_CURING
+    # rank's whole reward. SALT_MEAT resolves requires_facility against
+    # the nearest bound shed, and OWNER access on your own parcel is
+    # yours: salt walks home from the lick once, and the winter larder
+    # salts at the hearth after that (the post's racks stay the
+    # landless fallback, two at a time).
+    production.create_recipe(
+        session, "BUILD_SALT_SHED", name="Build Salt Shed",
+        description="Raise your own salt shed on your camp: six logs, "
+                    "four salt, and the salter's rank -- after this, "
+                    "SALT_MEAT salts at home, no walk to the post's back "
+                    "room.",
+        inputs={"LABOR": D("1"), "WOOD": D("6"), "SALT": D("4")},
+        outputs={}, duration_ticks=3, builds_facility="SALT_SHED",
+        requires_place_kind="HEARTH", requires=["SALT_CURING"],
     )
     # THE BACKDOOR IS OFF (run 52): run 49's wholesale channel --
     # WHOLESALE_BUY coin-for-stock and WHOLESALE_DUMP stock-for-coin,
@@ -2353,17 +2431,28 @@ def _create_needs(session: Session) -> None:
     # every night wants a SEAT at a fed fire (the rework: warmth caps
     # at 6 and WARM_BY_FIRE fills it; banking it is no longer a
     # strategy). Night is the expensive half of the day.
+    # The white season (run 54 P4): the winter clock runs a tier up --
+    # 2/hour by day, 4/hour at night. Shelter+clothes (1.0 + 0.5)
+    # leave the winter day a 0.5/h deficit -- the evening fire's job,
+    # same stance as today, priced higher; the FINE COAT (P3) closes
+    # the winter day exactly. The night wants ~4 seated fire-hours
+    # against the stock cap 6: wood runs 8-10 a day, and the evening
+    # fire becomes the village's whole social life (P2's COMFORT
+    # dividend lands exactly here).
     needs.create_need(
         session, "WARMTH", WARMTH_PER_TICK, ["WARMTH"],
         name="Warmth",
         description="Drawn from the WARMTH made by fires (a seat, +6/hour, "
                     "holding at most 6), shelter and clothes: 1 per hour of "
-                    "day, 3 per hour of night. Miss it and exposure accrues -- "
+                    "day, 3 per hour of night -- and in winter, 2 per hour "
+                    "of day, 4 of night. Miss it and exposure accrues -- "
                     "nights bite three times as hard, and only sitting by a "
                     "fed fire covers them.",
         entity_type=EntityType.INDIVIDUAL, priority=1,
         condition_symbol="EXPOSURE", condition_quantity=Decimal("1"),
         night_quantity_per_tick=WARMTH_PER_NIGHT_TICK,
+        season_quantity_per_tick={"WINTER": Decimal("2")},
+        season_night_quantity_per_tick={"WINTER": Decimal("4")},
     )
     # WATER (P3): the thirst clock. 0.25/hour, six a day, drawn from
     # carried water -- the skin empties first (SKINWATER sorts before

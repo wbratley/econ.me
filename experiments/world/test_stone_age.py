@@ -3612,3 +3612,485 @@ def test_the_salt_road_end_to_end(session):
     # the post's standing salt bid took the lot at its own price
     assert _hold(session, house.id, "SALT") == Decimal("0")
     assert acct.balance == SEAT_COIN + Decimal("4") * bid
+
+
+# --- The white season (run 54 P4) ---------------------------------------
+
+
+def _pin_tick(session, tick_number):
+    """Pin next_tick_number by inserting the tick rows before it (the
+    season/daylight gates read the clock from the tick table -- the
+    same trick tests/test_seasons.py uses, without running 288 ticks
+    to get there)."""
+    from econengine.models import Tick
+    from sqlalchemy import func
+    current = session.execute(
+        select(func.count()).select_from(Tick)).scalar() or 0
+    for n in range(current + 1, tick_number):
+        session.add(Tick(number=n))
+    session.flush()
+
+
+def test_the_white_season_closes_the_thicket_and_the_river(session):
+    """requires_season on the three open-land errands: GATHER,
+    GATHER_BAG and FISH run in SPRING/SUMMER/AUTUMN and refuse in
+    WINTER with the season named in the refusal -- an agent reading
+    its events learns the calendar from the no. CHOP_WOOD stays legal
+    (the treeline still gives deadwood; the fire must not die)."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Winterhand")
+    # spring first (the pin only walks the clock forward): tick 32 =
+    # day 2 hour 8, an open-season morning -- all three doors open
+    _pin_tick(session, 32)
+    assert clock.season_of(production.next_tick_number(session)) == "SPRING"
+    _at(session, house, "THICKET")
+    _set(session, house, "LABOR", Decimal("1"))
+    assert production.start_process(session, house, "GATHER")
+    _set(session, house, "BAG", Decimal("1"))
+    _set(session, house, "LABOR", Decimal("1"))
+    assert production.start_process(session, house, "GATHER_BAG")
+    _at(session, house, "RIVER")
+    _set(session, house, "LABOR", Decimal("1"))
+    assert production.start_process(session, house, "FISH")
+    # then tick 440 = day 19 hour 8: the first winter morning, and all
+    # three refuse with the season named in the refusal
+    _pin_tick(session, 440)
+    assert clock.season_of(production.next_tick_number(session)) == "WINTER"
+    _at(session, house, "THICKET")
+    for code in ("GATHER", "GATHER_BAG"):
+        with pytest.raises(ValueError, match="WINTER"):
+            production.start_process(session, house, code)
+    _at(session, house, "RIVER")
+    with pytest.raises(ValueError, match="WINTER"):
+        production.start_process(session, house, "FISH")
+    # the treeline still gives: CHOP_WOOD is winter-legal (an AXE held;
+    # labor set by hand -- a pinned clock never ran the dawn's issue)
+    _at(session, house, "THICKET")
+    _set(session, house, "AXE", Decimal("1"))
+    _set(session, house, "LABOR", Decimal("1"))
+    assert production.start_process(session, house, "CHOP_WOOD")
+
+
+def test_winter_runs_the_warmth_clock_a_tier_up(session):
+    """The WARMTH need's season rows: 1/h by day and 3/h at night in
+    the open seasons, 2/h by day and 4/h at night in winter --
+    season-night beats season beats night beats base, resolved by the
+    engine on the pack's own need row."""
+    from econengine import clock, needs as needs_mod
+    create_content(session)
+    warmth = needs_mod.get_need(session, "WARMTH")
+    assert Decimal(warmth.season_quantity_per_tick["WINTER"]) == Decimal("2")
+    assert Decimal(warmth.season_night_quantity_per_tick["WINTER"]) \
+        == Decimal("4")
+    # tick 300 = day 13 hour 12 (autumn day); 310 = autumn night
+    assert not clock.is_night(300) and clock.is_night(310)
+    assert needs_mod.required_quantity(warmth, 300) == Decimal("1")
+    assert needs_mod.required_quantity(warmth, 310) == Decimal("3")
+    # tick 440 = day 19 hour 8 (winter day); 454 = winter night
+    assert clock.season_of(440) == "WINTER"
+    assert not clock.is_night(440) and clock.is_night(454)
+    assert needs_mod.required_quantity(warmth, 440) == Decimal("2")
+    assert needs_mod.required_quantity(warmth, 454) == Decimal("4")
+
+
+def test_the_blizzard_lives_on_the_ridge(session):
+    """BLIZZARD is the storm line: a place-scoped ambient that finds
+    anyone standing on RIDGE_PASS in the dark hours and hands them
+    half an EXPOSURE an hour. Day trips never feel it, and the hearth
+    never does -- the weather belongs to the high ground."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    climber = _seat(session, "Caught")
+    warm = _seat(session, "Homebody")
+    _at(session, climber, "RIDGE_PASS")
+    # a night hour (tick 22 = day 1 hour 22): the storm finds the pass
+    _pin_tick(session, 22)
+    night = run_tick(session); session.commit()
+    events = night.events or []
+    blizzards = [e for e in events
+                 if e.get("type") == "threat_pressure"
+                 and e.get("threat") == "BLIZZARD"]
+    assert len(blizzards) == 1 and blizzards[0]["entity_id"] == climber.id
+    assert blizzards[0]["pressure"] == "0.5000"
+    # 0.5 granted, minus the hour's own 5% decay on the condition
+    assert _hold(session, climber.id, "EXPOSURE") == Decimal("0.4750")
+    assert _hold(session, warm.id, "EXPOSURE") == Decimal("0")
+    # daylight on the same pass: the storm sleeps (weather is a dark
+    # -- and altitude -- fact, not a predator)
+    _pin_tick(session, 440)          # winter DAY hour: no pressure even now
+    day = run_tick(session); session.commit()
+    assert not [e for e in (day.events or [])
+                if e.get("type") == "threat_pressure"]
+
+
+def test_a_house_can_raise_its_own_salt_shed(session):
+    """BUILD_SALT_SHED: the SALT_CURING rank, six logs, four salt and
+    an hour's labor raise an OWNER shed on the builder's own camp --
+    after which SALT_MEAT salts at the hearth, no walk to the post's
+    back room. The neighbour at the same clearing cannot bind it:
+    OWNER is the builder's alone."""
+    from econengine import tech
+    create_content(session)
+    _no_wolves(session)
+    house = _seat(session, "Salter")
+    _set(session, house, "WOOD", Decimal("6"))
+    _set(session, house, "SALT", Decimal("4"))
+    # no rank, no shed: the crafts gate fires first
+    with pytest.raises(ValueError, match="SALT_CURING"):
+        production.start_process(session, house, "BUILD_SALT_SHED")
+    tech.grant_unlock(
+        session, house, tech.get_technology(session, "SALT_CURING"),
+        production.next_tick_number(session))
+    assert _act(session, house, "BUILD_SALT_SHED")
+    _run(session, 4)                # the window's tick + the three-hour build
+    assert "SALT_SHED" in _facilities(session, house)
+    assert _hold(session, house.id, "WOOD") == Decimal("0")
+    assert _hold(session, house.id, "SALT") == Decimal("0")
+    # SALT_MEAT resolves against the home shed now (OWNER on own ground)
+    _set(session, house, "MEAT", Decimal("2"))
+    assert _act(session, house, "SALT_MEAT")
+    _run(session, 5)
+    assert _hold(session, house.id, "JERKY") == Decimal("2")
+    # the neighbour holds the rank and stands at the same clearing --
+    # but the shed is not his (OWNER access, not PLACE)
+    mate = _seat(session, "Neighbour")
+    tech.grant_unlock(
+        session, mate, tech.get_technology(session, "SALT_CURING"),
+        production.next_tick_number(session))
+    _set(session, mate, "MEAT", Decimal("2"))
+    with pytest.raises(ValueError, match="SALT_SHED"):
+        production.start_process(session, mate, "SALT_MEAT")
+
+
+def test_the_white_season_two_houses(session):
+    """The headline balance test (run 54 P4): the winter door. Two
+    houses stand at day 19 with the SAME survival floor -- clothes,
+    tools, a sheltered camp by the commons fire -- and one difference:
+    the autumn-salter banked (a pen of hens, the never-rot strips, a
+    purse of pelt-coin), and the autumn-idler lived hand-to-mouth on
+    the open thicket and banked nothing. Six white days later the
+    salter stands at the year's end with margin; the idler met the
+    HUNGER kill-line inside winter (the thicket closed, the scraps
+    rotted, and hunger is a bill); and the trade is the rescue -- a
+    third house, coin-pursed and empty-lardered, buys the post
+    shelf's jerky at the famine ask and lives. The autumn's WORK is
+    setup here (its mechanics -- shelter, pen, smoke, the salt road,
+    the boar -- each have their own tests); this test's subject is
+    the winter BALANCE: what closes, what the draws become, and who
+    stands at the end. Torch grace on night walks mirrors _walk_to;
+    the carry gate (E2) is left ON and the policies travel light."""
+    from sqlalchemy import func
+    from econengine import clock, spawns
+    from econengine import travel as travel_mod
+    from econengine.models import Good, Place, Process, ProcessStatus
+    create_content(session)
+    _no_wolves(session)
+
+    def place_of(h):
+        return session.execute(
+            select(Place.key).where(Place.id == h.location_place_id)
+        ).scalar_one_or_none()
+
+    def busy(h):
+        return session.execute(
+            select(Process).where(Process.entity_id == h.id,
+                                  Process.status == ProcessStatus.RUNNING)
+        ).scalars().first() is not None
+
+    def load_of(h):
+        """The road's weight (E2): every unit of a non-exempt good."""
+        return session.execute(
+            select(func.coalesce(func.sum(Holding.quantity), Decimal("0")))
+            .join(Good, Good.symbol == Holding.symbol)
+            .where(Holding.entity_id == h.id, Good.carry_exempt.is_(False),
+                   Holding.quantity > 0)
+        ).scalar_one()
+
+    def try_act(h, code):
+        """_act that also swallows season/place refusals (a policy
+        that mis-times an errand misses the hour, like a script)."""
+        if _hold(session, h.id, "LABOR") < 1:
+            markets.adjust_holding(
+                session, h, "LABOR",
+                Decimal("1") - _hold(session, h.id, "LABOR"))
+        try:
+            production.start_process(session, h, code)
+            return True
+        except (markets.InsufficientHoldingsError, ValueError):
+            return False
+
+    def walk(h, key):
+        if clock.is_night(production.next_tick_number(session)):
+            _set(session, h, "LIT_TORCH", Decimal("0.5"))
+        try:
+            travel_mod.start_route(session, h, key)
+            return True
+        except ValueError:
+            return False            # over-loaded: an hour's wait, not a crash
+
+    def ask_price(sym):
+        rows = _open_orders(session, _post(session).id, sym,
+                            OrderSide.SELL)
+        return min((o.limit_price for o in rows), default=None)
+
+    def buy_strips(h, qty):
+        """The famine basket: jerky first (never rots), the cooked
+        shelf while it lasts -- whatever safe food the counter asks."""
+        acct = next(a for a in h.accounts if a.currency == COIN)
+        for sym in ("JERKY", "COOKED_MEAT"):
+            p = ask_price(sym)
+            if p and acct.balance >= p * qty:
+                markets.place_order(session, h.id, sym, "buy",
+                                    qty, p, acct.id)
+                return True
+        return False
+
+    # the winter door: day 19 hour 1 (tick 433). The world wakes with
+    # the thicket already bare and the river already iced.
+    _pin_tick(session, 433)
+    salter = _seat(session, "Salter")
+    idler = _seat(session, "Idler")
+    trader = _seat(session, "Trader")
+    for h in (salter, idler, trader):
+        _set(session, h, "CLOTHES", Decimal("1"))   # the winter baseline
+        _set(session, h, "SPEAR", Decimal("1"))
+        _set(session, h, "BAG", Decimal("1"))
+        _set(session, h, "AXE", Decimal("1"))        # deadwood is certain
+        _set(session, h, "WATERSKIN", Decimal("1"))  # the winter walk's
+        # shape: a skin carries eight more hours of river -- the
+        # drink errand runs every OTHER day, not every dawn
+        _set(session, h, "WOOD", Decimal("8"))       # with an axe in hand
+        markets.adjust_holding(session, h, "BERRIES", -BERRY_BUFFER)
+        # THE FLOOR (all three): a sheltered camp by the commons fire
+        # -- the roof's +2/h holds the small draws, the seat tops
+        # the stock. Built across the open seasons; every house has one.
+        camp = _camp(session, h)
+        parcels.add_facility(session, camp, "SHELTER")
+    # THE SALTER'S AUTUMN (setup -- its recipes have their own tests):
+    # two boar kills smoked, a third strip-bought with pelt-coin, and
+    # the pen -- three hens bought at the post and penned, eggs
+    # laying all winter. THE IDLER'S AUTUMN: hand-to-mouth on the
+    # thicket; the scraps of it are still in its basket, rotting.
+    parcels.add_facility(session, _camp(session, salter), "PEN")
+    markets.adjust_holding(session, salter, "CHICKEN", Decimal("4"))
+    markets.adjust_holding(session, salter, "JERKY", Decimal("10"))
+    markets.adjust_holding(session, salter, "APPLES", Decimal("6"))
+    # the REST of the bank lives on the post's shelf (E2's road weighs
+    # a full larder: a house carries ~20 units -- so the autumn
+    # surplus was SOLD for coin, and winter buys it back strip by
+    # strip, the shelf as the cellar)
+    salter_purse = next(a for a in salter.accounts if a.currency == COIN)
+    salter_purse.balance = salter_purse.balance + Decimal("12")
+    # the famine purse: the trader's whole asset is spendable coin
+    purse = next(a for a in trader.accounts if a.currency == COIN)
+    purse.balance = purse.balance + Decimal("26")
+
+    def drive(h, role, st):
+        """One house-hour of winter policy: meals first, then the
+        fire, then the errands that remain."""
+        tick = production.next_tick_number(session)
+        night = clock.is_night(tick)
+        hid = h.id
+
+        def hold(sym):
+            return _hold(session, hid, sym)
+
+        def eat():
+            if hold("EGGS") >= 1:
+                return try_act(h, "EAT_EGGS")     # renewable first
+            if hold("JERKY") >= 1:
+                return try_act(h, "EAT_JERKY")     # the bank second
+            if hold("APPLES") >= 1.5:
+                return try_act(h, "EAT_APPLES")
+            if hold("BERRIES") >= 1.5:
+                return try_act(h, "EAT_BERRIES")
+            return False
+
+        if hold("SATIETY") < (0.5 if night else 2.5):
+            if eat():
+                return
+        if place_of(h) == "POST":
+            # the pastoral seed: the counter SELLS hens (a purse buys
+            # more than strips -- a hen is the larder that keeps
+            # laying when the shelf runs bare)
+            if (role == "trader" and hold("CHICKEN") < 2
+                    and not st.get("hens")):
+                acct = next(a for a in h.accounts if a.currency == COIN)
+                hen_ask = ask_price("CHICKEN")
+                if hen_ask and acct.balance >= hen_ask * Decimal("2"):
+                    markets.place_order(
+                        session, h.id, "CHICKEN", "buy", Decimal("2"),
+                        hen_ask, acct.id)
+                st["hens"] = True
+                return
+            # the counter's keep: a log a day keeps the shop lit
+            # (KEEP_SHOP) -- the post bids wood, and the day's chop
+            # carries a spare log for the counter that feeds you
+            if hold("WOOD") >= 4 and not st.get("kept"):
+                wood_bid = _open_orders(
+                    session, _post(session).id, "WOOD", OrderSide.BUY)
+                if wood_bid:
+                    acct = next(a for a in h.accounts
+                                if a.currency == COIN)
+                    markets.place_order(
+                        session, h.id, "WOOD", "sell", Decimal("1"),
+                        wood_bid[0].limit_price, acct.id)
+                    st["kept"] = True
+                    return
+            if st.get("buy") and not st.get("bought"):
+                # buy BIG while the shelf holds: the winter shelf is a
+                # lender, not a garden -- it empties, and a purse that
+                # shops in dainty baskets winters hungry
+                if buy_strips(h, Decimal("12")):
+                    st["bought"] = True
+                elif st.get("waits", 0) < 6:
+                    # the book breathes (cancel-and-replace); the
+                    # counter waits out the breath, up to six hours
+                    st["waits"] = st.get("waits", 0) + 1
+                    return
+                else:
+                    # a whole day stood at a dark counter: remember it
+                    # (the memory outlives the dawn reset) and spend
+                    # the next days' daylight on the treeline -- the
+                    # counter wants wood nobody had to spare
+                    dark_mem[h.id] = (tick - 1) // 24 + 3
+            walk(h, "HEARTH"); return
+        hour_now = (tick - 1) % 24 + 1
+        # the fire is an EVENING fire (the manual's own budget: wood
+        # 8-10 a day -- the roof covers the daylight draws; the fire
+        # lights at 15:00 and burns to dawn, and the village shares it)
+        if (place_of(h) == "HEARTH" and hold("WOOD") >= 1
+                and (hour_now >= 15 or night)):
+            commons = session.execute(
+                select(parcels.Facility).join(parcels.Parcel)
+                .where(parcels.Parcel.parcel_type == "COMMONS",
+                       parcels.Facility.facility_type == "FIRE")
+            ).scalar_one()
+            if commons.fuel <= 1:
+                try_act(h, "STOKE_FIRE"); return
+        # the morning chores: pen the bought hens, then the laying
+        if not night and (tick - 1) % 24 + 1 < 9 and hold("CHICKEN") >= 1:
+            if "PEN" not in _facilities(session, h) \
+                    and hold("WOOD") >= 3 and try_act(h, "MAKE_PEN"):
+                return
+            if try_act(h, "COLLECT_EGGS"):
+                return
+        if night:
+            # the night's rhythm: the roof holds the small draws and
+            # the seat tops the stock (a winter night wants ~4 seated
+            # fire-hours), but SLEEP is the night's default -- the
+            # rest clock draws 0.25 an hour around the clock and the
+            # sleepless clock kills on the third tired night
+            if hold("WARMTH") <= 2.0 and hold("REST") > 1.5:
+                try_act(h, "WARM_BY_FIRE"); return
+            if try_act(h, "SLEEP_SHELTERED"):
+                return
+            try_act(h, "SLEEP_BY_FIRE"); return
+        hour = (tick - 1) % 24 + 1
+        place = place_of(h)
+        if place == "THICKET":
+            # winter thicket: gathering is closed (its refusal has its
+            # own test); what remains is the treeline's deadwood --
+            # one trip's worth, and home before the dark (a walker
+            # overnight at the thicket is the cold's easiest kill)
+            if hour >= 16 or hold("WOOD") >= 7:
+                walk(h, "HEARTH"); return
+            if try_act(h, "CHOP_WOOD"):
+                return
+            walk(h, "HEARTH"); return
+        if place == "RIVER":
+            # the ice hole: DRINK stays winter-legal, and the walk is
+            # the same one the (closed) fish errand used to ride --
+            # fill the skin while the bank is under you
+            if hold("SKINWATER") < 2 and try_act(h, "FILL_SKIN"):
+                return
+            if hold("WATER") < 3.5 and try_act(h, "DRINK"):
+                return
+            walk(h, "HEARTH"); return
+        # at the hearth: top the stock at the seams of the day (dawn
+        # and the evening fire) -- a body rides its errands and its
+        # night on a full stock; then FOOD FIRST (a starving house
+        # with coin dies beside a full shelf if wood outranks it)
+        if (hold("WARMTH") <= 4 and place_of(h) == "HEARTH"
+                and (hour_now <= 8 or hour_now >= 15)
+                and try_act(h, "WARM_BY_FIRE")):
+            return
+        # the day's errands: WATER FIRST (thirst kills on the third
+        # dry day; a cup is sixteen hours), then FOOD (strips from the
+        # post when the bank runs low and the purse can pay), then the
+        # treeline -- the fire must not die either
+        if (hold("WATER") + hold("SKINWATER") < 1.5
+                and st.get("drink", 0) < 1 and hour < 14):
+            st["drink"] = 1
+            walk(h, "RIVER"); return
+        coin = next(a.balance for a in h.accounts if a.currency == COIN)
+        # shop EARLY, every OTHER day: hunger merely growing (not
+        # just an empty shelf) sends the purse to the counter while it
+        # is still lit -- and the odd days belong to the treeline (a
+        # counter nobody keeps goes dark, and coin beside a dark shelf
+        # is a lantern with no oil; urgent hunger shops any day)
+        day_no = (tick - 1) // 24 + 1
+        urgent = hold("JERKY") + hold("EGGS") < 2
+        if ((urgent or hold("HUNGER") > 6
+                or (hold("HUNGER") > 4 and day_no % 2 == 0))
+                and coin >= Decimal("6")
+                and st.get("post", 0) < 1
+                and (hour < 14 or role == "trader")
+                and dark_mem[h.id] < day_no):
+            st["post"] = 1
+            st["buy"] = True
+            walk(h, "POST"); return
+        if (hold("WOOD") < 6 and st.get("chops", 0) < 1 and hour < 14):
+            st["chops"] = st.get("chops", 0) + 1
+            walk(h, "THICKET"); return
+        # the idle hours at home: under the roof, warm and rested
+        if try_act(h, "SLEEP_SHELTERED"):
+            return
+        try_act(h, "SLEEP_BY_FIRE" if hold("REST") < 5 else "WARM_BY_FIRE")
+
+    st_salter, st_idler, st_trader = {}, {}, {}
+    dark_mem = {salter.id: 0, idler.id: 0, trader.id: 0}
+    idler_down_tick = None
+    idler_death = None
+    end_tick = 576                       # day 24 hour 24: the year's end
+    while production.next_tick_number(session) <= end_tick:
+        tick = production.next_tick_number(session)
+        if (tick - 1) % 24 == 0:
+            spawns.apply_on_round(session, (tick - 1) // 24 + 1)
+            _no_wolves(session)          # the packs have their own tests
+            st_salter, st_idler, st_trader = {}, {}, {}
+        for h, role, st in ((salter, "salter", st_salter),
+                            (idler, "idler", st_idler),
+                            (trader, "trader", st_trader)):
+            if h is None or h.status != EntityStatus.ACTIVE or busy(h):
+                continue
+            drive(h, role, st)
+        last = run_tick(session); session.commit()
+        if idler_down_tick is None and idler.status != EntityStatus.ACTIVE:
+            idler_down_tick = tick
+            # the estate settles inside the same pass -- the kill-line
+            # is read off the event, not the burned ledger
+            idler_death = next(
+                (e for e in (last.events or [])
+                 if e.get("type") == "entity_incapacitated"
+                 and e.get("entity_id") == idler.id), None)
+    # THE SALTER LIVES, WITH MARGIN: active at the year's end, hunger
+    # far from the line (15), and food still on the shelf
+    assert salter.status == EntityStatus.ACTIVE
+    assert _hold(session, salter.id, "HUNGER") < Decimal("8")
+    assert _hold(session, salter.id, "JERKY") > Decimal("0")
+    assert _hold(session, salter.id, "EGGS") > Decimal("0")   # the pen pays
+    # THE IDLER DIES INSIDE WINTER, ON THE HUNGER LINE: same floor,
+    # same clothes, same fire -- no bank, and the thicket is closed
+    assert idler_down_tick is not None and 433 <= idler_down_tick <= end_tick
+    assert idler.status == EntityStatus.INCAPACITATED
+    assert idler_death is not None
+    assert idler_death["condition"] == "HUNGER"
+    assert Decimal(idler_death["quantity"]) >= Decimal("15")
+    # AND THE TRADE IS THE RESCUE: the coin-pursed idler bought the
+    # post's shelf at the famine ask and stands at the year's end
+    assert trader.status == EntityStatus.ACTIVE
+    assert _hold(session, trader.id, "HUNGER") < Decimal("15")
