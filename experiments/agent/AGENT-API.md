@@ -78,7 +78,7 @@ dynasty + one admin for the runner.
 ### Round clock & consent
 | Tool | Args | Returns |
 |---|---|---|
-| `round_state` | — | open round, ticks run, K (ticks/round), readiness gate (mode + who readied) |
+| `round_state` | — | open round, ticks run, K (ticks/round), **clock** (day/hour/season/daylight), readiness gate (mode + who readied) |
 | `set_ready` | `ready` (d=true) | vote to close the round; final ready resolves it; `false` withdraws |
 | `epoch_state` | — | victory condition, winner, whether YOU were eliminated |
 | `governance_current` | — | window rounds, next window, docketed proposals + tallies |
@@ -87,7 +87,7 @@ dynasty + one admin for the runner.
 | Tool | Args | Returns |
 |---|---|---|
 | `leaderboard` | — | rows: entity counts, oldest lineage, tech unlocks, epoch wins, status, money |
-| `market_prices` | — | last-trade price per active market |
+| `market_prices` | — | last trade, best bid/ask, and **shelf depth** (S5b escrow: delivered goods, claimed by open sells) per active market |
 | `world_catalog` | — | every good (+derived effect line), recipe (inputs→outputs, odds, gates), tech tree, needs (satisfiers, hourly draws), threats, markets |
 | `world_map` | — | places, roads (mode, tick cost), every entity's location |
 | `world_activity` | `last_ticks` | unattributed public facts as prose: auction summaries, decay, auto-issue |
@@ -222,3 +222,38 @@ and round closures.
 runner's snapshot calls — with timings and abbreviated arguments.
 Between it, the persisted prompts, `calls.log`, and the journals,
 every byte a seat sent or received is now on disk.
+
+## 9. The run-54 surfaces (what the expansion added to the wire)
+
+**Season facts** ride `round_state.clock` and `entity_state.clock`
+(the same `clock_facts` dict): `day`, `hour`, `is_day`/`is_night`,
+`daylight_hours`, and the calendar — `season` (SPRING / SUMMER /
+AUTUMN / WINTER), `season_day` (1..days_per_season), `days_per_season`
+(votable via WorldSetting `clock.season_days`). A refusal names the
+season it refuses for: `"wrong season for GATHER (WINTER, season day
+2 — it runs in SPRING/SUMMER/AUTUMN)"` — a behaviour can learn the
+calendar from its own rejected intents, or read it straight off the
+clock.
+
+**Shelf depth** (`market_prices`, S5b): every placed market shows
+`shelf` (goods sellers delivered into the escrow pool — the only
+depth an incoming buy can fill from) and `claimed` (how much open
+sell volume has a claim on that shelf; shelf − claimed is free).
+Selling at a placed market debits holdings into the pool at placement
+("sellers must deliver"); the shelf rots like any larder. In Lua:
+`ctx.query.market_shelf(sym)` (public pool) and `ctx.query.shelf(sym)`
+(your own escrowed goods).
+
+**Carry refusals** (S5a, in the rejected-intent feed / `ctx.events`):
+every hop of a route is checked against the body's load —
+`"you carry 25 of 20 -- the walk road refuses the load"`. The load
+counts every non-exempt holding (comfort and worn warmth are of the
+body, not cargo); the refusal lands before the journey starts, so a
+script can catch it and lighten up the same tick. Recipes with
+`carry_capacity` (a cart) raise the cap.
+
+**Unlocked events**: studying a rank emits `{"type": "unlocked",
+"technology": "KNAPPING", ...}` per technology granted — it lands in
+the studier's `ctx.events` next tick, and the dashboard renders one
+chip per rank per house.
+

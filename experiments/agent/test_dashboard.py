@@ -220,6 +220,85 @@ def test_the_roster_carries_the_post_and_the_beasts():
     assert "the key rests" not in h
 
 
+# --- run 54 P5: the sweep surfaces --------------------------------------
+
+def _snap_54() -> dict:
+    """The run-54 shape: a winter tick, ranks in hand, a SQUALOR
+    reading, and shelf depth on the market rows."""
+    snap = _snap()
+    snap["ticks"] = [433, 434]
+    snap["dynasties"]["House Alpha"]["unlocks"] = ["KNAPPING", "TANNING"]
+    snap["dynasties"]["House Alpha"]["holdings"] += [
+        {"symbol": "SQUALOR", "quantity": "1.30"}]
+    snap["market"] = [
+        {"symbol": "JERKY", "last_price": "1.05", "best_bid": "0.90",
+         "best_ask": "1.20", "shelf": "6.0", "claimed": "2.0"},
+        {"symbol": "WOOD", "last_price": "1.0", "best_bid": "0.50",
+         "best_ask": None, "shelf": "0.0", "claimed": "0.0"},
+        {"symbol": "IBEX_PELT", "last_price": None, "best_bid": None,
+         "best_ask": None, "shelf": None, "claimed": None}]
+    # the book lives on the merchant tab, which wants the cast
+    snap["world_map"]["entities"] += [
+        {"id": "p1", "name": "Trading Post", "place": "POST",
+         "status": "active", "entity_type": "business"}]
+    snap["cast"] = {"businesses": [{
+        "name": "Trading Post", "place": "POST", "status": "active",
+        "accounts": [{"currency": "COIN", "balance": "9.78"}],
+        "holdings": [{"symbol": "SHOP_OPEN", "quantity": "0.44"}],
+        "processes": []}], "wildlife": {}}
+    return snap
+
+
+def test_the_banner_carries_the_season_chip():
+    """P5: the calendar rides the banner — the watcher sees winter
+    coming without reading tick numbers. Tick 433 = day 19 = WINTER
+    day 1 (6-day seasons, 24-tick days)."""
+    h = build_dashboard([_snap_54()], _meta("live"))
+    assert "WINTER · day 1/6" in h
+    assert 'chip-winter' in h
+    # and a spring tick renders the green chip
+    snap = _snap()
+    snap["ticks"] = [3, 4]           # day 1, hour 4
+    h = build_dashboard([snap], _meta("complete"))
+    assert "SPRING · day 1/6" in h
+    # the winter class renders only on a winter chip (the CSS rule
+    # always ships -- probe the rendered class combo instead)
+    assert 'chip-season chip-winter' not in h
+
+
+def test_the_house_card_carries_rank_chips():
+    """P5: tech is in the hands, not on shelves — the studied crafts
+    render as chips on the house's own card."""
+    h = build_dashboard([_snap_54()], {"title": "t"})
+    assert '<span class="chip chip-rank">KNAPPING</span>' in h
+    assert '<span class="chip chip-rank">TANNING</span>' in h
+    assert "ranks:" in h
+
+
+def test_squalor_gets_quiet_telemetry_not_a_kill_meter():
+    """P5: SQUALOR has no kill line, so it never earns a danger band —
+    but it rides the meter stack in quiet grey against its equilibrium,
+    labelled with what the level actually does (LABOR ×0.85)."""
+    h = build_dashboard([_snap_54()], {"title": "t"})
+    assert 'class="meter m-quiet"' in h
+    assert "SQUALOR 1.30 / 2.00 eq" in h
+    assert "LABOR ×0.85 while it rides" in h
+    # and it never renders as a danger meter
+    assert "SQUALOR" not in h.split('m-crit')[0].split("condmeters")[-1] \
+        if "m-crit" in h else True
+
+
+def test_the_post_book_shows_the_shelf_depth():
+    """P5/E3: the book's ask column gains its escrow shadow — delivered
+    depth, with the free remainder an incoming buy can actually take."""
+    h = build_dashboard([_snap_54()], {"title": "t"})
+    assert "<th>shelf (delivered)</th>" in h
+    assert "6.00 <span class=\"quiet\">(4.00 free)</span>" in h
+    assert 'title="delivered 4.0 free of 6.0 — open sells claim 2.0"' in h
+    # a placed market with an empty shelf shows its zero honestly
+    assert "(0.00 free)" in h
+
+
 def test_the_post_tab_survives_a_run_without_cast_data():
     """Pre-cast snapshots (every run before this change) still render:
     the tab says so, quietly, and nothing crashes."""
