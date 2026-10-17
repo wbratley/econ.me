@@ -316,6 +316,12 @@ def current_round_state(session: Session) -> dict[str, Any]:
     k = ticks_per_round()
     rounds_done = _rounds_completed(session)
     ticks_run = _ticks_run(session)
+    # The calendar rides the clock (run 54 P5): every round observation
+    # carries the same season facts entity_state does -- a seat deciding
+    # "how long until winter" should not need a second call, and the
+    # dashboard's banner reads it off the same surface.
+    from econengine import clock as _clock
+
     return {
         "round_number": rounds_done,
         "current_round": rounds_done + 1,
@@ -323,6 +329,8 @@ def current_round_state(session: Session) -> dict[str, Any]:
         "ticks_run": ticks_run,
         "ticks_per_round": k,
         "ticks_into_round": ticks_run - rounds_done * k,
+        "clock": _clock.clock_facts(ticks_run + 1,
+                                    _clock.season_days_of(session)),
         "readiness": readiness_state(session),
     }
 

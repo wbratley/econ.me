@@ -75,13 +75,27 @@ def _cond_band(frac: Decimal) -> str:
     return "ok"
 
 
+# Conditions with no kill line (run 54 P2): SQUALOR never kills, so
+# it never earns a danger band — but "the one condition with no kill
+# line" is exactly the telemetry a comfort-starved run wants to watch.
+# Each entry names the condition and its equilibrium/reference level;
+# the meter draws quiet grey, labelled with what the level DOES.
+_NO_KILL_CONDITIONS: dict[str, tuple[Decimal, str]] = {
+    "SQUALOR": (Decimal("2.0"),
+                "no kill line — LABOR ×0.85 while it rides; "
+                "equilibrium 2.0 unmet"),
+}
+
+
 def _cond_bars(held: dict, kill_lines: dict) -> str:
     """The state card's meter stack: one bar per condition that carries
     a kill line, drawn as FULLNESS — the bar is the health left before
     the line, so a full bar is a fed house and an empty bar is a house
     dying now (the scan is 'who is LOW'). Colour rides the danger
     fraction — the same bands the #213 alarm reads — so the bar drains
-    green -> amber -> orange -> red as the level climbs."""
+    green -> amber -> orange -> red as the level climbs. A no-kill
+    condition (SQUALOR) rides the same stack in quiet grey against its
+    reference level — telemetry, not alarm."""
     rows = []
     for sym in sorted(kill_lines):
         frac = _cond_fraction(held.get(sym, Decimal("0")), kill_lines[sym])
@@ -98,6 +112,18 @@ def _cond_bars(held: dict, kill_lines: dict) -> str:
             f'<div class="meter m-{band}" title="{title}">'
             f'<div class="meter-fill" style="width:{pct:.1f}%"></div>'
             f'<span class="meter-lab">{_esc(sym)} {_fmt(q)} / {_fmt(kill)}'
+            "</span></div>")
+    for sym, (ref, meaning) in sorted(_NO_KILL_CONDITIONS.items()):
+        q = held.get(sym, None)
+        if q is None:
+            continue
+        frac = min(q / ref, Decimal("1"))
+        pct = (Decimal("1") - frac) * 100
+        rows.append(
+            f'<div class="meter m-quiet" title="{_esc(sym)} {_fmt(q)} '
+            f'against reference {_fmt(ref)} — {_esc(meaning)}">'
+            f'<div class="meter-fill" style="width:{pct:.1f}%"></div>'
+            f'<span class="meter-lab">{_esc(sym)} {_fmt(q)} / {_fmt(ref)} eq'
             "</span></div>")
     return ("".join(rows) and '<div class="condmeters">' + "".join(rows)
             + "</div>") or ""
@@ -670,6 +696,10 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
                      for s, q in inv) or '<span class="quiet">empty</span>'
     condchips = (" ".join(f'<span class="chip cond">{_esc(s)} {_fmt(q)}</span>'
                           for s, q in conds))
+    # the ranks in hand (run 54 P1): tech is in the hands, not on
+    # shelves — each studied craft is a chip on the card
+    ranks = " ".join(f'<span class="chip chip-rank">{_esc(u)}</span>'
+                     for u in (last.get("unlocks") or []))
 
     commodity = sorted({sym for s in snapshots
                         for sym, q in held(s["dynasties"][name]).items()
@@ -686,6 +716,8 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
              + '</p><p>' + chips
              + (f' <span class="quiet">conditions:</span> {condchips}'
                 if condchips else "") + "</p>"
+             + ((f'<p><span class="quiet">ranks:</span> {ranks}</p>')
+                if ranks else "")
              + _cond_bars(h, kl)
              + "</div>",
              '<div class="hsum-scroll"><table class="grid">',
@@ -978,6 +1010,21 @@ def _death_tick(view: dict) -> "int | None":
     return min(ticks) if ticks else None
 
 
+def _season_chip(tick: int) -> str:
+    """The calendar chip (run 54 P5): season + season-day off the
+    engine's own arithmetic. The dashboard renders finished runs from
+    snapshots (no session to read a voted `clock.season_days`), so it
+    reads the engine default -- honest for every unvoted world, and
+    the chip still lands within a day when one votes."""
+    from econengine import clock as _clock
+
+    season = _clock.season_of(tick, _clock.SEASON_DAYS)
+    day = _clock.season_day_of(tick, _clock.SEASON_DAYS)
+    cls = " chip-season" + (" chip-winter" if season == "WINTER" else "")
+    return (f'<span class="chip{cls}">{_esc(season)} · day {day}/'
+            f'{_clock.SEASON_DAYS}</span>')
+
+
 def _run_banner(meta: dict, snapshots: list[dict]) -> str:
     """The state-at-a-glance banner (run 50's lesson: a watcher saw
     the dashboard go dark with the sidecar and had to ask what
@@ -987,17 +1034,20 @@ def _run_banner(meta: dict, snapshots: list[dict]) -> str:
     total = meta.get("rounds_total", "?")
     last = snapshots[-1] if snapshots else {}
     tick = (last.get("ticks") or [0])[-1]
+    season = _season_chip(tick)
     if status == "live":
         body = (f'<span class="bn-state bn-live">● running</span>'
                 f'<span>round {meta.get("round", len(snapshots))} of {total}'
                 f' · tick {tick}</span>'
+                f'{season}'
                 f'<span class="quiet">{_hms(meta.get("elapsed_s"))} elapsed —'
                 ' aggregates refresh on reload</span>')
         cls = "banner"
     elif status == "complete":
         body = (f'<span class="bn-state bn-done">✓ finished</span>'
                 f'<span>all {total} rounds · tick {tick} ·'
-                f' {_hms(meta.get("elapsed_s"))}</span>')
+                f' {_hms(meta.get("elapsed_s"))}</span>'
+                f'{season}')
         cls = "banner bn-complete"
     else:  # extinct: the run stopped itself — say so, loudly
         names = list(last.get("dynasties", {}).keys())
@@ -1006,6 +1056,7 @@ def _run_banner(meta: dict, snapshots: list[dict]) -> str:
                 f'<span>no dynasty left to act: stopped after round'
                 f' {meta.get("round", len(snapshots))} of {total}'
                 f' · tick {tick} · {_hms(meta.get("elapsed_s"))}</span>'
+                f'{season}'
                 + (f'<span class="quiet">lost: {_esc(", ".join(names))}</span>'
                    if names else ""))
         cls = "banner bn-extinct"
@@ -1160,21 +1211,40 @@ def _post_tab(snapshots: list[dict]) -> str:
                      '</th></tr>' + "".join(prows) + "</table>")
     else:
         parts.append('<p class="quiet">no errands out — the key rests</p>')
-    # the book: best bid/ask per symbol with a price on either side
+    # the book: best bid/ask per symbol with a price on either side,
+    # and the shelf under it (run 54 E3): delivered depth vs the open
+    # sells claiming it — the free remainder is what a buyer can
+    # actually take home today
     book_rows = []
+    shelf_here = any(m.get("shelf") is not None
+                     for m in have[-1].get("market", []))
     for m in sorted(have[-1].get("market", []), key=lambda m: m["symbol"]):
         bid = m.get("best_bid")
         ask = m.get("best_ask")
         if bid is None and ask is None:
             continue
-        book_rows.append(
-            f'<tr><td>{_esc(m["symbol"])}</td>'
-            f'<td class="num">{_fmt(Decimal(str(bid))) if bid is not None else "—"}</td>'
-            f'<td class="num">{_fmt(Decimal(str(ask))) if ask is not None else "—"}</td></tr>')
+        row = (f'<tr><td>{_esc(m["symbol"])}</td>'
+               f'<td class="num">{_fmt(Decimal(str(bid))) if bid is not None else "—"}</td>'
+               f'<td class="num">{_fmt(Decimal(str(ask))) if ask is not None else "—"}</td>')
+        if shelf_here:
+            shelf, claimed = m.get("shelf"), m.get("claimed")
+            if shelf is None:
+                row += '<td class="num quiet">—</td>'
+            else:
+                sh, cl = Decimal(str(shelf)), Decimal(str(claimed or "0"))
+                free = max(sh - cl, Decimal("0"))
+                row += (f'<td class="num" title="delivered {free} free of '
+                        f'{sh} — open sells claim {cl}">'
+                        f'{_fmt(sh)} <span class="quiet">({_fmt(free)} free)'
+                        '</span></td>')
+        book_rows.append(row + "</tr>")
     parts.append('<h3>The book (best of either side)</h3>')
     if book_rows:
-        parts.append('<table class="grid"><tr><th>good</th><th>bid</th>'
-                     '<th>ask</th></tr>' + "".join(book_rows) + "</table>")
+        head = ('<table class="grid"><tr><th>good</th><th>bid</th>'
+                '<th>ask</th>'
+                + ('<th>shelf (delivered)</th>' if shelf_here else '')
+                + "</tr>")
+        parts.append(head + "".join(book_rows) + "</table>")
     else:
         parts.append('<p class="quiet">no orders on the book</p>')
     return "".join(parts)
@@ -1398,6 +1468,10 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
            margin:4px 0 2px}
       .rcard-model{font-size:11px;overflow:hidden;text-overflow:ellipsis}
       .chip-alive{color:#34d399;border-color:#1d4d33}
+      .chip-season{color:#4a5d3a;border-color:#8ba36f;background:#eef2e5;font-weight:600;letter-spacing:.05em}
+      .chip-winter{color:#2f4a6b;border-color:#7d9cc4;background:#e8eef5}
+      .chip-rank{color:#6b5a2f;border-color:#c4ab6f;background:#f3ead8}
+      .meter.m-quiet .meter-fill{background:#9aa7b5}
       .chip-dead{color:#f87171;border-color:#7f1d1d;font-weight:700}
       .chip-post{color:#fcd34d;border-color:#3a2a10}
       .chip-wild{color:#8b93a3}

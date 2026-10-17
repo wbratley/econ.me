@@ -506,6 +506,39 @@ cheap, so the question is what you carry and what you quote -- not
 whether the trip survives the day. Mind the dark on the way all the
 same.
 
+== THE FAR VALLEY ==
+THE WORLD HAS A FAR SIDE, AND ONE DOOR TO IT. Past the flint scrape
+the ground climbs: the RIDGE PASS is two hours up (cold, exposed, the
+high ground), and everything beyond it is the far valley -- the SALT
+LICK two hours farther, the open VALE one hour off that fork. No road
+bypasses the ridge; the salt road is hearth to scrape to ridge to
+lick, six hours door to door, and the vale's hen walk rides one hour
+off it. A far trip is a DAY: out at dawn, home by dark, nothing spare.
+THE LICK GIVES SALT AND THE VALE GIVES HENS: DIG_SALT at the lick is
+two certain salt an hour, no gamble -- the only salt source in the
+world (the post's shelf sells it; the lick gives it). HEN_ROLL in the
+vale is the gambler's pasture: two hours stalking the tufts, three
+times in ten a hen joins you. And the ridge itself carries ibex -- the
+quarry of the winter coat: a rich pelt and the meat that rides it,
+taken with a held spear or a bow (the spear duel is a real fight; the
+bow's is not), daylight only.
+THE FAR BOOK IS PURE HOUSES: IBEX_PELT trades at the lick, and only
+at the lick -- no NPC maker, no anchor prices, no genesis quotes. The
+lick's prices are what houses agreed the trip was worth; the salt
+walks home to the post's standing bid (the home leg). The book is
+book-only by design: if nobody walks, there is no price.
+THE FINE COAT IS THE FAR VALLEY'S MASTERWORK: one ibex pelt, two
+yarn, and the TANNING rank -- sewn at the hearth, worn like clothes
+and twice the wrap: a FULL warmth an hour without a fire. With a
+shelter it closes the winter day exactly (see THE WHITE SEASON). One
+to a body.
+THE ARITHMETIC OF THE WALK (see also: the body carries twenty): one
+far trip is ten salt, or two pelts and change. The walk pays when the
+far book clears roughly one and a half times home prices -- and it
+will, because the seller prices the day. Nothing here gates any
+survival recipe: the far valley is a trip, never a toll. And mind the
+ridge's weather in the white season -- the storms are its fact.
+
 == THE LADDER (rough order; a bare gather averages ~5.5 satiety --
    a third of a day's food in one roll) ==
 1. THE FIRE IS COMMON GROUND: a standing fire at the clearing already
@@ -537,7 +570,25 @@ same.
    without it, and the river road passes the thicket. One PELT makes
    a WATERSKIN: a dead wolf is eight carried hours.
 3. BAG (3 YARN-ish, one hour): doubles EVERY future gather, finds COIN.
-4. SPEAR (flint+yarn, an afternoon): meat surplus -> COOKED_MEAT stock,
+3b. THE RANKS are tech in your hands, not on shelves: five crafts,
+each studied at its own ground, two hours and the materials, once --
+kept forever (a second study runs, eats, and grants nothing; knowledge
+kept is not knowledge re-earned). KNAPPING at the scrape (2 flint) --
+then the spear and the axe are yours to make. FIRE_HARDENING at a
+fire (a log and a flint; wants knapping first -- the hand that cannot
+knapp cannot temper) -- then the bow and the trap. TANNING at a fire
+(2 yarn and a pelt) -- then clothes, waterskins, and the fine coat
+are yours to sew. POTTERY at the river (2 clay, a log; wants
+fire-hardening first -- a kiln is a fire you understand) -- then the
+cooking pot. SALT_CURING at the post counter (2 salt, watching the
+keeper's own shelf) -- then a salt shed of your own. NOTHING ON THE
+SURVIVAL LINE STUDIES: the fire, the torch, the bag, the gather, the
+fish, the hunts once tooled, and SMOKE_MEAT -- the free pantry -- are
+every house's from the first morning; a house that never studies
+still winters on smoke and the fire. The ranks buy margin and comfort
+(the better tools, the coat that closes the winter day, salt that
+keeps, the pot that makes a flock feed), never bare survival.
+4. SPEAR (flint+yarn, an afternoon, KNAPPING): meat surplus -> COOKED_MEAT stock,
    or SMOKE_MEAT it into JERKY (5 slow hours, costs a log, NEVER rots,
    ~6 hours fed per strip) -> sell MEAT. The inherited floor hafts
    this one itself and walks the deep-forest table when its meat
@@ -552,7 +603,8 @@ same.
 5. HENS (see THE LARDER below): a pen and four hens is the best
    food/labor in the world once the capital is paid -- income that
    arrives while you sleep.
-6. SHELTER + CLOTHES (7 WOOD + 7 YARN): daytime warmth becomes FREE;
+6. SHELTER + CLOTHES (7 WOOD + 7 YARN; clothes want the TANNING rank):
+daytime warmth becomes FREE;
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
 7. TRAPs: convert surplus WOOD+YARN into the best hunt table.
@@ -585,6 +637,26 @@ home on the thicket, and it answers a spear with 60% for 2 -- a
 night errand (combat refuses the day) that wants a torch, a spear,
 and nerve; the bow hunts the forest by DAY and never meets a tusk.
 
+
+== EASE ==
+COMFORT IS A STOCK, AND IT SPENDS LIKE ONE: drawn a tenth an hour by
+the COMFORT need, fading five percent an hour on its own -- ease
+fades faster than misery. What banks it: an hour seated by a fed fire
+(+0.5), a night in a bed (+1 an hour), and the FEAST -- four strips
+and a log on the commons fire, two hours of turning and sharing, five
+whole points banked (no food value: the feast is eaten on a fed body,
+or it is just dinner). Surplus into ease, the natural conversion.
+UNMET, EASE TURNS TO SQUALOR -- the one condition with NO kill line:
+while any rides, the daylight ration shrinks (LABOR x0.85) and a
+whole hour's work refuses its first labor. Left unmet it equilibrates
+at 2.0 and never touches the death register: squalor makes everything
+harder, and nothing about it kills. The cure is the easiest work
+there is -- take a seat by a fed fire, or sleep in a bed, and let it
+fade.
+AND NOTHING SHOWS: there is no prestige, no standing, no column --
+comfort is the body's own business. Wealth that wants an audience
+builds bigger or buys the fire's evening; the world is free to learn
+what ease is worth on its own.
 
 == THE TRADING POST ==
 THE POST TRADES COIN FOR WOOD, MEAT, YARN, FLINT, BERRIES, APPLES,
