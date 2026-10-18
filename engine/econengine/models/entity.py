@@ -50,6 +50,18 @@ class Entity(Base):
     # light-holding condition (a burning torch). NULL = never lit. The
     # ember window derivation reads it; nothing else may write it.
     last_lit_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The creature's need biology (run 56, the run-55 lesson): a JSON
+    # profile of how the world's declared needs land on THIS entity --
+    # {"omit": ["COMFORT"], "rates": {"FOOD": "0.5"}}. NULL = the default
+    # body: every active need of the entity's type applies at its declared
+    # rate (exactly the pre-run-56 world). "omit" removes a need outright
+    # (the wolf does not want comfort); "rates" scales a draw (the boar's
+    # coarser metabolism). Needs not mentioned keep their declared behavior
+    # -- a need added later applies to old creatures by default, so
+    # profiles are blacklists-with-scales, never exhaustive lists.
+    # Stamped from the spawn template at birth; the engine only resolves
+    # it, never authors it (the biology is pack data).
+    need_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Provenance -- the parents of this entity (Step 6c, docs/actors.md).
     # A generic list of entity ids stamped once by ``spawn_entity`` and
     # never mutated: lineage must be authoritative for inheritance

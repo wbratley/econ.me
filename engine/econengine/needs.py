@@ -61,6 +61,7 @@ def create_need(
     night_quantity_per_tick: Decimal | None = None,
     season_quantity_per_tick: dict | None = None,
     season_night_quantity_per_tick: dict | None = None,
+    holding_rate_modifiers: dict | None = None,
 ) -> Need:
     existing = get_need(session, code)
     if existing is not None:
@@ -105,6 +106,7 @@ def create_need(
     season_quantity_per_tick = season_map(season_quantity_per_tick, "season_quantity_per_tick")
     season_night_quantity_per_tick = season_map(
         season_night_quantity_per_tick, "season_night_quantity_per_tick")
+    holding_rate_modifiers = _normalize_modifiers(holding_rate_modifiers)
 
     need = Need(
         code=code.upper(),
@@ -115,6 +117,7 @@ def create_need(
         night_quantity_per_tick=night_quantity_per_tick,
         season_quantity_per_tick=season_quantity_per_tick,
         season_night_quantity_per_tick=season_night_quantity_per_tick,
+        holding_rate_modifiers=holding_rate_modifiers,
         priority=priority,
         condition_symbol=condition_symbol.upper() if condition_symbol else None,
         condition_quantity=condition_quantity,
@@ -123,6 +126,50 @@ def create_need(
     session.add(need)
     session.flush()
     return need
+
+
+def _normalize_modifiers(raw: dict | None) -> dict[str, str] | None:
+    """Normalize a {holding_symbol: per-point multiplier delta} map to
+    exact-decimal strings, symbol-ascending. Deltas may be negative (a
+    hardy constitution draws less) but the resolved product is floored
+    at zero by the pass, never here -- a body cannot draw negative, but
+    the authored map may overshoot (a 20-CON monk simply eats nothing)."""
+    if raw is None:
+        return None
+    cleaned = {str(s).upper(): Decimal(str(d)).quantize(_QUANTUM)
+               for s, d in raw.items()}
+    if not cleaned:
+        return None
+    bad = {s: d for s, d in cleaned.items() if d == 0}
+    if bad:
+        raise ValueError(f"holding_rate_modifiers deltas must be nonzero: {bad}")
+    return {s: str(cleaned[s]) for s in sorted(cleaned)}
+
+
+def normalize_need_profile(raw: dict | None) -> dict | None:
+    """Normalize an entity need profile -- {"omit": [CODE...],
+    "rates": {CODE: multiplier}} -- for the entities.need_profile column.
+    Codes uppercase and sorted; multipliers exact-decimal strings in
+    (0, 10] (a profile may ease or tax a draw, not abolish it -- abolition
+    is what "omit" is for). Empty shapes normalize to None (the default
+    body) so a template that mentions no needs stays a plain creature."""
+    if raw is None:
+        return None
+    omit = sorted({str(c).upper() for c in raw.get("omit") or []})
+    rates = {str(c).upper(): Decimal(str(v)).quantize(_QUANTUM)
+             for c, v in (raw.get("rates") or {}).items()}
+    bad = {c: v for c, v in rates.items() if v <= 0 or v > Decimal("10")}
+    if bad:
+        raise ValueError(
+            f"need profile rates must be in (0, 10]: {bad} -- omit the need "
+            "instead of scaling it to nothing")
+    rates = {c: str(rates[c]) for c in sorted(rates)}
+    profile: dict = {}
+    if omit:
+        profile["omit"] = omit
+    if rates:
+        profile["rates"] = rates
+    return profile or None
 
 
 def get_need(session: Session, code: str) -> Need | None:
@@ -138,7 +185,8 @@ def required_quantity(
     season-night beats season beats global-night beats base (run 54 E1:
     a winter night is its own intensity; a winter day overrides nothing
     about the night, and a seasonless world draws its plain rates
-    forever)."""
+    forever). This is the WORLD'S rate -- before the creature's profile
+    and body modulate it (``effective_quantity``)."""
     days = days_per_season or clock.SEASON_DAYS
     season = clock.season_of(tick_number, days)
     if clock.is_night(tick_number):
@@ -151,6 +199,44 @@ def required_quantity(
     if season in season_day:
         return Decimal(season_day[season])
     return need.quantity_per_tick
+
+
+def effective_quantity(
+    session: Session, need: Need, entity: Entity, tick_number: int,
+    days_per_season: int | None = None,
+) -> Decimal | None:
+    """What THIS entity draws this tick: the world's rate
+    (``required_quantity``) scaled by the creature's profile and body
+    (run 56, the run-55 lesson: needs are the world's declarations, but
+    a wolf is not a house -- the profile omits what the creature does
+    not want, and holding-rate modifiers scale the draw by what the
+    body holds, D&D-style).
+
+    Returns None when the need does not apply to this entity at all
+    (omitted from its profile); zero when the body has moderated the
+    draw to nothing (the pass skips -- nothing to consume, nothing to
+    report, nothing to condition)."""
+    profile = entity.need_profile or {}
+    if need.code in (profile.get("omit") or []):
+        return None
+    rate = Decimal(str((profile.get("rates") or {}).get(need.code, "1")))
+    draw = required_quantity(need, tick_number, days_per_season) * rate
+    modifiers = need.holding_rate_modifiers or {}
+    if modifiers:
+        scale = Decimal("1")
+        for symbol in sorted(modifiers):
+            delta = Decimal(modifiers[symbol])
+            holding = session.execute(
+                select(Holding).where(
+                    Holding.entity_id == entity.id, Holding.symbol == symbol
+                )
+            ).scalar_one_or_none()
+            qty = holding.quantity if holding is not None else Decimal("0")
+            scale *= (Decimal("1") + delta * qty)
+        if scale <= 0:
+            return Decimal("0")
+        draw *= scale
+    return draw.quantize(_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def run_consumption(
@@ -172,9 +258,15 @@ def run_consumption(
         # The clock (run 18): a need with a night draw pulls the heavier
         # rate during dark hours — the same cold, a colder intensity.
         # Seasons (run 54 E1) resolve through the same specificity
-        # ladder — one definition of "what this tick draws".
-        required = required_quantity(need, tick_number, days_per_season)
+        # ladder — one definition of "what this tick draws". The
+        # creature's slice (run 56): the profile and body modulate the
+        # world's rate per entity — a need that does not apply draws
+        # nothing and reports nothing (no event, no condition credit).
         for entity in session.execute(query).scalars():
+            required = effective_quantity(session, need, entity, tick_number,
+                                          days_per_season)
+            if required is None or required <= 0:
+                continue
             consumed = Decimal("0")
             for satisfier in need.satisfiers:  # relationship is symbol-ordered
                 if consumed >= required:

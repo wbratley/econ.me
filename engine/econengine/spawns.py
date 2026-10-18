@@ -97,10 +97,17 @@ def ever_count(session: Session, name_prefix: str) -> int:
 
 def spawn_one(session: Session, name: str, template: dict) -> Entity:
     """Materialize one creature from a template dict."""
-    from . import markets, places as places_mod  # deferred
+    from . import markets, needs as needs_mod, places as places_mod  # deferred
 
     entity = services.create_entity(
         session, name, EntityType(str(template.get("entity_type", "individual"))))
+    # The creature's biology (run 56): template["needs"] is the need
+    # profile -- {"omit": ["COMFORT"], "rates": {"FOOD": "0.5"}}. The
+    # wolf is not a house: it omits what it does not want and scales
+    # what it wants more or less of. Normalized (never trusted) and
+    # stamped at birth -- the engine resolves profiles, it never
+    # authors them; what a creature is, is pack data.
+    entity.need_profile = needs_mod.normalize_need_profile(template.get("needs"))
     currency, balance = next(iter(
         (template.get("account") or {"COIN": 0}).items()))
     services.create_account(session, entity, currency,

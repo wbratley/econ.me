@@ -343,6 +343,20 @@ votable data, but their effect mechanisms cannot be pure script policy,
 because the ownership invariant stops any script docking another
 entity's labor and no script can end an entity.
 
+A need is declared per entity **type** — but creatures are not types
+(run 55: a comfort need scoped to INDIVIDUALs caught the wolves, and
+the squalor labor-ration starved the food web). Two modulations close
+that gap, both data the engine merely resolves: an entity carries a
+**need profile** (`entities.need_profile`, stamped from its spawn
+template: `omit` removes a want outright, `rates` scales a draw; NULL
+= the default body — every need of the type at its declared rate),
+and a need may declare **holding-rate modifiers**
+(`needs.holding_rate_modifiers`: the draw scales by what the body
+holds — a point of CON cheapens hunger — product across symbols,
+floored at zero). The `need_satisfied`/`need_unmet` event's `required`
+carries the creature's own number, so a script reading its events
+sees its own metabolism, never the world's.
+
 *Status: shipped (Step 9) — `ctx.needs` exposes each entity's applicable
 needs with current satisfaction to its scripts.*
 

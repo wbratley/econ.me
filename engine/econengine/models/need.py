@@ -47,6 +47,17 @@ class Need(Base):
     season_night_quantity_per_tick: Mapped[dict | None] = mapped_column(
         JSON, nullable=True
     )
+    # Attribute-modulated drain (run 56, the run-55 lesson): a JSON map
+    # {holding_symbol: per-point multiplier delta} -- the draw scales by
+    # the holder's body, D&D-style: {"CON": "-0.08"} means each point of
+    # CON holding multiplies the rate by (1 - 0.08) per point, product
+    # across symbols, floored at zero (a body cannot draw negative).
+    # Stored as exact-decimal strings; the MAPPING is pack data, the
+    # resolution is engine mechanism. NULL = the draw never varies by
+    # body (the pre-run-56 world, and the default for every need).
+    holding_rate_modifiers: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # lower = more essential; consumed first when needs share a satisfying good
