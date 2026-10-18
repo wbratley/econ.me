@@ -10,12 +10,21 @@
 -- Beyond the treadmill it owns exactly ONE rung of capital, the spear
 -- (run 47: the world never made meat -- the pot sat cold and the post
 -- bid 5.00 into an empty market all day; protein is the floor's
--- business now): fish ride the drink errand at the bank, and a
--- speared house walks the deep forest's table when the meat shelf
--- thins. Everything else -- bag, axe, bow, shelter, clothes, even
--- its own fire -- stays the player's invention: the floor remains
--- POOR, and the spear is the floor's because without it the protein
--- walk is a 55%-nothing gamble the floor does not take.
+-- business now) -- and since P1 the rung is a LADDER of two rungs,
+-- taken in certainty order (run 56, the run-55 lesson: the floor gated
+-- the whole climb on a yarn drop the gather table pays one roll in
+-- twenty, and the houses starved beside a world of meat -- zero
+-- studies, zero spears, six days): first the STUDY, whose stones the
+-- scrape gives certain (dig two, strike two hours, done -- the first
+-- morning the stomach can spare), then the haft, whose yarn is the
+-- lottery it always was, taken the day it turns up. Protein before
+-- the spear rides the drink errand: fish at the bank (certain-ish,
+-- and nothing there hunts you); with a spear in hand the house walks
+-- the deep forest's table when the meat shelf thins. Everything else
+-- -- bag, axe, bow, shelter, clothes, even its own fire -- stays the
+-- player's invention: the floor remains POOR, and the spear is the
+-- floor's because without it the protein walk is a 55%-nothing gamble
+-- the floor does not take.
 -- It still spends nearly every tick on the next meal or the next
 -- log: that is the point. A player who changes nothing stays on the
 -- treadmill; every further escape -- tools, clothes, shelter, trade
@@ -70,8 +79,11 @@ local eggs   = std.holding_qty("EGGS")     -- the flock's wage (keeps near a wee
 --    they do not happen by themselves. Eat what spoils first (berries,
 --    then apples, then cooked); jerky never rots, so it is the deep
 --    pantry; the pot boils a basket no single meal covers (run 46: a
---    house starved holding 0.8+0.7+0.6); raw meat is the desperate
---    last resort (a one-in-four chance of disease).
+--    house starved holding 0.8+0.7+0.6). Raw meat is the desperate
+--    LAST resort (a one-in-four chance of a whole point of disease
+--    against a 2.5 kill line) -- the bar is real starvation (HUNGER
+--    riding 5+, a day of missed draws), not an empty stomach: the
+--    catch walks home and cooks (COOK_MEAT, any lit fire, night-legal).
 local satiety = std.holding_qty("SATIETY")
 if satiety < 1.5 then
   if berries >= 2 then
@@ -91,7 +103,14 @@ if satiety < 1.5 then
     -- a flock could not out-climb the stomach eaten whole, but half
     -- an egg boils as thick as a hunted meal)
     ctx.action.start_process("FORAGE_POT_EGGS")
-  elseif meat >= 1 then
+  elseif meat >= 1 and std.holding_qty("HUNGER") > 5 then
+    -- Desperation, priced honestly: raw is for a body already missing
+    -- its draws (HUNGER 5+ = a day's worth) -- a missed hour costs 1.0
+    -- hunger against a 15 kill line, so a merely-empty stomach WALKS
+    -- ITS CATCH HOME AND COOKS IT. One raw meal in four grants a
+    -- whole point of DISEASE against a 2.5 kill line: a floor that ate
+    -- its catch raw at the river died fed, of the sickness (run 56's
+    -- soak, twice).
     ctx.action.start_process("EAT_RAW")
   end
 end
@@ -113,7 +132,14 @@ elseif place == river and protein < 3 and std.hour() < 15 then
   -- Standing at the bank with a thin meat shelf: fish it (run 47's
   -- lesson -- the world's meat never existed; the drink errand
   -- doubles as the catch, certain-ish, and nothing here hunts YOU).
-  -- The deliberate protein walk is the spear's, below.
+  -- This is the floor's protein rung BEFORE the spear (run 55: the
+  -- houses gathered to mouth and starved beside a fishable bank --
+  -- the gateless cousin was always there; the floor never walked
+  -- it). The deliberate walk is the day plan's, below -- ONE walk
+  -- decision per day, not a race of errands (run 56's soak: a floor
+  -- whose errands each pulled their own road zig-zagged river,
+  -- scrape, thicket in a day and came home woodless -- the fire died
+  -- at dusk and the packs walked in).
   ctx.action.start_process("FISH")
 elseif water < 1 and not std.is_night() then
   ctx.action.travel(river)
@@ -203,36 +229,22 @@ if place == home and meat >= 2 and cooked < 6 then
   ctx.action.start_process("COOK_MEAT")
 end
 
--- 2a. The first craft (run 54 P1): knapping is studied, not born.
---     The floor's spear rung now runs through the scrape: bank the
---     materials (yarn and a woodpile that spares four), walk the two
---     hours, dig if the pocket is short, and spend an afternoon
---     striking edges. Until the rank is held the haft is refused --
---     so the floor climbs before it crafts. Early in the day only:
---     the scrape errand plus the study plus the walk home is a whole
---     working day.
+-- 2a was folded into the day plan (block 3): the study walk is a
+--    DAY decision, taken in priority order against the fish errand
+--    and the gather run -- see 3.
 local knapping = std.has_unlock("KNAPPING")
-if not knapping and spear < 1 and yarn >= 1 and wood >= 4
-   and can_walk and std.hour() < 11 then
-  if place == "FLINT" then
-    if flint >= 3 then
-      ctx.action.start_process("STUDY_KNAPPING")
-    else
-      ctx.action.start_process("DIG_FLINT")
-    end
-  else
-    ctx.action.travel("FLINT")
-  end
-end
 
 -- 2b. The spear rung (run 47's lever: meat must exist, and the floor
 --     must make it; run 54 P1: the haft wants the KNAPPING rank,
---     studied at the scrape above). An afternoon's hafting when the
---     woodpile can spare the two logs -- the floor's one piece of
---     capital; the rest of the hunt ladder (bag, axe, bow, traps,
---     and every other rank) stays the player's invention. Early
---     enough that three honest hours still end in light; the walk
---     home from the scrape is part of the errand.
+--     studied at the scrape above; run 56: the haft's YARN is the
+--     lottery it always was -- one roll in twenty at the thicket, or
+--     the post's shelf -- and the floor takes it the day it turns
+--     up, not before: the study already happened). An afternoon's
+--     hafting when the woodpile can spare the two logs -- the floor's
+--     one piece of capital; the rest of the hunt ladder (bag, axe,
+--     bow, traps, and every other rank) stays the player's invention.
+--     Early enough that three honest hours still end in light; the
+--     walk home from the scrape is part of the errand.
 if spear < 1 and knapping and flint >= 1 and wood >= 4 and yarn >= 1
    and not std.is_night() and std.hour() < 15 then
   if place ~= home then
@@ -279,6 +291,27 @@ if not std.is_night() then
     else
       ctx.action.start_process("HUNT_SPEAR")
     end
+  -- 3a. The study morning (run 54 P1's ladder, run 56's order):
+  --     knapping is studied, not born, and the STUDY is the certain
+  --     rung -- stones dug at the scrape, two hours, done. Run 55's
+  --     floor never opened the ladder (it demanded a one-in-twenty
+  --     yarn drop banked BEFORE the first walk); this floor takes
+  --     the rung the first morning the stomach can spare it and the
+  --     night's fire is already paid (wood >= 4: the circuit costs a
+  --     whole day -- a floor that reaches dusk thin loses the fire,
+  --     and the fire's warmth is the wall the wolves respect). Out
+  --     by mid-morning, home before dark; the haft (3b) waits for yarn.
+  elseif not knapping and spear < 1 and (food + satiety) >= 4
+     and wood >= 4 and can_walk and std.hour() < 11 then
+    if place == "FLINT" then
+      if flint >= 3 then
+        ctx.action.start_process("STUDY_KNAPPING")
+      else
+        ctx.action.start_process("DIG_FLINT")
+      end
+    else
+      ctx.action.travel("FLINT")
+    end
   -- 2c. The feast (run 54 P2): comfort is the one want worth being
   --     SAFE for, and the feast is its one bulk buy. When ease has run
   --     dry (an unloved hour accrues squalor, and squalor shrinks the
@@ -291,6 +324,19 @@ if not std.is_night() then
      and place == home and std.hour() < 15
      and not std.running_recipe("FEAST") then
     ctx.action.start_process("FEAST")
+  -- 3b. The fish errand (run 55's lesson: the houses gathered to
+  --     mouth and starved beside a fishable bank): before the spear
+  --     exists -- and while the vegetarian shelf is thin -- the river
+  --     is the protein rung, and it costs a morning: walk, catch,
+  --     cook at home. The same wood-first law as the study morning
+  --     (wood >= 4 -- the night banked before the day is spent): the
+  --     errand yields to the gather run once the fire is unpaid.
+  --     0a's at-river branch sets the catch itself.
+  elseif protein < 2 and food < 6 and wood >= 4
+     and std.hour() < 13 then
+    if place ~= river then
+      ctx.action.travel(river)
+    end
   elseif (food < 8 or wood < 6) and not dusk_closing
      and not std.running_recipe("GATHER") then
     if place ~= woods then

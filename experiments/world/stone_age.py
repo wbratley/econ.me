@@ -653,6 +653,11 @@ at 2.0 and never touches the death register: squalor makes everything
 harder, and nothing about it kills. The cure is the easiest work
 there is -- take a seat by a fed fire, or sleep in a bed, and let it
 fade.
+EASE IS A HOUSE WANT: the beasts omit it outright -- a wolf's comfort
+is its own hide, a fire seat means nothing to it (run 56: the packs
+spent run 55 squalorous beside seats they could not take, and the
+ration that followed starved the food web). Comfort bites the ones
+who built the chairs.
 AND NOTHING SHOWS: there is no prestige, no standing, no column --
 comfort is the body's own business. Wealth that wants an audience
 builds bigger or buys the fire's evening; the world is free to learn
@@ -1525,6 +1530,15 @@ def _create_combat(session: Session) -> None:
                              "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "wolf",
                 "account": {"COIN": 0},
+                # The beast's biology (run 56, the run-55 kill chain): a
+                # wolf does not want comfort the way a house does --
+                # fire seats, beds, feasts are house things, and a
+                # squalorous wolf cannot sit anywhere. The profile omits
+                # the want outright: no draw, no squalor, no x0.85 ration
+                # refusing the whole-hour HUNT that starved the packs.
+                # Its four bodily needs (food, warmth, water, rest) it
+                # manages as ever -- hunt, pace, drink, den.
+                "needs": {"omit": ["COMFORT"]},
                 # The den (S4): wolves wake in the deep forest, and the
                 # program ranges -- by day the forest's game, by night the
                 # raid walk to the fire-ground (run 26's census: denned
@@ -1547,6 +1561,10 @@ def _create_combat(session: Session) -> None:
                              "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "boar",
                 "account": {"COIN": 0},
+                # Same biology as the wolf (run 56): the boar grubbing
+                # its thicket has no use for a fire seat -- comfort is
+                # omitted, and the grazer keeps its whole ration.
+                "needs": {"omit": ["COMFORT"]},
                 # The thicket's edge, an hour out: the boar is the larder's
                 # guarded shelf. Wolves keep the deep forest; the boar
                 # never walks to the fire-ground -- it is dangerous PREY,
