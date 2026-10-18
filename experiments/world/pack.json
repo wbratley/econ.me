@@ -33,9 +33,9 @@
   "pack.lua": "4f68c575e7a8057b",
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
-  "stone_age_starter.lua": "1de8709fd18fb8e1",
+  "stone_age_starter.lua": "faeb7e6498b7d66f",
   "trading_post.lua": "8a55c678ca0ccdbe",
-  "wolf_pack.lua": "8327cd56af59d9c0",
+  "wolf_pack.lua": "b1fca77c1401ee31",
   "world_lib.lua": "b1244db1c263994a"
  },
  "name": "demo-world",

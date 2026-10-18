@@ -1537,8 +1537,17 @@ def _create_combat(session: Session) -> None:
                 # the want outright: no draw, no squalor, no x0.85 ration
                 # refusing the whole-hour HUNT that starved the packs.
                 # Its four bodily needs (food, warmth, water, rest) it
-                # manages as ever -- hunt, pace, drink, den.
-                "needs": {"omit": ["COMFORT"]},
+                # manages as ever -- hunt, pace, drink, den. WATER draws
+                # at a lapping tenth (the soak's finding: at the house's
+                # 0.25 the cup runs dry daily and the river is an eight-
+                # hour commute from the deep wood -- the pack spent its
+                # whole first day walking to water and starved six hours
+                # short of the next raid window; a predator drinks from
+                # the kill, deep and rarely -- the carrion meal is most
+                # of a wolf's water, and the river is the drought's
+                # errand, not the day's).
+                "needs": {"omit": ["COMFORT"],
+                          "rates": {"WATER": "0.1"}},
                 # The den (S4): wolves wake in the deep forest, and the
                 # program ranges -- by day the forest's game, by night the
                 # raid walk to the fire-ground (run 26's census: denned
@@ -1563,8 +1572,12 @@ def _create_combat(session: Session) -> None:
                 "account": {"COIN": 0},
                 # Same biology as the wolf (run 56): the boar grubbing
                 # its thicket has no use for a fire seat -- comfort is
-                # omitted, and the grazer keeps its whole ration.
-                "needs": {"omit": ["COMFORT"]},
+                # omitted, and the grazer keeps its whole ration. Water
+                # at the lapping tenth: the thicket is an hour from the
+                # river, but the boar's day is its own grubbing, and a
+                # drinker that size walks to the bank rarely.
+                "needs": {"omit": ["COMFORT"],
+                          "rates": {"WATER": "0.1"}},
                 # The thicket's edge, an hour out: the boar is the larder's
                 # guarded shelf. Wolves keep the deep forest; the boar
                 # never walks to the fire-ground -- it is dangerous PREY,
@@ -2688,7 +2701,9 @@ def make_house(session: Session, name: str = "House") -> Entity:
 
 def make_wolf(session: Session, name: str) -> Entity:
     """One wolf: a creature, not a mechanic. Same needs as a house
-    (hunger is why it hunts), 12 innate HITS, ATTACK 4 / DEFENSE 1,
+    minus the house wants (comfort omitted -- run 56: a wolf's ease is
+    its own hide; hunger is why it hunts), 12 innate HITS, ATTACK 4 /
+    DEFENSE 1,
     a starting strip of meat, and the pelt it wears -- killing one
     pays whoever can carry it. No CARRY: what a wolf kills rots where
     it fell; it eats the bite and the carcass, never the estate.
@@ -2700,6 +2715,15 @@ def make_wolf(session: Session, name: str) -> Entity:
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
         "holdings": {"MEAT": 1, "PELT": 1, "WATER": WATER_BEAST_BUFFER,
                      "REST": REST_BEAST_BUFFER},
+        # The beast's biology, same as the cadence template (run 56):
+        # genesis packs omit comfort too -- or the first two packs (the
+        # only ones every run gets) starve squalorous exactly as run 55
+        # died, whatever the spawn rules say for their successors. And
+        # the lapping tenth of thirst (the soak's finding): the river is
+        # hours from the deep wood, and a pack that commutes to water
+        # daily starves walking (the kill is most of a wolf's water).
+        "needs": {"omit": ["COMFORT"],
+                  "rates": {"WATER": "0.1"}},
         "script_setting": "wolf",
         "account": {"COIN": 0},
         "place": "FOREST",

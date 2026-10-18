@@ -579,7 +579,10 @@ def test_a_fed_shelf_pauses_the_spear(session):
         _set(session, seat, sym, 0)
     _set(session, seat, "WOOD", 0)
     _set(session, seat, "WARMTH", 7)
-    _set(session, seat, "SATIETY", 4)   # fed: the walk is a gather, not a meal
+    _set(session, seat, "SATIETY", 6)   # fed, belly included: the eat-
+    # top-per eats the basket while the stomach is under five, and a
+    # shelf walked below the bar is a shelf that starts hunting --
+    # "fed" means the belly is up too (run 56's belly-banking)
     session.commit()
     _run(session, 3)                     # the 2h road to the thicket
     assert not any(e["entity_id"] == seat.id
@@ -1864,11 +1867,24 @@ def test_a_hungry_pack_walks_to_where_the_people_sleep(session):
     # must not decide the raid).
     markets.adjust_holding(session, wolf, "HUNGER", Decimal("6"))
     markets.adjust_holding(session, wolf, "SATIETY", Decimal("6"))
-    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.25"))
+    # nearly dry for a LAPING tenth (run 56): -1.25 left three hours
+    # at the old quarter-draw; the tenth stretches it past seven and
+    # the errand lands mid-day, eating the raid window whole
+    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.7"))
     while clock.hour_of(production.next_tick_number(session)) < 16:
         run_tick(session); session.commit()
+    # pin the pack at the den (run 56): the commute's punctuality
+    # (pace ticks, hop routing) is the soak's subject, not this
+    # test's -- the raid-walk DECISION is, and it needs the pack
+    # standing home when the window opens
+    _at(session, wolf, "FOREST")
     h = markets.get_holding(session, wolf.id, "HUNGER").quantity
     markets.adjust_holding(session, wolf, "HUNGER", Decimal("8") - h)
+    # rested enough to raid (run 56: the soak's rest bar -- a tired
+    # pack dens, it does not walk the road; the raid tests want the
+    # ROAD, so the body is fed AND rested)
+    r = markets.get_holding(session, wolf.id, "REST").quantity
+    markets.adjust_holding(session, wolf, "REST", Decimal("4") - r)
     # dusk falls: out to the hearth, a night of prowling, home by day
     for _ in range(24):
         run_tick(session); session.commit()
@@ -1904,14 +1920,27 @@ def test_the_raid_holds_the_doorstep_and_bites_in_the_dark(session):
     session.flush()
     # the run-44/45 shaping (a decision that is not a race): a full
     # stomach keeps the cup topped, a nearly-dry cup runs its errand
-    # at first light (home by noon -- the dusk window stays free)
+    # at first light (home by noon -- the dusk window stays free).
+    # Nearly dry for a LAPING tenth (run 56): -1.25 left three hours
+    # at the old quarter-draw; the tenth stretches it past seven and
+    # the errand lands mid-day, eating the raid window whole.
     markets.adjust_holding(session, wolf, "SATIETY", Decimal("6"))
-    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.25"))
-    while clock.hour_of(production.next_tick_number(session)) < 15:
+    markets.adjust_holding(session, wolf, "WATER", Decimal("-1.7"))
+    # to hour 14, not 15: the last hunt (2h) must COMPLETE before the
+    # raid window opens (walk_ahead 3 from the deep wood: the window
+    # is hour 16 ONLY), or the travel intent bounces off the busy
+    # tick and the window shuts with the pack standing in it
+    while clock.hour_of(production.next_tick_number(session)) < 14:
         run_tick(session); session.commit()
+    # pin the pack at the den, as the raid-walk test above: the one-
+    # hour window must not hinge on the commute's pace ticks
+    _at(session, wolf, "FOREST")
     # HUNGER set exactly past the raid bar as the window opens
     h = markets.get_holding(session, wolf.id, "HUNGER").quantity
     markets.adjust_holding(session, wolf, "HUNGER", Decimal("6") - h)
+    # rested enough to raid (run 56's rest bar: the tired dens)
+    r = markets.get_holding(session, wolf.id, "REST").quantity
+    markets.adjust_holding(session, wolf, "REST", Decimal("4") - r)
     # out to the hearth at dusk, three hours of road
     arrived = None
     for _ in range(30):

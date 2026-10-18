@@ -98,11 +98,20 @@ end
 -- dusk matter -- see walk_ahead above; a bounced intent costs
 -- nothing.
 if std.is_night() then
-  if hunger > 3 then
+  -- The bite is armed or it is not (the soak's finding): a hungry
+  -- pack with NOTHING in reach -- no heard prey, not starving-mad,
+  -- not standing on the prowl ground -- used to hold the whole
+  -- night's watch doing nothing, and the packs died tired in four
+  -- nights flat (FATIGUE, every cadence wave: hunger past three
+  -- took the branch, the blind bite refused at an empty den, and
+  -- the elseif never dens). The watch is for a pack that can BITE;
+  -- everything else curls. The tired hunt worse (-1/-1 past the
+  -- floor); the den is the next hunt's first weapon.
+  if hunger > 3 and (S.prey or hunger > 8
+                     or ctx.entity.place == prowl) then
     if S.prey then
       ctx.action.attack(S.prey)
-    elseif hunger > 8
-       or (ctx.entity.place == prowl and hunger > 5) then
+    else
       -- At the fire-ground the blind bite is armed by the raid's own
       -- bar (5, not the starving 8): the pack that walked out hungry
       -- enough to raid bites up close in the dark -- the sleepers
@@ -112,10 +121,9 @@ if std.is_night() then
     end
   elseif rest < 4 and not std.running_recipe("SLEEP_DEN") then
     -- A fed pack dens (P4): the night is paid in rest as well as
-    -- warmth, and a pack that prowls every dark grows tired -- the
-    -- tired hunt worse (-1/-1 past the floor; the rules price it).
-    -- Hunger outranks sleep: a starving pack prowls anyway, and
-    -- pays for it -- the pack's version of the house's watch.
+    -- warmth, and a pack that prowls every dark grows tired.
+    -- Hunger outranks sleep ONLY when the bite is armed above --
+    -- the starving prowl pays for its nights on purpose.
     ctx.action.start_process("SLEEP_DEN")
   end
   -- caught out after dark: hold. The road home is a day matter.
@@ -148,7 +156,13 @@ else
   elseif ctx.entity.place == "RIVER" and water < 2 then
     ctx.action.start_process("DRINK")
   elseif std.hour() >= dusk and std.hour() + walk_ahead < 20
-     and hunger > 5 and ctx.entity.place ~= prowl then
+     and hunger > 5 and rest > 2 and ctx.entity.place ~= prowl then
+    -- The raid road (the soak's rest bar): a pack does not walk OUT
+    -- tired. The prowl pays its nights in rest -- the doorstep hold
+    -- bites till dawn and never dens -- and the soak measured packs
+    -- dead of FATIGUE in three raid nights flat, hungrier than ever,
+    -- too tired to hunt the game that would feed them. The tired pack
+    -- dens; tomorrow's watch is fed and rested both.
     ctx.action.travel(prowl)
   elseif ctx.entity.place == prowl and std.hour() >= dusk then
     -- The doorstep hold (run 45): arrived with the last light, the

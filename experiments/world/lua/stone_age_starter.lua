@@ -62,6 +62,7 @@ local berries = std.holding_qty("BERRIES")
 local apples = std.holding_qty("APPLES")
 local cooked = std.holding_qty("COOKED_MEAT")
 local jerky  = std.holding_qty("JERKY")
+local S = ctx.state                 -- the day's commitment lives here (3)
 local food   = berries + apples + cooked + jerky
 local water  = std.holding_qty("WATER") + std.holding_qty("SKINWATER")
 local skin   = std.holding_qty("WATERSKIN")
@@ -85,7 +86,11 @@ local eggs   = std.holding_qty("EGGS")     -- the flock's wage (keeps near a wee
 --    riding 5+, a day of missed draws), not an empty stomach: the
 --    catch walks home and cooks (COOK_MEAT, any lit fire, night-legal).
 local satiety = std.holding_qty("SATIETY")
-if satiety < 1.5 then
+-- The belly is the pantry that cannot rot (the soak's finding: the
+-- gathered shelf loses a tenth an hour to spoilage, a full belly
+-- spills a tenth an HOUR -- eat the basket down before it spoils,
+-- and the floor wakes fed instead of waking to a rotted larder).
+if satiety < 5 then
   if berries >= 2 then
     ctx.action.start_process("EAT_BERRIES")
   elseif apples >= 2 then
@@ -128,7 +133,7 @@ if place == river and skin >= 1 and std.holding_qty("SKINWATER") < 5 then
   ctx.action.start_process("FILL_SKIN")
 elseif place == river and water < 2 then
   ctx.action.start_process("DRINK")
-elseif place == river and protein < 3 and std.hour() < 15 then
+elseif place == river and protein < 4 and std.hour() < 15 then
   -- Standing at the bank with a thin meat shelf: fish it (run 47's
   -- lesson -- the world's meat never existed; the drink errand
   -- doubles as the catch, certain-ish, and nothing here hunts YOU).
@@ -224,8 +229,15 @@ end
 --    third an hour -- a hunt not cooked on arrival is half-wasted,
 --    so the gate is the cooked shelf, not hunger. The commons fire
 --    cooks for anyone at the clearing (lit -- the starter stokes
---    first; coals do not cook).
-if place == home and meat >= 2 and cooked < 6 then
+--    first; coals do not cook). The SMOKE rung (3b) outranks a fat
+--    woodpile: a floor with logs to spare banks the surplus as
+--    jerky (the pantry that never rots -- the soak's finding: the
+--    gathered shelf loses two thirds of a basket by dawn, and a
+--    floor that cannot bank is a countdown); a floor wood-thin, or
+--    hungry now, cooks the meal instead.
+if place == home and meat >= 2 and cooked < 6
+   and (wood < 3 or satiety < 4)
+   and not std.running_recipe("COOK_MEAT") then
   ctx.action.start_process("COOK_MEAT")
 end
 
@@ -272,6 +284,9 @@ end
 --    freezes one road from its fire (run 37's twins). Same bar as
 --    always: no walk may LAND in the dark.
 local forest = "FOREST"           -- the spear game: the deep wood's table
+local load = berries + apples + cooked + jerky + meat
+         + wood + flint + yarn     -- the back's burden (bodies and
+                                    -- coins ride free; cargo does not)
 local walk_home = world.distance_ticks(place or home, home) or 1
 local dusk_closing = std.hour() + walk_home >= 19
 -- The protein walk: a speared house hunts the deep forest when the
@@ -297,20 +312,26 @@ if not std.is_night() then
   --     floor never opened the ladder (it demanded a one-in-twenty
   --     yarn drop banked BEFORE the first walk); this floor takes
   --     the rung the first morning the stomach can spare it and the
-  --     night's fire is already paid (wood >= 4: the circuit costs a
-  --     whole day -- a floor that reaches dusk thin loses the fire,
-  --     and the fire's warmth is the wall the wolves respect). Out
-  --     by mid-morning, home before dark; the haft (3b) waits for yarn.
+  --     coming night's first stoke is banked (wood >= 2 -- the soak's
+  --     finding: the fire eats two and three logs a night, so a gate
+  --     at four sits exactly where the pile never wakes; two is the
+  --     night PAID, and the gather run behind it banks the rest).
+  --     THE DAY IS COMMITTED (the soak's second finding): a floor
+  --     that re-decides its errand every tick zig-zagged scrape to
+  --     bank to thicket in one daylight and starved on the roads;
+  --     the walk out commits the DAY -- the work at the scrape is
+  --     not hour-gated (the walk's arrival is noonish; the recipes'
+  --     own daylight gates the work), and dusk discipline walks the
+  --     committed floor home. The haft (2b) waits for yarn.
   elseif not knapping and spear < 1 and (food + satiety) >= 4
-     and wood >= 4 and can_walk and std.hour() < 11 then
-    if place == "FLINT" then
-      if flint >= 3 then
-        ctx.action.start_process("STUDY_KNAPPING")
-      else
-        ctx.action.start_process("DIG_FLINT")
-      end
+     and wood >= 2 and can_walk and std.hour() < 13 then
+    S.errand_day, S.errand = std.day(), "study"
+    ctx.action.travel("FLINT")
+  elseif S.errand == "study" and not knapping and place == "FLINT" then
+    if flint >= 3 then
+      ctx.action.start_process("STUDY_KNAPPING")
     else
-      ctx.action.travel("FLINT")
+      ctx.action.start_process("DIG_FLINT")
     end
   -- 2c. The feast (run 54 P2): comfort is the one want worth being
   --     SAFE for, and the feast is its one bulk buy. When ease has run
@@ -324,30 +345,64 @@ if not std.is_night() then
      and place == home and std.hour() < 15
      and not std.running_recipe("FEAST") then
     ctx.action.start_process("FEAST")
-  -- 3b. The fish errand (run 55's lesson: the houses gathered to
+  -- 3b. The smoke rung (the soak's finding): the gathered shelf ROTS
+  --     -- a tenth an hour, two thirds of a basket gone by dawn -- and
+  --     a floor that cannot bank food is a countdown, not a survivor.
+  --     The MANUAL's own answer is jerky: never rots, dense, and the
+  --     fire is already lit. When the meat shelf is fat and the log
+  --     pile can spare one, the afternoon goes to the smoke: five slow
+  --     hours, two strips -- the deep pantry the bad days draw on.
+  elseif meat >= 2 and wood >= 3 and jerky < 6 and #fires > 0
+     and place == home and std.hour() < 14
+     and not std.running_recipe("SMOKE_MEAT") then
+    ctx.action.start_process("SMOKE_MEAT")
+  -- 3c. The fish errand (run 55's lesson: the houses gathered to
   --     mouth and starved beside a fishable bank): before the spear
   --     exists -- and while the vegetarian shelf is thin -- the river
   --     is the protein rung, and it costs a morning: walk, catch,
-  --     cook at home. The same wood-first law as the study morning
-  --     (wood >= 4 -- the night banked before the day is spent): the
-  --     errand yields to the gather run once the fire is unpaid.
-  --     0a's at-river branch sets the catch itself.
-  elseif protein < 2 and food < 6 and wood >= 4
-     and std.hour() < 13 then
-    if place ~= river then
-      ctx.action.travel(river)
-    end
+  --     cook at home, smoke what the fire has logs for. Same
+  --     wood-first law as the study morning (wood >= 2), and the SAME
+  --     day-commitment: the walk out is taken from HOME only (the
+  --     soak's zig-zag: a floor that walked to the bank from the
+  --     scrape spent the daylight on roads), and the day is the
+  --     errand's: fish at the bank (0a sets the catch), walk home at
+  --     the dusk gate, cook and smoke the catch by the fire. The
+  --     protein bar that retires the errand is four strips' worth:
+  --     two catches -- one to eat, one to smoke.
+  elseif protein < 4 and food < 6 and wood >= 2
+     and std.hour() < 13 and place == home and can_walk then
+    S.errand_day, S.errand = std.day(), "fish"
+    ctx.action.travel(river)
+  elseif S.errand == "fish" and place == river and protein < 4
+     and std.hour() < 15 then
+    -- 0a's at-river branch sets the FISH intent; this branch holds
+    -- the commitment (no sideways walk) while the catch accumulates.
   elseif (food < 8 or wood < 6) and not dusk_closing
+     and load < 16
      and not std.running_recipe("GATHER") then
+    -- load < 16: a full back is a day's work DONE (the soak's
+    -- finding: a floor that gathered past its shoulders -- twenty-
+    -- nine units on a back that carries twenty -- was refused the
+    -- road home by the walk's own load law, and stood stranded in
+    -- the thicket in the dark with a feast it could not move).
     if place ~= woods then
       ctx.action.travel(woods)
     else
       ctx.action.start_process("GATHER")
     end
-  elseif place ~= home and (dusk_closing or (food >= 8 and wood >= 6)) then
+  elseif place ~= home and (dusk_closing or load >= 16
+                            or (food >= 8 and wood >= 6)) then
     ctx.action.travel(home)
   end
 else
   -- caught out after dark: HOLD (the dark road wants a torch, and
   -- the floor carries none). The walk home is the first act of day.
+end
+-- The day resets with the dawn (S.errand_day): yesterday's
+-- commitment is not today's. Committed floors that finished early
+-- (the study struck, the catch smoked) fall back to the gather run
+-- through the same chain -- the branches below the commitment read
+-- the larder, not the plan.
+if S.errand_day ~= std.day() then
+  S.errand, S.errand_day = nil, nil
 end
