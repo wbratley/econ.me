@@ -810,6 +810,7 @@ def test_the_commons_fire_stands(session):
     warm_out = {o.symbol: o.quantity for o in warm.outputs}
     assert warm_out["WARMTH"] == WARMTH_CAP and warm.requires_facility_lit
     assert warm_out["COMFORT"] == Decimal("0.5")   # P2: a fire hour is a nice hour
+    assert warm_out["REST"] == Decimal("0.5")      # run 56: the seat pays half rest
     for code in ("COOK_MEAT", "SMOKE_MEAT"):
         assert production.get_recipe(session, code).requires_facility_lit
     from econengine.goods import get_good
@@ -3198,6 +3199,26 @@ def test_the_fire_seat_pays_ease_besides_warmth(session):
     # 0.1 stocked -0.1 drawn, +0.5 seated, -0.1 drawn again, fading 5%
     assert _hold(session, w.id, "COMFORT") == Decimal("0.38")
     assert _hold(session, w.id, "SQUALOR") == Decimal("0")
+
+
+def test_the_seated_hour_pays_half_rest(session):
+    """The night rest trap's relief (run 56's post-mortem: the house that
+    SAT by the lit fire died of fatigue): a seated fire-hour pays half
+    rest (+0.5 against the stock's 0.25/h drain), so a house WARMing the
+    night maintains its REST stock instead of climbing the FATIGUE line.
+    SLEEP_BY_FIRE still recovers faster (net +0.75 vs +0.25), so the
+    watch-vs-sleep trade -- the wolf risk -- is intact."""
+    create_content(session)
+    _no_wolves(session)
+    w = _seat(session, "Seated")
+    _set(session, w, "REST", Decimal("4"))
+    for _ in range(4):
+        assert _act(session, w, "WARM_BY_FIRE")
+        _run(session, 1)
+    # Four drains (0.25/h) against the seated credits (+0.5): the stock
+    # holds its born level -- it never empties, so no FATIGUE accrues.
+    assert _hold(session, w.id, "REST") >= Decimal("4")
+    assert _hold(session, w.id, "FATIGUE") == Decimal("0")
 
 
 def test_the_bed_pays_the_finest_hour(session):

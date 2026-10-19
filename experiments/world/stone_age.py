@@ -250,6 +250,7 @@ FIRE_FUEL_CAP = Decimal("6")
 FIRE_FUEL_BURN = Decimal("1")
 STOKE_FUEL = Decimal("4")
 WARM_BY_FIRE_WARMTH = Decimal("6")
+WARM_BY_FIRE_REST = Decimal("0.5")
 
 # --- Torches: the night kit (P2, ROADMAP.md) ------------------------------
 # Darkness is ambient: night travel refuses you without LIT (a burning
@@ -291,8 +292,15 @@ EMBER_TICKS = 2
 #             death march, and the gatherer's road passes the river).
 #   FATIGUE:  grant 0.5/tick, decay 0.05 -> equilibrium 10, dies at 7.5
 #             (the THIRST twin). The REST stock (born 4, cap 8) drains
-#             0.25/h flat: sleepless, it empties at ~16h and the climb
-#             crosses the impaired floor 5 near the END of night 2
+#             0.25/h flat. Sleepless AT A LIT FIRE it no longer climbs:
+#             a seated fire-hour pays half back (WARM_BY_FIRE +0.5 --
+#             run 56's post-mortem: the house that SAT by the lit fire
+#             died of fatigue, so the seat maintains the stock while it
+#             warms), and SLEEP_BY_FIRE pays the full hour (+1, net
+#             +0.75 vs the seat's +0.25 -- the watch is worth the wolf
+#             risk). The lethal night is the fireless one, or the one
+#             away from home: there the stock empties at ~16h and the
+#             climb crosses the impaired floor 5 near the END of night 2
 #             (~32h) and kills mid-night-3 (~48h) -- 2 nights tired,
 #             3 dead. Sleep pays in hours the house already spends
 #             idle at night: no third time-tax (P3's lesson), the
@@ -543,9 +551,11 @@ ridge's weather in the white season -- the storms are its fact.
    a third of a day's food in one roll) ==
 1. THE FIRE IS COMMON GROUND: a standing fire at the clearing already
    seats four and cooks for anyone -- keep it fed (1 WOOD stokes four
-   hours) and take your seat by dark (WARM_BY_FIRE). MAKE_FIRE (2 WOOD)
-   adds four public seats when the clearing is crowded. Do not sleep
-   fireless.
+   hours) and take your seat by dark (WARM_BY_FIRE: a seated hour pays
+   half rest, +0.5 -- the stock holds at the lit fire). MAKE_FIRE (2
+   WOOD) adds four public seats when the clearing is crowded.
+   SLEEP_BY_FIRE pays the full hour's rest (+1) but holds no torch --
+   the watch is worth the wolf risk. Do not sleep fireless.
 1a. TORCHES are the night road: the same commons fire that warms you
    lights your brands (LIGHT_TORCH, free) -- MAKE them by daylight (1
    WOOD + 1 YARN), CHAIN them off your own flame (or its two-tick
@@ -1880,13 +1890,16 @@ def _create_recipes(session: Session) -> None:
         session, "WARM_BY_FIRE", name="Warm by the Fire",
         description="Take a seat at a lit fire: an hour's seated warmth, +6 "
                     "(a body holds at most six -- two cold hours' grace once "
-                    "you stand up) and ease besides (+0.5 comfort -- a fire "
-                    "hour is a nice hour). No labor, night-legal, at the "
+                    "you stand up), half an hour's rest besides (+0.5 -- the "
+                    "stock holds at the lit fire; SLEEP_BY_FIRE's full hour "
+                    "recovers twice as fast) and ease (+0.5 comfort -- a "
+                    "fire hour is a nice hour). No labor, night-legal, at the "
                     "hearth; a "
                     "fire seats four at once, warming hour by hour. This is "
                     "how nights are survived: not banked, SAT.",
         inputs={},
-        outputs={"WARMTH": WARM_BY_FIRE_WARMTH, "COMFORT": D("0.5")},
+        outputs={"WARMTH": WARM_BY_FIRE_WARMTH, "REST": WARM_BY_FIRE_REST,
+                 "COMFORT": D("0.5")},
         duration_ticks=1,
         requires_facility="FIRE", requires_facility_lit=True,
         requires_place_kind="HEARTH",

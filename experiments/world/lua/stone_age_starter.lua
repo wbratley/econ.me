@@ -184,8 +184,9 @@ end
 --     keeps the fire, and stands watch all at once). The sleep wants
 --     warmth BANKED first (>= 3: the stoke hour between sleeps draws
 --     uncovered -- a seat before the watch, a seam never bit). Rested
---     and dark: take a seat as before (WARM_BY_FIRE, +6 -- the seat that
---     refills the stock a sleeping body only holds). A wolf that
+--     and dark: take a seat as before (WARM_BY_FIRE: +6 warmth, +0.5
+--     rest -- the seated hour maintains the stock; sleep still
+--     recovers twice as fast). A wolf that
 --     finds a sleeper finds prey: sleeping holds no torch and little
 --     warmth -- the price of the watch is vigilance's absence.
 -- P2: EASE is a want with a bite now -- an unloved hour accrues
