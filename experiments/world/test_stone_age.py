@@ -194,7 +194,8 @@ def test_content_and_coin_markets(session):
         "LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
         "EGGS", "CHICKEN", "WOOD", "YARN",
         "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
-        "BED", "PELT", "WATERSKIN", "SALT", "IBEX_PELT"}
+        "BED", "PELT", "WATERSKIN", "SALT", "IBEX_PELT",
+        "HERB", "HONEY", "POULTICE", "TONIC", "BEEHIVE"}
     assert all(m.currency == COIN for m in rows)
     # the far book (P3): the lick's pelt market sits beyond the ridge,
     # and ONLY there -- every other market stays at the post
@@ -233,7 +234,7 @@ def test_gather_loot_table(session):
             if e["recipe"] == "GATHER"]
     assert len(done) >= 20
     assert {e.get("branch_label") for e in done} <= {
-        "berries", "apples", "wood", "yarn", "flint"}
+        "berries", "apples", "wood", "yarn", "flint", "herb"}
     for e in done:
         assert len(e["outputs"]) == 1  # one resource per roll
 
@@ -1329,19 +1330,19 @@ def test_post_dark_bids_freeze_instead_of_drifting(session):
     assert Decimal(str(state["bid"]["MEAT"])) == Decimal("0.50")  # frozen
     assert Decimal(str(state["bid"]["YARN"])) == Decimal("0.75")
     # coin returns: the bids come back at the frozen prices
-    acc.balance = Decimal("12")
+    acc.balance = Decimal("16")
     _run(session, 1)
     mid = {m.id: m.symbol for m in session.execute(select(Market)).scalars()}
     buys = {mid[o.market_id]: o for o in
             _open_orders(session, post.id, side=OrderSide.BUY)}
     assert Decimal(str(buys["MEAT"].limit_price)) == Decimal("0.50")
-    # every want now: 12 coin against a ~22.8-coin want -- every bid
+    # every want now: 16 coin against a ~26.6-coin want -- every bid
     # comes back, pro-rated to two units each (BERRIES too: rot alone
     # walked the 60-berry hoard under the larder's 20, so its
     # appetite is back -- there is no dump door to do it faster; and
     # SALT since P3 -- the counter bids on what can be dug)
     assert set(buys) == {"MEAT", "WOOD", "YARN", "FLINT", "SALT",
-                         "BERRIES", "APPLES", "EGGS", "PELT"}
+                         "BERRIES", "APPLES", "EGGS", "PELT", "HONEY"}
     assert all(o.quantity == Decimal("2") for o in buys.values())
 
 
@@ -1476,7 +1477,8 @@ def test_the_genesis_basis_prices_the_opening_book(session):
     expected = {"JERKY": "0.90", "BERRIES": "0.50", "APPLES": "0.70",
                 "EGGS": "0.70", "CHICKEN": "3.00", "WATERSKIN": "4.50",
                 "WOOD": "1.00", "MEAT": "1.00", "YARN": "1.50",
-                "FLINT": "1.50", "PELT": "3.00", "SALT": "1.50"}
+                "FLINT": "1.50", "PELT": "3.00", "SALT": "1.50",
+                "HONEY": "1.80", "TONIC": "3.00", "BEEHIVE": "3.50"}
     assert lua == expected
     _run(session, 1)
     post = _post(session)
@@ -1488,13 +1490,16 @@ def test_the_genesis_basis_prices_the_opening_book(session):
     # retail opens at the margin over genesis basis -- only for the
     # stocked shelf (APPLES and EGGS start bare: an unstocked shelf
     # quotes nothing, and there is no restock but trade)
-    for sym in ("JERKY", "BERRIES", "CHICKEN", "WATERSKIN"):
+    for sym in ("JERKY", "BERRIES", "CHICKEN", "WATERSKIN", "TONIC",
+               "BEEHIVE"):
         assert by[("sell", sym)].limit_price \
             == (Decimal(expected[sym]) * Decimal("1.30")).quantize(
                 Decimal("0.01"))
     assert ("sell", "APPLES") not in by and ("sell", "EGGS") not in by
+    assert ("sell", "HONEY") not in by  # unstocked shelf: no quote
     # bids open at half basis (BERRIES holds 60: over the larder max)
-    for sym in ("MEAT", "WOOD", "YARN", "FLINT", "APPLES", "EGGS", "PELT"):
+    for sym in ("MEAT", "WOOD", "YARN", "FLINT", "APPLES", "EGGS", "PELT",
+               "HONEY"):  # the honey bid joins at half basis
         assert by[("buy", sym)].limit_price \
             == (Decimal(expected[sym]) * Decimal("0.5")).quantize(
                 Decimal("0.01"))
@@ -2169,12 +2174,12 @@ def test_the_dark_road_wants_a_flame(session):
 def test_the_orchard_branch_feeds_the_bare_hand(session):
     """The gather arithmetic, asserted from the installed rows: both
     tables carry the orchard branch, the weights sum to 100, and bare
-    food income clears ~5.5 satiety-equivalent/hour (run 52's flip:
+    food income clears ~5.4 satiety-equivalent/hour (run 52's flip:
     runs 50-51 ended in total extinction with every house gathering
     for its life and losing -- now the thicket feeds a house
     bare-handed: food costs ~2.5 of the 14 daylight hours, and the
     surplus that rots in a morning is the trade's raw material).
-    The bag still doubles every row: ~10.5 satiety/hour, the
+    The bag still doubles every row: ~10.4 satiety/hour, the
     advantage contract's wide margin."""
     create_content(session)
     gather = production.get_recipe(session, "GATHER")
@@ -2190,7 +2195,8 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
         return rows
 
     bare, bagged = table(gather), table(bag)
-    assert set(bare) == {"berries", "apples", "wood", "yarn", "flint"}
+    assert set(bare) == {"berries", "apples", "wood", "yarn", "flint",
+                        "herb"}
     assert bare["berries"][1] == {"BERRIES": Decimal("6")}
     assert bare["apples"][1] == {"APPLES": Decimal("5")}
     assert bagged["berries"][1] == {"BERRIES": Decimal("12")}
@@ -2236,7 +2242,9 @@ def test_the_crafts_pay_the_larders_bill(session):
         return weight * sum(outs.values()) / Decimal("100")
 
     bare, bagged = rows(gather), rows(bag)
-    # the berries are back at the wall-breaking weights
+    # the berries keep the wall-breaking weights (Bundle A's herb
+    # roll takes its five from the WOOD roll: food is survival's
+    # margin, wood has the pile and the store)
     assert bare["berries"][0] == Decimal("40")
     assert bagged["berries"][0] == Decimal("35")
     # the crafts pay, halved but proportional (the bag keeps the
@@ -2288,12 +2296,15 @@ def test_the_thicket_funds_the_night(session):
         return weight * sum(outs.values()) / Decimal("100")
 
     bare, bagged = table(gather), table(bag)
-    assert bare["wood"] == (Decimal("25"), {"WOOD": Decimal("3")})
-    assert bagged["wood"] == (Decimal("20"), {"WOOD": Decimal("6")})
-    # 2.5x the famine tables: 0.75 and 1.20 logs per roll
-    assert wood_ev(bare) == Decimal("0.75")
-    assert wood_ev(bagged) == Decimal("1.20")
-    assert wood_ev(bagged) / wood_ev(bare) == Decimal("1.6")
+    # Bundle A's herb roll took its five from the wood weight (the
+    # food rolls are survival's margin; wood has the pile and the
+    # store) -- a fifth of every gather, still quantity over size:
+    # a six-gather day finds zero wood 26% of the time, not 38%
+    assert bare["wood"] == (Decimal("20"), {"WOOD": Decimal("3")})
+    assert bagged["wood"] == (Decimal("15"), {"WOOD": Decimal("6")})
+    assert wood_ev(bare) == Decimal("0.60")
+    assert wood_ev(bagged) == Decimal("0.90")
+    assert wood_ev(bagged) / wood_ev(bare) == Decimal("1.5")
     # run 41's lever: one stoked log banks half a night
     assert stoke.facility_fuel_output == Decimal("4")
     # the night's price from dark: a dusk relight (2 WOOD = 2 hours)
@@ -2304,9 +2315,11 @@ def test_the_thicket_funds_the_night(session):
     # ~11 logs a day -- the night is paid TWICE over (run 40 died
     # inside the margin; the margin becomes a surplus economy)
     assert 3 * 5 * wood_ev(bare) >= 2 * night_price
-    # frequency beats size: P(zero wood in a six-gather day)
+    # frequency beats size: P(zero wood in a six-gather day) -- 0.26
+    # under Bundle A's re-slice (the herb roll took the wood's five),
+    # a tail the woodpile and the store absorb (run 58)
     miss = (Decimal("100") - bare["wood"][0]) / Decimal("100")
-    assert miss ** 6 <= Decimal("0.18")
+    assert miss ** 6 <= Decimal("0.27")
 
 
 def test_the_pen_serves_the_whole_flock_for_one_labor(session):
@@ -4228,3 +4241,233 @@ def test_the_white_season_two_houses(session):
     # post's shelf at the famine ask and stands at the year's end
     assert trader.status == EntityStatus.ACTIVE
     assert _hold(session, trader.id, "HUNGER") < Decimal("15")
+
+
+# ---------------------------------------------------------------------------
+# Bundle A -- the healer's shelf (docs/stone-age-expansion.md). Every
+# condition a craftable exit; the run-57 hole (an incurable DISEASE)
+# closed by TRADE (the post's tonic shelf), not by shallowing the
+# ALCHEMY ladder (the prize ruling: four studies up, on purpose).
+
+
+def _good(session, symbol):
+    from econengine.models import Good
+    return session.execute(
+        select(Good).where(Good.symbol == symbol)).scalar_one()
+
+
+def test_the_injury_register_and_its_doses(session):
+    """WOUND/INFECTION/FROSTBITE are register goods exactly like HUNGER
+    (decay + kill line + carry exemption), they drag LABOR by the
+    SQUALOR precedent (x0.8/0.85/0.75), and the festering register
+    declares the two condition->condition rows -- the pack's own data,
+    read back through the engine's getters."""
+    from econengine import conditions as conditions_mod
+    create_content(session)
+    for sym, kill, drag in (("WOUND", "12", "0.8"),
+                            ("INFECTION", "8", "0.85"),
+                            ("FROSTBITE", "10", "0.75")):
+        good = _good(session, sym)
+        assert good.incapacitates_at == Decimal(kill)
+        assert good.modifies_pattern == "LABOR"
+        assert good.modifies_factor == Decimal(drag)
+        assert good.carry_exempt          # a register, not cargo (S5a)
+    # the festering register: the deficit->condition precedent one
+    # tier up, declared per world and votable
+    grants = conditions_mod.get_condition_grants(session)
+    assert grants["WOUND"] == {"grants": "INFECTION", "at": "0.5",
+                               "quantity": "0.05"}
+    assert grants["EXPOSURE"] == {"grants": "FROSTBITE", "at": "9",
+                                  "quantity": "0.25"}
+    # FROSTBITE has no medicine -- warmth is its cure, and its decay
+    # (the register's fastest) is the body's own thaw
+    for recipe in ("BIND_WOUND", "CLEANSE", "TAKE_TONIC"):
+        assert production.get_recipe(session, recipe).duration_ticks == 0
+    bind = production.get_recipe(session, "BIND_WOUND")
+    assert {r.symbol: r.quantity for r in bind.inputs} == {
+        "WOUND": Decimal("0.5"), "POULTICE": Decimal("1")}
+    # the dose IS the fester floor: bind a fresh bite and the residue
+    # sits under it (see the festering test below)
+
+
+def test_the_alchemy_ladder_stays_deep(session):
+    """The prize ruling, asserted as data: ALCHEMY is four studies up
+    (KNAPPING -> FIRE_HARDENING -> POTTERY -> ALCHEMY) and APIARY rides
+    the KNAPPING rung -- the medicine is never shallowed, the tonic
+    shelf is the day-one gateless cousin instead."""
+    from econengine import tech as tech_mod
+    create_content(session)
+    def prereq(code):
+        row = tech_mod.get_technology(session, code)
+        return [p.prerequisite.code for p in row.prerequisites]
+    assert prereq("ALCHEMY") == ["POTTERY"]
+    assert prereq("POTTERY") == ["FIRE_HARDENING"]
+    assert prereq("FIRE_HARDENING") == ["KNAPPING"]
+    assert prereq("APIARY") == ["KNAPPING"]
+    # the studies exist and cost the craft's own raw
+    study = production.get_recipe(session, "STUDY_ALCHEMY")
+    assert [u.technology.code for u in study.unlocks] == ["ALCHEMY"]
+    assert {r.symbol: r.quantity for r in study.inputs} == {
+        "HERB": Decimal("2"), "WOOD": Decimal("1")}
+    assert [u.technology.code for u in production.get_recipe(
+        session, "STUDY_APIARY").unlocks] == ["APIARY"]
+    # the work-crafts are gated and daylight; the cures are free acts
+    for code in ("MAKE_POULTICE", "MAKE_TONIC"):
+        recipe = production.get_recipe(session, code)
+        assert [t.technology.code
+                for t in recipe.requirements] == ["ALCHEMY"]
+        assert recipe.requires_daylight
+
+
+def test_the_tonic_is_the_diseases_exit(session):
+    """Run 57's Ivar, answered: a disease that stacks above a whole
+    point is dosed back down (the input consumes the register itself);
+    a sub-point ride is left to decay -- the doc's quantization note."""
+    create_content(session)
+    house = _seat(session, "Ivar")
+    _set(session, house, "DISEASE", Decimal("2.2"))
+    _set(session, house, "TONIC", Decimal("2"))
+    _act(session, house, "TAKE_TONIC")
+    assert _hold(session, house.id, "DISEASE") == Decimal("1.2")
+    assert _hold(session, house.id, "TONIC") == Decimal("1")
+    _act(session, house, "TAKE_TONIC")
+    assert _hold(session, house.id, "DISEASE") == Decimal("0.2")
+    # the sub-point ride decays on its own; a second dose refuses
+    with pytest.raises(Exception, match="DISEASE"):
+        production.start_process(session, house, "TAKE_TONIC")
+
+
+def test_a_test_injected_wound_festers_and_the_honey_cleanses(session):
+    """The doc's Run A wiring: WOUND is test-injected (the combat grant
+    ships in Bundle B), an unbound wound past its scab floor breeds
+    INFECTION drip by drip, BIND_WOUND consumes half a point -- the
+    dose IS the floor, so the residue stops festering -- and CLEANSE
+    spends honey against the tail."""
+    create_content(session)
+    house = _seat(session, "Bitten")
+    _set(session, house, "WOUND", Decimal("1"))
+    _run(session, 6)   # the wound rides 0.99..0.89, past the 0.5 floor
+    festers = [e for e in _events(session, "condition_granted")
+               if e["entity_id"] == house.id]
+    assert festers and all(e["source"] == "WOUND"
+                           and e["condition"] == "INFECTION" for e in festers)
+    infection = _hold(session, house.id, "INFECTION")
+    assert Decimal("0.25") < infection < Decimal("0.35")
+    # bind it: half a point consumed, the residue under the floor
+    _set(session, house, "POULTICE", Decimal("1"))
+    _act(session, house, "BIND_WOUND")
+    wound = _hold(session, house.id, "WOUND")
+    assert Decimal("0.3") < wound < Decimal("0.45") < Decimal("0.5")
+    _run(session, 3)
+    assert len([e for e in _events(session, "condition_granted")
+                if e["entity_id"] == house.id]) == len(festers)  # stopped
+    # the tail rides over the cleanse dose; honey spends against it
+    _set(session, house, "INFECTION", Decimal("0.8"))
+    _set(session, house, "HONEY", Decimal("1"))
+    _act(session, house, "CLEANSE")
+    assert _hold(session, house.id, "INFECTION") == Decimal("0.3")
+    assert _hold(session, house.id, "HONEY") == Decimal("0")
+
+
+def test_exposure_past_nine_breeds_frostbite(session):
+    """The deep-cold injury under the number: EXPOSURE riding the kill
+    band breeds FROSTBITE at a drip whose equilibrium (0.25 / 0.05 = 5)
+    sits under its own kill line -- frostbite drags and warns, the cold
+    itself still kills; warmth is the only cure, and the thaw is the
+    register's fastest decay."""
+    create_content(session)
+    house = _seat(session, "Frozen")
+    _set(session, house, "EXPOSURE", Decimal("9.5"))
+    _run(session, 4)
+    bites = [e for e in _events(session, "condition_granted")
+             if e["entity_id"] == house.id]
+    assert bites and all(e["source"] == "EXPOSURE"
+                         and e["condition"] == "FROSTBITE" for e in bites)
+    assert Decimal("0.7") < _hold(session, house.id, "FROSTBITE") < Decimal("1")
+    # warmed past the floor, the breeding stops and the thaw runs
+    _set(session, house, "EXPOSURE", Decimal("0"))
+    before = len(bites)
+    _run(session, 6)
+    assert len([e for e in _events(session, "condition_granted")
+                if e["entity_id"] == house.id]) == before
+    assert _hold(session, house.id, "FROSTBITE") < Decimal("0.8")
+
+
+def test_the_beehive_lays_and_the_honey_feeds(session):
+    """The CHICKEN idiom one shelf over: the hive is bought (the post
+    stocks two), COLLECT_HONEY serves the whole yard in one hour (one
+    honey per hive held, capped at the yard's worth of two), the APIARY
+    rank gates the combing, and the honey itself is dense wet food."""
+    from econengine import tech as tech_mod
+    create_content(session)
+    house = _seat(session, "Apiarist")
+    _set(session, house, "BEEHIVE", Decimal("2"))
+    with pytest.raises(Exception, match="APIARY"):
+        production.start_process(
+            session, house, "COLLECT_HONEY")   # the rank keeps the comb
+    for code in ("KNAPPING", "APIARY"):
+        tech_mod.grant_unlock(
+            session, house, tech_mod.get_technology(session, code),
+            production.next_tick_number(session))
+    assert _act_day(session, house, "COLLECT_HONEY")
+    _run(session, 2)   # duration 1: started pre-tick, completes on the next
+    # two hives paid two combs, less the honey's own slow fade in
+    # the completion window (0.02/h -- the good that KEEPS)
+    assert _hold(session, house.id, "HONEY") > Decimal("1.9")
+    _set(session, house, "BEEHIVE", Decimal("0"))
+    with pytest.raises(Exception, match="BEEHIVE"):
+        production.start_process(session, house, "COLLECT_HONEY")
+    # the meal: dense and wet, instant, night-legal
+    _set(session, house, "SATIETY", Decimal("0"))
+    assert _act(session, house, "EAT_HONEY")
+    assert _hold(session, house.id, "SATIETY") == Decimal("3")
+    assert _hold(session, house.id, "WATER") >= Decimal("0.3")
+
+
+def test_herbs_are_worthless_until_the_rank_works_them(session):
+    """The chain the bundle exists for: the gather's sixth roll banks
+    HERB, the raw feeds nothing, and only the studied alchemist turns
+    two herbs and a cup of river water into the shelf's medicines."""
+    from econengine import tech as tech_mod
+    create_content(session)
+    house = _seat(session, "Forager")
+    _set(session, house, "HERB", Decimal("4"))
+    _set(session, house, "WATER", Decimal("2"))
+    _act_day(session, house, "EAT_BERRIES")  # idle to dawn, if the test woke at night
+    with pytest.raises(Exception, match="ALCHEMY"):
+        production.start_process(session, house, "MAKE_TONIC")
+    for code in ("KNAPPING", "FIRE_HARDENING", "POTTERY", "ALCHEMY"):
+        tech_mod.grant_unlock(
+            session, house, tech_mod.get_technology(session, code),
+            production.next_tick_number(session))
+    assert _act_day(session, house, "MAKE_TONIC")
+    _run(session, 2)
+    assert _hold(session, house.id, "TONIC") == Decimal("1")
+    assert _hold(session, house.id, "HERB") == Decimal("2")
+    assert _hold(session, house.id, "WATER") < Decimal("1")  # spent, and it seeps
+    _set(session, house, "WATER", Decimal("2"))  # it seeps; top the cup
+    assert _act_day(session, house, "MAKE_POULTICE")
+    _run(session, 2)
+    assert _hold(session, house.id, "POULTICE") == Decimal("1")
+    assert _hold(session, house.id, "HERB") == Decimal("0")
+
+
+def test_the_posts_tonic_shelf_sells_the_day_one_exit(session):
+    """The prize ruling's other half: the post stocks THREE tonics at
+    the stiff ask and never restocks (no bid -- the counter cannot make
+    a dose), so the shelf empties into whoever pays and the bare shelf
+    is the demand the alchemist sells into."""
+    create_content(session)
+    post = _post(session)
+    assert _hold(session, post.id, "TONIC") == Decimal("3")
+    assert _hold(session, post.id, "BEEHIVE") == Decimal("2")
+    assert not list(_open_orders(session, post.id, symbol="TONIC",
+                                 side=OrderSide.BUY))
+    # a coin-pursed house buys the exit at the ask, over the counter
+    house = _seat(session, "Desperate")
+    _at(session, house, "POST")
+    markets.place_order(
+        session, house.id, "TONIC", "buy", Decimal("1"), Decimal("3.90"))
+    _run(session, 1)
+    assert _hold(session, house.id, "TONIC") == Decimal("1")
+    assert _hold(session, post.id, "TONIC") == Decimal("2")

@@ -1,17 +1,20 @@
 # stone_age expansion — materials, craftables, skills, conditions, tech tree
 
-Status: **design, not implemented.** One phase = one PR = one run (the pack's
-doctrine — see `experiments/world/ROADMAP.md`). Written after the run-56/57
+Status: **Bundle A shipped; B and C are design.** One phase = one PR =
+one run (the pack's doctrine — see `experiments/world/ROADMAP.md`). Written after the run-56/57
 postmortems (the DISEASE death with no exit, the load trap), alongside
 run-58's camp-storage build (`docs/camp-storage.md` -- whose surfaces this
 doc assumes below), from a low-tech dig across **Rust, Old School RuneScape,
 Minecraft, D&D 5e, and Skyrim**. Most of what follows is data: `create_good` /
-`create_recipe` / `create_technology` rows plus branch tables. Three pieces
+`create_recipe` / `create_technology` rows plus branch tables. Two pieces
 are **small declarative engine extensions**, named where they appear: a
-combat-rules row that grants WOUND on a landed bite, a conditions-pass
-grant of one condition from another (WOUND->INFECTION, EXPOSURE->FROSTBITE
--- the deficit->condition precedent one tier up), and a combat
-defense-holdings row for the shield. No migrations.
+combat-rules row that grants WOUND on a landed bite (the `bite_loot`
+precedent -- a declared row that credits on a landed bite), and a
+conditions-pass grant of one condition from another (WOUND->INFECTION,
+EXPOSURE->FROSTBITE -- the deficit->condition precedent one tier up).
+The shield needs no extension at all: `effective_defense` already reads
+the held `armor` row (`{"CLOTHES": 1}` is live -- clothes are armor
+today), so a shield is a number added to that dict. No migrations.
 
 The point is not to add *stuff*. The point is to add **chains** — a raw
 material that only becomes valuable once a rank exists to work it — because
@@ -203,6 +206,11 @@ goods.create_good(session, "BEEHIVE", name="Beehive",
                 "sleep. Held, never eaten -- a yard, not a wild.",
     max_holding=Decimal("2"))
 
+# Acquisition is the CHICKEN rung, not a craft: the post's retail anchor
+# stocks hives at a stiff genesis ask, the same idiom that puts chickens
+# on the shelf. The APIARY rank is what lets you keep the comb; the hive
+# itself is bought, like a hen.
+
 # COLLECT_HONEY -- the scales_with idiom (the CHICKEN precedent):
 # output x min(cap, floor(held BEEHIVE)) at completion, one hour serves the lot.
 production.create_recipe(session, "COLLECT_HONEY", name="Collect Honey",
@@ -245,7 +253,7 @@ production.create_recipe(session, "TAKE_TONIC", name="Take a Tonic",
 # review caught the missing food path). Dense, wet, instant, night-legal.
 production.create_recipe(session, "EAT_HONEY", name="Eat Honey",
     description="The comb: dense, wet, keeping -- the larder's sweetest "
-                "shelf, and the only meal that dresses a wound too.",
+                "shelf, and the raw of the CLEANSE dose.",
     inputs={"HONEY": D("1")},
     outputs={"SATIETY": D("3"), "WATER": D("0.3")},
     duration_ticks=0)
@@ -316,7 +324,10 @@ more than a miss.
 ```python
 # The two drops that enable the kit. FEATHER from a hunt (wolf/ibex/boar
 # carcass), BONE from the same kills -- a dead predator yields a pelt AND
-# a bone AND a feather, not one tradeable.
+# a bone AND a feather, not one tradeable. The wiring is the beasts'
+# estate holdings: the wolf/boar templates already ride into the world
+# carrying MEAT and PELT (the estate seizure on a kill is the point), and
+# BONE and FEATHER join that same held set -- data, not a recipe.
 goods.create_good(session, "FEATHER", name="Feather",
     description="Picked off a kill: the fletch on an arrow. Durable, "
                 "light, worth nothing but the fletcher's bench.")
@@ -364,12 +375,12 @@ production.create_recipe(session, "MAKE_SHIELD", name="Make Shield",
 #   with good_requirements={"KNIFE": 1} and better duration or output.
 #   The bare rows stay (the gateless cousins); the knife buys margin,
 #   never access.
-# - SHIELD works as a DEFENSE-HOLDINGS row in the combat rules -- the
-#   deterrence precedent exactly (deterrence reads a WARMTH holding;
-#   this adds to effective_defense instead):
-#      "defense_holdings": {"SHIELD": D("2")}
-#   effective_defense reads stat rows only today; this is the third
-#   declarable engine extension named in the status block.
+# - SHIELD is DATA on an existing row: the combat rules' "armor" dict is
+#   a per-unit-held defense bonus that effective_defense already reads
+#   ({"CLOTHES": 1} is live -- clothes are armor today). The pack's
+#   COMBAT_RULES gains "SHIELD": D("2") in that dict. No engine change;
+#   the spear and the axe give offense, the shield answers it, and
+#   clothes already buy a point of the answer.
 ```
 
 **The arrow wires into the existing hunt** (this is the behavioral change —
@@ -393,8 +404,9 @@ festers:
 # Two declarable rows, engine-built once (the review catch: the original
 # draft said "script-side" festering -- IMPOSSIBLE, scripts never touch
 # holdings; the money-scope invariant is the pack's oldest law):
-# 1. The injury, as a combat-rules row (the deterrence precedent: rules
-#    are a declared dict the engine reads):
+# 1. The injury, as a combat-rules row -- the bite_loot precedent
+#    exactly (bite_loot {"MEAT": 1} already credits the ATTACKER on a
+#    landed bite; this row credits the bitten side instead):
 #      "on_hit_grants": {"WOUND": D("1")}   # a landed bite tears
 # 2. The festering, as a conditions-pass grant -- the deficit->condition
 #    precedent one tier up (condition->condition, declared per
@@ -449,7 +461,8 @@ goods.create_good(session, "LEATHER", name="Leather",
     description="A pelt scraped, smoked, and greased: the worked hide. "
                 "The tanner's output, the tailor's input -- the first "
                 "material that only exists because a rank made it.")
-# The ignition economy. RESIN is the raw (a forest gather roll); CHARCOAL is
+# The ignition economy. RESIN is the raw (a new roll on the thicket
+# gather tables -- the forest has no gather, only hunts); CHARCOAL is
 # the processed fuel (wood sealed in a pit); KINDLING is what actually
 # lights.
 goods.create_good(session, "RESIN", name="Resin",
@@ -500,7 +513,7 @@ production.create_recipe(session, "MAKE_KINDLING", name="Make Kindling",
     description="Charcoal and resin: the reliable strike.",
     inputs={"CHARCOAL": D("1"), "RESIN": D("1")}, outputs={"KINDLING": D("1")},
     duration_ticks=1)
-# RESIN rides the forest gather: {"weight": D("5"), "outputs": {"RESIN": D("1")},
+# RESIN rides the thicket gather (GATHER/GATHER_BAG): {"weight": D("5"), "outputs": {"RESIN": D("1")},
 # "label": "resin"}
 ```
 
@@ -517,13 +530,18 @@ tech.create_technology(session, "LEATHERWORK", prerequisites=["TANNING"],
 ### What this bundle buys
 
 - **The tanner/tailor split.** LEATHER is a real intermediate: the tanner
-  sells it, the tailor buys it, and CLOTHES/WATERSKIN/FINE_CLOTHES move
-  from "hold a pelt" to "hold a leather" — the first material chain that
+  sells it, the tailor buys it, and CLOTHES/WATERSKIN move
+  from "hold a pelt" to "hold a leather" (FINE_CLOTHES keeps IBEX_PELT --
+  the ruling above) — the first material chain that
   is *two* bodies and a market between them.
 - **Fire becomes managed.** KINDLING **improves** MAKE_FIRE (a variant
-  row: fewer wood, faster light) and a charcoal stoke banks double fuel
-  -- never gates. The free stoke stays free (the starter floor does not
-  move); the ignition shelf sells margin, not access.
+  row: fewer wood, faster light) -- never gates. The free stoke stays
+  free (the starter floor does not move); the ignition shelf sells
+  margin, not access. The charcoal *stoke* leg is dominated and parked:
+  stoking is free and instant at +2h per log, so no stoke made of three
+  logs out-earns stoking those three logs (a "double" stoke is 1.33h per
+  wood against 2h; even a 3x stoke only ties it and costs four hours of
+  labor to make) -- the charcoal's value is the KINDLING leg.
 - **A processing step** (wood→charcoal) that is the shape of every later
   industry: input in, a slower better fuel out, and a trader between.
 
@@ -585,8 +603,9 @@ variable; the census is the tuning pass (numbers below are first guesses).
 1. **Run A — The Healer's Shelf.** Ship Bundle A in full. Proves: DISEASE
    now has an exit (a house that eats raw and then takes a tonic survives
    the roll that used to kill it), herbs forage and trade, the beehive
-   lays while the house sleeps, and WOUND/INFECTION are granted-and-cured
-   end to end. Watch: does a house *stock* tonics, or is the medicine
+   lays while the house sleeps, and the cures work end to end (a
+   test-injected WOUND, a raw-meal DISEASE -- the combat grant wiring
+   itself ships in B). Watch: does a house *stock* tonics, or is the medicine
    only ever bought at death's door (the post's shelf, like jerky)?
 2. **Run B — The Hunter's Kit.** Ship Bundle B. Proves: the bow now costs a
    shot per shot (a fletcher appears as a trader), a wolf bite is a WOUND
@@ -633,6 +652,8 @@ re-pins ride every bundle's definition of done (the review additions):
   fights.
 - **KINDLING's price point.** Ruled in review: kindling *improves* MAKE_FIRE
   (a variant row -- fewer wood, faster light), it never gates; the free
-  stoke stays. The open question is tuning only: is a double-fuel charcoal
-  stoke worth 3 wood and 4 hours, or does the ignition shelf sell nothing
-  the plain log does not? The census decides.
+  stoke stays. The charcoal stoke leg is **parked, not tunable**: stoking
+  is free and instant at +2h per log, so no charcoal stoke out-earns
+  stoking the three logs it is made of -- the open question is only
+  whether the KINDLING leg (the ignition shelf) sells anything the plain
+  log does not. If not, the bundle shrinks to RESIN + KINDLING.

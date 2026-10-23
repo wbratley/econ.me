@@ -85,6 +85,17 @@ local comfort = std.holding_qty("COMFORT")  -- ease banked (run 54 P2)
 local squalor = std.holding_qty("SQUALOR")  -- the unloved hours' memory
 local flint  = std.holding_qty("FLINT")
 local yarn   = std.holding_qty("YARN")
+local herb   = std.holding_qty("HERB")   -- the healer's raw (Bundle A):
+                                           -- ballast to the floor (no rank
+                                           -- works it) -- a POCKET good
+                                           -- (carry_exempt): it rides free
+                                           -- on the back and never strands
+                                           -- the house (run 57's lesson
+                                           -- goes the other way: an
+                                           -- uncounted symbol that the
+                                           -- engine DOES count is the
+                                           -- trap; an exempted one is
+                                           -- simply not cargo)
 local protein = meat + cooked + jerky      -- the meat-family shelf (raw MEAT
                                             -- rots fastest; the walk pays in it)
 local eggs   = std.holding_qty("EGGS")     -- the flock's wage (keeps near a week)
@@ -162,6 +173,31 @@ elseif place == river and protein < 4 and std.hour() < 15 then
   ctx.action.start_process("FISH")
 elseif water < 1 and not std.is_night() then
   ctx.action.travel(river)
+end
+
+-- 0b. The healer's shelf (Bundle A; run 57's Ivar died at DISEASE
+--     2.76 with the fire lit and the larder full -- the cure was
+--     nowhere because none existed). TAKE_TONIC is free, instant,
+--     night-legal, and consumes the register itself: a dose buys back
+--     one whole point. The floor's medicine is PASSIVE by
+--     measurement: a sick day spent walking for a dose is a dead
+--     larder on this margin (the soak measured the dedicated walk at
+--     half the floor's survival -- 30% against 63%), so the house
+--     takes a dose it HOLDS, buys one only when already standing at
+--     the counter, and otherwise rides the register's own decay
+--     (0.05/h) -- the gateless cousin, exactly as the doc draws it.
+--     Stocking doses early is the players' edge to find.
+local disease = std.holding_qty("DISEASE")
+if disease >= 1 then
+  if std.holding_qty("TONIC") >= 1 then
+    ctx.action.start_process("TAKE_TONIC")
+  elseif place == "POST" then
+    local ask = std.best_ask("TONIC")
+    local purse = tonumber(ctx.query.balance("COIN")) or 0
+    if ask and purse >= ask then
+      ctx.action.place_order("TONIC", "buy", "1", std.amount_str(ask))
+    end
+  end
 end
 
 -- 1. The fire is common ground: a standing fire at the clearing seats
@@ -300,8 +336,10 @@ end
 --    always: no walk may LAND in the dark.
 local forest = "FOREST"           -- the spear game: the deep wood's table
 local load = berries + apples + cooked + jerky + meat
-         + wood_held + flint + yarn  -- the back's burden (bodies and
-                                    -- coins ride free; cargo does not --
+         + wood_held + flint + yarn -- the back's burden (bodies and
+                                    -- coins ride free; cargo does not;
+                                    -- herbs ride free too (carry_exempt,
+                                    -- the doc's "durable, light"), and
                                     -- the woodpile stays put, so the
                                     -- pile is not on this back)
 local walk_home = world.distance_ticks(place or home, home) or 1
@@ -445,7 +483,7 @@ end
 --    the field rots where it lies (the race the spec wants).
 if load >= 16 then
   if place == home then
-    local ballast = { "WOOD", "FLINT", "YARN", "EGGS" }
+    local ballast = { "WOOD", "FLINT", "YARN", "EGGS", "HERB" }
     local heaviest, heavy_q = nil, 0
     for _, sym in ipairs(ballast) do
       local q = std.holding_qty(sym)

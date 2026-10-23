@@ -291,6 +291,12 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     events.extend(parcels.burn_facility_fuel(session, tick_number=number))
     events.extend(needs.run_consumption(
         session, tick_number=number, days_per_season=clock.season_days_of(session)))
+    # The festering register (Bundle A): one condition breeding another
+    # -- after the need grants it builds on (a deficit grants EXPOSURE;
+    # a riding EXPOSURE grants FROSTBITE), before the decay pass so the
+    # fresh drip fades in the same tick it lands (the need grant's
+    # cadence, one tier up).
+    events.extend(conditions.run_condition_grants(session, tick_number=number))
     # Threats pressurize after needs and before decay: this tick's says
     # are already in the event list, and the decay pass fades the fresh
     # pressure in the same tick it lands (net drift = pressure − decay).

@@ -229,6 +229,15 @@ def _deposit_regen(e, names):
             f"{_g(e, 'symbol', names)} (now {_num(e.get('quantity', 0))})")
 
 
+@_renders("condition_granted")
+def _condition_granted(e, names):
+    # The festering register: a condition breeding another (an unbound
+    # wound's infection, a cold night's frostbite) -- "bred" states the
+    # mechanism without borrowing medicine's promise.
+    return (f"{_g(e, 'source', names)} bred {_g(e, 'condition', names)} "
+            f"+{_num(e.get('granted', 0))} (held {_num(e.get('held', 0))})")
+
+
 @_renders("entity_incapacitated")
 def _incapacitated(e, names):
     line = (f"incapacitated: {e.get('condition', '?')} reached "

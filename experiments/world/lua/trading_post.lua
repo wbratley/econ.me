@@ -76,6 +76,18 @@ local GENESIS_BASIS = {
                        -- DUG six hours out -- the counter bids on what
                        -- someone can dig, still priced like flint (a
                        -- certain dig at a longer walk)
+  HONEY     = 1.80,   -- Bundle A: the larder's sweetest shelf -- dense
+                       -- food AND the CLEANSE dose's raw; the bid opens
+                       -- under two coin and the hive that lays it is
+                       -- dearer than the hen that lays eggs
+  TONIC     = 3.00,   -- Bundle A, the prize ruling: three doses at a
+                       -- stiff ask (a purse of ten buys two, not
+                       -- immunity), no bid, no restock -- the bare
+                       -- shelf is the demand the alchemist sells into
+  BEEHIVE   = 3.50,   -- Bundle A: the second flock, bought like a hen
+                       -- (retail sits just under the bed -- pastoral
+                       -- capital, priced for the house that has the
+                       -- food solved and wants income that sleeps)
 }
 local STOCK = {          -- the larder's shape: bids stop at the max
   JERKY = {min = 6, max = 12},   -- (a larder, not a landfill); the min
@@ -91,11 +103,22 @@ local STOCK = {          -- the larder's shape: bids stop at the max
   SALT = {min = 0, max = 12},   -- the salt road's home leg: dig at
                                 -- the lick, carry it back, sell here
   PELT = {min = 0, max = 8},
+  HONEY = {min = 4, max = 12},  -- Bundle A: the sweet shelf keeps a
+                                -- larder's worth -- bought like jerky
+                                -- (food first), sold to whoever needs
+                                -- the CLEANSE dose's raw
+  TONIC = {min = 0, max = 3},   -- Bundle A: genesis-only -- the shelf
+                                -- empties into whoever pays and stays
+                                -- bare; the counter never bids on a
+                                -- dose it cannot make (no ALCHEMY in
+                                -- these hands)
+  BEEHIVE = {min = 0, max = 2}, -- Bundle A: two yards' worth, and
+                                -- nowhere to buy more from
 }
 local RETAIL = { "JERKY", "BERRIES", "APPLES", "EGGS", "CHICKEN",
-                 "WATERSKIN", "SALT" }
+                 "WATERSKIN", "SALT", "HONEY", "TONIC", "BEEHIVE" }
 local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "SALT", "BERRIES",
-                 "APPLES", "EGGS", "PELT" }
+                 "APPLES", "EGGS", "PELT", "HONEY" }
 -- Genesis one-offs with no larder future (they rot, or they are
 -- gone when gone): haggled directly, like the old book.
 local LEGACY_ASK = { COOKED_MEAT = 1.50, BED = 5.00 }

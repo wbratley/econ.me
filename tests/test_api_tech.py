@@ -168,7 +168,14 @@ def test_recipe_gating_fields(client):
                           "requires": ["WARP"]},
                     headers=_auth("u-admin"))
     assert r.status_code == 422
+    # an input-only recipe is legal (a treatment row); a recipe that
+    # does nothing at all is still rejected
     r = client.post("/admin/recipes",
-                    json={"code": "EMPTY", "duration_ticks": 1, "inputs": {"X": "1"}},
+                    json={"code": "TREAT", "duration_ticks": 1,
+                          "inputs": {"X": "1"}},
+                    headers=_auth("u-admin"))
+    assert r.status_code == 201
+    r = client.post("/admin/recipes",
+                    json={"code": "EMPTY", "duration_ticks": 1},
                     headers=_auth("u-admin"))
     assert r.status_code == 422

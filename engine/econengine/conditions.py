@@ -150,6 +150,108 @@ def _estate_recipient(session: Session, entity: Entity) -> tuple[str, Entity | N
 
 
 # ---------------------------------------------------------------------------
+# Condition grants (votable data in world_settings -- the festering
+# register, docs/stone-age-expansion.md Bundle A)
+
+CONDITION_GRANTS_KEY = "condition_grants"
+
+
+def get_condition_grants(session: Session) -> dict:
+    """The condition->condition register: {source: {"grants", "at",
+    "quantity"}}. A held source condition at or past its "at" floor
+    credits the target by "quantity" every conditions pass -- the need
+    grant's precedent one tier up (a deficit grants EXPOSURE; an
+    EXPOSURE that rides past nine grants FROSTBITE; an unbound WOUND
+    breeds INFECTION). Declared per world, votable like any setting;
+    scripts never touch holdings, so the festering is engine truth."""
+    setting = session.get(WorldSetting, CONDITION_GRANTS_KEY)
+    if setting is None or not isinstance(setting.value, dict):
+        return {}
+    return dict(setting.value)
+
+
+def set_condition_grants(session: Session, grants: dict) -> WorldSetting:
+    """Declare the register, validated fail-closed: source and target
+    must be existing condition goods, a condition never grants itself,
+    and floors and quantities are positive. Quantities are stored as
+    strings (exact decimals -- the JSON rule)."""
+    clean: dict = {}
+    for source, row in (grants or {}).items():
+        if not isinstance(row, dict) or set(row) != {"grants", "at", "quantity"}:
+            raise ValueError(
+                f'condition grant row for {source} must be exactly '
+                '{"grants", "at", "quantity"}')
+        src = session.execute(
+            select(Good).where(Good.symbol == source)).scalar_one_or_none()
+        dst = session.execute(
+            select(Good).where(Good.symbol == row["grants"])
+        ).scalar_one_or_none()
+        for good, label in ((src, source), (dst, row["grants"])):
+            if good is None:
+                raise ValueError(f"condition grant names unknown good {label}")
+            if not is_condition(good):
+                raise ValueError(
+                    f"condition grant side {label} is not a condition")
+        if source == row["grants"]:
+            raise ValueError("a condition never grants itself")
+        floor = Decimal(str(row["at"]))
+        drip = Decimal(str(row["quantity"]))
+        if floor <= 0 or drip <= 0:
+            raise ValueError(
+                "condition grant floor and quantity must be positive")
+        clean[source] = {
+            "grants": row["grants"], "at": str(floor), "quantity": str(drip)}
+    setting = session.get(WorldSetting, CONDITION_GRANTS_KEY)
+    if setting is None:
+        setting = WorldSetting(key=CONDITION_GRANTS_KEY, value=clean)
+        session.add(setting)
+    else:
+        setting.value = clean
+    session.flush()
+    return setting
+
+
+def run_condition_grants(session: Session, tick_number: int) -> list[dict]:
+    """The conditions pass's second cause: one condition breeding
+    another. Every ACTIVE entity (id-ascending) against every declared
+    row (source-symbol ascending -- the engine's ordering law): a held
+    source at or past its floor credits the target by the declared
+    drip. One event per grant, so the festering is a fact the holder
+    and the world log both read. Doses stay quantized by the cure
+    recipes, not here -- the drip is the tail's slope."""
+    grants = get_condition_grants(session)
+    if not grants:
+        return []
+    rows = sorted(grants.items())
+    events: list[dict] = []
+    for entity in session.execute(
+        select(Entity).where(Entity.status == EntityStatus.ACTIVE)
+        .order_by(Entity.id)
+    ).scalars():
+        for source, row in rows:
+            holding = session.execute(
+                select(Holding).where(
+                    Holding.entity_id == entity.id, Holding.symbol == source)
+            ).scalar_one_or_none()
+            if holding is None or holding.quantity < Decimal(row["at"]):
+                continue
+            granted = _credit_holding(
+                session, entity, row["grants"], Decimal(row["quantity"]))
+            if granted > 0:
+                events.append({
+                    "type": "condition_granted",
+                    "entity_id": entity.id,
+                    "source": source,
+                    "condition": row["grants"],
+                    "granted": str(granted.quantize(_QUANTUM)),
+                    "held": str(holding.quantity.quantize(_QUANTUM)),
+                })
+    if events:
+        session.flush()
+    return events
+
+
+# ---------------------------------------------------------------------------
 # Incapacity pass
 
 

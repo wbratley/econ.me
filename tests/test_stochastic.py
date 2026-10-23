@@ -79,8 +79,14 @@ def test_branch_validations(session):
     with pytest.raises(ValueError, match="positive"):
         create_recipe(session, "X", inputs={}, outputs={}, duration_ticks=1,
                       branches=[{"weight": Decimal("1"), "outputs": {"Z": Decimal("-1")}}])
-    with pytest.raises(ValueError, match="output, branch, unlock, or built facility"):
-        create_recipe(session, "X", inputs={"A": Decimal("1")}, outputs={}, duration_ticks=1)
+    with pytest.raises(ValueError, match="must declare at least one"):
+        create_recipe(session, "X", inputs={}, outputs={}, duration_ticks=1)
+    # a recipe that only consumes is a legitimate treatment row (a cure
+    # spends the condition; nothing is minted)
+    treat = create_recipe(
+        session, "TREAT", inputs={"A": Decimal("1")}, outputs={},
+        duration_ticks=1)
+    assert treat.outputs == []
     # a branch with no outputs is a legitimate total-loss row
     recipe = create_recipe(
         session, "GAMBLE", inputs={"A": Decimal("1")}, outputs={}, duration_ticks=1,

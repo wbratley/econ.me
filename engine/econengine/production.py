@@ -141,10 +141,17 @@ def create_recipe(
     # travel.complete_travel records the outcome. Any other recipe still
     # has to declare what it yields.
     is_travel_template = str(code).upper().startswith("TRAVEL_")
+    # A recipe that only consumes is not a no-op: consumption is a
+    # declared goods move (the cure recipes reserve and remove the
+    # condition itself -- stone-age-expansion Bundle A; EAT destroys
+    # food the same way). The guard stands against recipes that do
+    # nothing at all.
     if (not outputs and not branches and not unlocks and not builds_facility
-            and facility_fuel_output is None and not is_travel_template):
+            and facility_fuel_output is None and not is_travel_template
+            and not inputs):
         raise ValueError(
-            "recipe must declare at least one output, branch, unlock, or built facility"
+            "recipe must declare at least one output, branch, unlock, built "
+            "facility, or consumed input"
         )
 
     def rows(cls, quantities: dict) -> list:

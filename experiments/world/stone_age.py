@@ -182,8 +182,9 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from econengine import (
-    combat, edges, goods, markets, needs, parcels, places, production,
-    scripting, services, spawns, statuses, tech, threats, travel,
+    combat, conditions, edges, goods, markets, needs, parcels, places,
+    production, scripting, services, spawns, statuses, tech, threats,
+    travel,
 )
 from experiments.world import manifest
 from econengine.models import (
@@ -778,10 +779,15 @@ only way to know a rival's wealth is to trade with them.
 
 
 TRADING_POST = "trading_post.lua"
-POST_COIN = Decimal("30")       # a small purse: price discovery, not a
+POST_COIN = Decimal("35")       # a small purse: price discovery, not a
                                  # bottomless buyer -- houses earn coin
                                  # by selling to it, and the coin supply
-                                 # stays what seats minted
+                                 # stays what seats minted. Bundle A's
+                                 # wider book (ten lots: the honey bid
+                                 # joins) is what the 30 -> 35 growth
+                                 # carries -- the salt road's four-salt
+                                 # lot still sells whole at the
+                                 # standing bid.
 POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              "JERKY": Decimal("30"),
              # The larder's seed stock (P5): two hens on the shelf -- the
@@ -808,7 +814,18 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # priced for the house that has food, water, and fire
              # solved and wants the top rung. Sell-buys round-trip
              # comfort like hens round-trip the flock.
-             "BED": Decimal("1")}
+             "BED": Decimal("1"),
+             # The healer's shelf (Bundle A, the prize ruling): three
+             # tonics at a stiff genesis ask -- the day-one exit for a
+             # disease the ALCHEMY craft reaches only four studies up.
+             # No bid, no restock: the shelf empties into whoever pays,
+             # and the bare shelf is the demand the alchemist sells
+             # into (a purse of ten buys two doses, not immunity).
+             "TONIC": Decimal("3"),
+             # The second flock's storefront: hives bought like hens
+             # (the CHICKEN rung). Two on the shelf, and the APIARY
+             # study is what makes the comb yours to keep.
+             "BEEHIVE": Decimal("2")}
 
 # RUN 52 -- THE BACKDOOR IS OFF: the wholesale ladder is deleted
 # (recipes and Lua table both), and the post prices off ITS OWN BOOKS:
@@ -1185,6 +1202,21 @@ def _create_goods(session: Session) -> None:
                                   "clothes and beds.")
     goods.create_good(session, "FLINT", name="Flint",
                       description="Sharp stone for spearheads and cutting tools.")
+    # The healer's raw (Bundle A -- docs/stone-age-expansion.md): a
+    # sixth roll on the gather tables. Durable, light, worthless
+    # without the ALCHEMY rank -- the rank is studied, not held, and
+    # until someone holds it the herb basket is ballast.
+    goods.create_good(session, "HERB", name="Herb",
+                      description="Gathered greens and roots: the raw of the "
+                                  "healer's shelf. Keeps forever; feeds "
+                                  "nothing, cures nothing until the ALCHEMY "
+                                  "rank works it into a poultice or tonic.",
+                      carry_exempt=True)  # a pocket of greens, not cargo:
+                                          # the doc's "durable, light" --
+                                          # an unlifted burden on the floor's
+                                          # gather margin (the soak measured
+                                          # it: 60% -> 50% survival with the
+                                          # herb on the back)
     # The potter's ground (run 54 P1): riverbank clay, dug by the hour
     # -- decayless, heavy once carrying lands (E2), and useless without
     # the POTTERY rank: the study consumes it, the wheelless art.
@@ -1223,11 +1255,40 @@ def _create_goods(session: Session) -> None:
                                   "never eaten -- a body keeps at most four "
                                   "(the pen's worth). Sold at the post.",
                       max_holding=Decimal("4"))
+    # The second flock (Bundle A): the beehive is the CHICKEN idiom one
+    # shelf over -- live capital, capped at two, laid by (COLLECT_HONEY
+    # scales with the yard). Bought at the post like a hen; the APIARY
+    # rank is what lets you keep the comb.
+    goods.create_good(session, "BEEHIVE", name="Beehive",
+                      description="A smoked hive: the second income that "
+                                  "arrives while you sleep. Held, never "
+                                  "eaten -- a yard, not a wild.",
+                      max_holding=Decimal("2"))
     goods.create_good(session, "EGGS", name="Eggs",
                       description="A hen's daily laying: keeps near a week, "
                                   "feeds like a cooked meal. The first "
                                   "income that arrives while you sleep.",
                       decay_per_tick=Decimal("0.05"))
+    # The hive's laying (Bundle A): slow-decay food AND a medicine (the
+    # CLEANSE dose's raw -- the Rust honey bandage, the Skyrim
+    # ingredient). Dense, wet, keeping: the larder's sweetest shelf.
+    goods.create_good(session, "HONEY", name="Honey",
+                      description="Combed from a hive: keeps a long time, "
+                                  "feeds like a dense meal, and cleanses a "
+                                  "wound that would otherwise fester. "
+                                  "The first food that is also a cure.",
+                      decay_per_tick=Decimal("0.02"))
+    # The worked medicines (Bundle A): finished goods, traded like any
+    # shelf good. Made only at the ALCHEMY rank (the prize -- four
+    # studies up); the cures themselves are free acts on a held dose.
+    goods.create_good(session, "POULTICE", name="Poultice",
+                      description="Herbs worked with water into a dressing: "
+                                  "binds a wound and starves the infection "
+                                  "that follows it.")
+    goods.create_good(session, "TONIC", name="Tonic",
+                      description="Herbs worked into a dose: the craftable "
+                                  "answer to a disease that would otherwise "
+                                  "ride to the threshold.")
     goods.create_good(session, "TRAP", name="Trap",
                       description="One-shot hunting ammunition — consumed by "
                                   "the traps hunt, the best odds craft can buy.")
@@ -1448,6 +1509,61 @@ def _create_goods(session: Session) -> None:
         modifies_pattern="LABOR",
         modifies_factor=Decimal("0.85"),
     )
+    # The injury register (Bundle A -- docs/stone-age-expansion.md):
+    # WOUND and INFECTION are the health dimension combat has always
+    # lacked, granted (from Bundle B) as a landed bite's tail and
+    # cured by consuming them as recipe inputs (BIND_WOUND, CLEANSE);
+    # FROSTBITE is the deep-cold injury under EXPOSURE -- no medicine,
+    # warmth is its cure, and its decay (0.05, the register's fastest)
+    # is the body's own thaw. All three throttle LABOR while held
+    # (the SQUALOR precedent, held_modifiers) and none count toward
+    # the back (carry_exempt -- a register, not cargo).
+    goods.create_good(
+        session, "WOUND", name="Wound",
+        description="An open hurt from a fight: slows the body, and left "
+                    "undressed it festers into infection. Bind it.",
+        decay_per_tick=Decimal("0.02"),        # it scabs slowly on its own
+        incapacitates_at=Decimal("12"),        # a body dies of the blood, not the blow
+        modifies_pattern="LABOR",
+        modifies_factor=Decimal("0.8"),
+        carry_exempt=True,
+    )
+    goods.create_good(
+        session, "INFECTION", name="Infection",
+        description="The wound that was not bound: it does not heal and it "
+                    "spreads. The poultice and the honey are the only exits.",
+        decay_per_tick=Decimal("0.01"),        # nearly inert -- it is the WOUND's tail
+        incapacitates_at=Decimal("8"),
+        modifies_pattern="LABOR",
+        modifies_factor=Decimal("0.85"),
+        carry_exempt=True,
+    )
+    goods.create_good(
+        session, "FROSTBITE", name="Frostbite",
+        description="Cold that bit through the warmth: the injury beneath "
+                    "the EXPOSURE number, when a cold night was not just "
+                    "tiring. No medicine -- get warm and let it thaw.",
+        decay_per_tick=Decimal("0.05"),
+        incapacitates_at=Decimal("10"),
+        modifies_pattern="LABOR",
+        modifies_factor=Decimal("0.75"),
+        carry_exempt=True,
+    )
+    # The festering register (Bundle A's one engine extension, the
+    # deficit->condition precedent one tier up): a held WOUND past its
+    # scab floor breeds INFECTION at 0.05/tick (one unbound bite's
+    # tail tops out near a whole point -- the doc's "grants INFECTION:
+    # 1" as a drip, since holdings are quantities, not instances); an
+    # EXPOSURE riding past nine breeds FROSTBITE at 0.25/tick
+    # (equilibrium 5 under the kill line's 10 -- frostbite drags and
+    # warns, the cold itself still kills). Votable world data; the
+    # combat grant that lands the WOUND ships with Bundle B.
+    conditions.set_condition_grants(session, {
+        "WOUND": {"grants": "INFECTION", "at": Decimal("0.5"),
+                  "quantity": Decimal("0.05")},
+        "EXPOSURE": {"grants": "FROSTBITE", "at": Decimal("9"),
+                     "quantity": Decimal("0.25")},
+    })
     # REST (P4): the night's stock, SATIETY's shape. Cap 8 (a day and
     # a third of waking -- the buffer a good night rebuilds), drained
     # 0.25/h flat: sleeping 8 of the 14 night hours nets +6/day against
@@ -1675,6 +1791,12 @@ def _create_recipes(session: Session) -> None:
                     "the FLINT scrape, 2 flint) -- and then the spear and "
                     "the axe are yours to make.")
     tech.create_technology(
+        session, "APIARY", prerequisites=["KNAPPING"],
+        name="Apiary",
+        description="The pastoralist's second flock: smoke a hive and it "
+                    "lays honey while you sleep. Gates the beehive and the "
+                    "combing -- the CHICKEN rung, one shelf over.")
+    tech.create_technology(
         session, "FIRE_HARDENING", prerequisites=["KNAPPING"],
         name="Fire Hardening",
         description="The second edge: slow fire tempers wood true. Wants "
@@ -1691,6 +1813,14 @@ def _create_recipes(session: Session) -> None:
         description="The river's art: clay coaxed to hold water and food. "
                     "Wants FIRE_HARDENING first (a kiln is a fire you "
                     "understand) -- and then the cooking pot is yours.")
+    tech.create_technology(
+        session, "ALCHEMY", prerequisites=["POTTERY"],
+        name="Alchemy",
+        description="The healer's rank: work a gathered herb into a "
+                    "poultice or a tonic. Learnt at a fire -- the solvent "
+                    "is water, the craft is the hand. Gates the two "
+                    "work-crafts only; the cures themselves are free acts "
+                    "on a held medicine.")
     tech.create_technology(
         session, "SALT_CURING", name="Salt Curing",
         description="The keeper's trade: salt drawn through meat until it "
@@ -1715,8 +1845,9 @@ def _create_recipes(session: Session) -> None:
     # surplus that rots (berries in a morning, apples in a day and a
     # half), so eating it all yourself was never on the table: sell
     # it, pot it, or feed a neighbour before it does. Wood stays a
-    # quarter of bare gathers -- frequency beats size for the fire
-    # (P(zero wood in a six-gather day) is 0.18). On the doubled
+    # fifth of bare gathers -- frequency beats size for the fire
+    # (P(zero wood in a six-gather day) is 0.26 -- Bundle A's herb roll
+    # took its five here; the pile and the store absorb the thin days). On the doubled
     # BAG table a ~5% branch of 1 COIN -- shiny stones, minted by the
     # ground itself (production credits a banked symbol to the
     # account, production._credit_output). The bare table finds none:
@@ -1733,9 +1864,17 @@ def _create_recipes(session: Session) -> None:
         branches=[
             {"weight": D("40"), "outputs": {"BERRIES": D("6")}, "label": "berries"},
             {"weight": D("25"), "outputs": {"APPLES": D("5")}, "label": "apples"},
-            {"weight": D("25"), "outputs": {"WOOD": D("3")}, "label": "wood"},
+            {"weight": D("20"), "outputs": {"WOOD": D("3")}, "label": "wood"},
             {"weight": D("5"), "outputs": {"YARN": D("1")}, "label": "yarn"},
             {"weight": D("5"), "outputs": {"FLINT": D("1")}, "label": "flint"},
+            # The healer's roll (Bundle A): the table stays exactly 100
+            # -- the herb takes its five from the wood roll (probed:
+            # from the berry basket the floor's meal base thinned and
+            # survival fell 60%->45%; from the orchard the same food
+            # moved and the study morning thinned instead; the wood
+            # roll's 3-a-roll frequency beats size, and the P(zero
+            # wood in a day) stays a tail).
+            {"weight": D("5"), "outputs": {"HERB": D("2")}, "label": "herb"},
         ],
     )
     production.create_recipe(
@@ -1751,11 +1890,14 @@ def _create_recipes(session: Session) -> None:
         branches=[
             {"weight": D("35"), "outputs": {"BERRIES": D("12")}, "label": "berries"},
             {"weight": D("27"), "outputs": {"APPLES": D("10")}, "label": "apples"},
-            {"weight": D("20"), "outputs": {"WOOD": D("6")}, "label": "wood"},
+            {"weight": D("15"), "outputs": {"WOOD": D("6")}, "label": "wood"},
             {"weight": D("5"), "outputs": {"YARN": D("2")}, "label": "yarn"},
             {"weight": D("3"), "outputs": {"FLINT": D("2")}, "label": "flint"},
             {"weight": COIN_WEIGHT, "outputs": {COIN: D("1")}, "label": "shiny"},
             {"weight": D("5"), "outputs": {}, "label": "nothing"},
+            # The healer's roll, doubled like the rest (Bundle A): the
+            # bag finds four where bare hands find two.
+            {"weight": D("5"), "outputs": {"HERB": D("4")}, "label": "herb"},
         ],
     )
     production.create_recipe(
@@ -1800,9 +1942,9 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
         requires_daylight=True, requires_place_kind="FOREST",
         branches=[
-            {"weight": D("55"), "outputs": {}, "label": "nothing"},
             {"weight": D("35"), "outputs": {"MEAT": D("2")}, "label": "small"},
             {"weight": D("10"), "outputs": {"MEAT": D("4")}, "label": "big"},
+            {"weight": D("55"), "outputs": {}, "label": "nothing"},
         ],
     )
     production.create_recipe(
@@ -1813,9 +1955,9 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"SPEAR": D("1")},
         requires_daylight=True, requires_place_kind="FOREST",
         branches=[
-            {"weight": D("25"), "outputs": {}, "label": "nothing"},
             {"weight": D("55"), "outputs": {"MEAT": D("3")}, "label": "small"},
             {"weight": D("20"), "outputs": {"MEAT": D("6")}, "label": "big"},
+            {"weight": D("25"), "outputs": {}, "label": "nothing"},
         ],
     )
     production.create_recipe(
@@ -1826,9 +1968,9 @@ def _create_recipes(session: Session) -> None:
         outputs={}, duration_ticks=3,
         requires_daylight=True, requires_place_kind="FOREST",
         branches=[
-            {"weight": D("15"), "outputs": {}, "label": "nothing"},
             {"weight": D("60"), "outputs": {"MEAT": D("4")}, "label": "small"},
             {"weight": D("25"), "outputs": {"MEAT": D("8")}, "label": "big"},
+            {"weight": D("15"), "outputs": {}, "label": "nothing"},
         ],
     )
     # The bow (P5): ranged capital -- the best DAY hunt a lone crafter
@@ -1845,9 +1987,9 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BOW": D("1")},
         requires_daylight=True, requires_place_kind="FOREST",
         branches=[
-            {"weight": D("15"), "outputs": {}, "label": "nothing"},
             {"weight": D("55"), "outputs": {"MEAT": D("3")}, "label": "small"},
             {"weight": D("30"), "outputs": {"MEAT": D("6")}, "label": "big"},
+            {"weight": D("15"), "outputs": {}, "label": "nothing"},
         ],
     )
     # The river: meat without wolves. Slower than a bad hunt but far
@@ -1864,9 +2006,9 @@ def _create_recipes(session: Session) -> None:
         requires_daylight=True, requires_place_kind="RIVER",
         requires_season=["SPRING", "SUMMER", "AUTUMN"],
         branches=[
-            {"weight": D("30"), "outputs": {}, "label": "nothing"},
             {"weight": D("45"), "outputs": {"MEAT": D("2")}, "label": "small"},
             {"weight": D("25"), "outputs": {"MEAT": D("3")}, "label": "big"},
+            {"weight": D("30"), "outputs": {}, "label": "nothing"},
         ],
     )
     # The tap (P3): water is free at the bank, and the walk is shared
@@ -2207,6 +2349,70 @@ def _create_recipes(session: Session) -> None:
              "label": "sick"},
         ],
     )
+    # The healer's shelf (Bundle A -- docs/stone-age-expansion.md).
+    # Every condition a craftable exit: the medicine consumes the
+    # condition (a holding, reserved and removed like any input --
+    # EAT_RAW's "sick" branch credits DISEASE exactly this way, so
+    # "cure" is a normal, auditable goods move and the treatment is a
+    # consumable). Doses vs the engine's exact-quantity law (the doc's
+    # own quantization note, taken seriously): a grant of 1.0 decays
+    # the tick it lands, so a whole-point input on WOUND would be
+    # unusable after the first hour -- the injury doses are the FESTER
+    # FLOOR itself (0.5: bind half a point and the residue sits at
+    # 0.48, under the floor -- the fester stops, the scab takes over).
+    # The disease dose stays a whole point (raw meals grant whole
+    # points that stack above it; a sub-point ride is left to decay
+    # -- run 57's Ivar rode 2.76, three doses were the exit). All
+    # cures are instant and night-legal: a fever keeps no office
+    # hours. EAT_HONEY is the food path (the doc review's catch):
+    # honey is dense, wet, keeping -- the larder's sweetest shelf.
+    production.create_recipe(
+        session, "TAKE_TONIC", name="Take a Tonic",
+        description="The dose: the disease rides back from the threshold.",
+        inputs={"DISEASE": D("1"), "TONIC": D("1")}, outputs={},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "BIND_WOUND", name="Bind a Wound",
+        description="Dress the wound: the bleeding stops and the infection "
+                    "that followed it is starved.",
+        inputs={"WOUND": D("0.5"), "POULTICE": D("1")}, outputs={},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "CLEANSE", name="Cleanse an Infection",
+        description="The honey and the poultice: the festering wound gives up.",
+        inputs={"INFECTION": D("0.5"), "HONEY": D("1")}, outputs={},
+        duration_ticks=0,
+    )
+    production.create_recipe(
+        session, "EAT_HONEY", name="Eat Honey",
+        description="The comb: dense, wet, keeping -- the larder's sweetest "
+                    "shelf, and the raw of the CLEANSE dose.",
+        inputs={"HONEY": D("1")},
+        outputs={"SATIETY": D("3"), "WATER": D("0.3")},
+        duration_ticks=0,
+    )
+    # The two work-crafts (the ALCHEMY rank, four studies up -- the
+    # prize ruling: every dilution makes it less desirable). Water is
+    # the solvent, free at the river; the herb is the raw; the output
+    # is the finished, tradable cure. Daylight work like any craft.
+    production.create_recipe(
+        session, "MAKE_POULTICE", name="Make Poultice",
+        description="Work the herbs into a dressing: a wound's answer.",
+        inputs={"HERB": D("2"), "WATER": D("1")},
+        outputs={"POULTICE": D("1")},
+        duration_ticks=1,
+        requires=["ALCHEMY"], requires_daylight=True,
+    )
+    production.create_recipe(
+        session, "MAKE_TONIC", name="Make Tonic",
+        description="Work the herbs into a dose: a disease's answer.",
+        inputs={"HERB": D("2"), "WATER": D("1")},
+        outputs={"TONIC": D("1")},
+        duration_ticks=1,
+        requires=["ALCHEMY"], requires_daylight=True,
+    )
     # The wolf's table (run 26's census: every pack starved at its den).
     # The human one starves a wolf -- raw-at-0.6-satiety cannot cover a
     # 0.5/hour draw (a day of hunts' expected 7.7 MEAT x 0.6 = 4.6
@@ -2368,6 +2574,21 @@ def _create_recipes(session: Session) -> None:
         requires_facility="PEN",
         scales_with={"CHICKEN": 4},
     )
+    # The second flock's hour (Bundle A): the COLLECT_EGGS idiom one
+    # shelf over -- one hour serves the whole yard, one honey per
+    # hive held (capped at two, the yard's worth, which is also the
+    # body's BEEHIVE carry cap). The APIARY rank gates the combing
+    # (the hive is bought like a hen; the rank is what keeps the
+    # comb); the honey is food first and the CLEANSE dose's raw.
+    production.create_recipe(
+        session, "COLLECT_HONEY", name="Collect Honey",
+        description="Comb the hive: an hour of smoked hands yields the "
+                    "day's honey, priced by the hives held.",
+        inputs={"LABOR": D("1")}, outputs={"HONEY": D("1")}, duration_ticks=1,
+        good_requirements={"BEEHIVE": D("1")},
+        scales_with={"BEEHIVE": 2},
+        requires=["APIARY"],
+    )
 
     # --- The far valley: two valleys, one ridge (run 54 P3) -------------
     # Opposite scarcities, six hours apart. The far valley has salt
@@ -2412,13 +2633,13 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"SPEAR": D("1")},
         requires_daylight=True, requires_place_kind="RIDGE",
         branches=[
-            {"weight": D("30"), "outputs": {}, "label": "nothing"},
             {"weight": D("50"),
              "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
              "label": "small"},
             {"weight": D("20"),
              "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
              "label": "big"},
+            {"weight": D("30"), "outputs": {}, "label": "nothing"},
         ],
     )
     production.create_recipe(
@@ -2430,13 +2651,13 @@ def _create_recipes(session: Session) -> None:
         good_requirements={"BOW": D("1")},
         requires_daylight=True, requires_place_kind="RIDGE",
         branches=[
-            {"weight": D("20"), "outputs": {}, "label": "nothing"},
             {"weight": D("55"),
              "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
              "label": "small"},
             {"weight": D("25"),
              "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
              "label": "big"},
+            {"weight": D("20"), "outputs": {}, "label": "nothing"},
         ],
     )
     production.create_recipe(
@@ -2507,6 +2728,36 @@ def _create_recipes(session: Session) -> None:
         duration_ticks=2,
         per_tick_inputs={"LABOR": D("1")},
         requires_place_kind="RIVER", unlocks=["POTTERY"],
+    )
+    # The healer's study (Bundle A): the fourth rung up -- knapping,
+    # fire-hardening, pottery, ALCHEMY. The prize ruling keeps the
+    # ladder deep on purpose; the run-57 reachability hole is closed
+    # by the post's tonic shelf (TRADE, the gateless cousin), not by
+    # shallowing this climb. Learnt at a fire you already understand,
+    # priced in the craft's own raw: two herbs and a log.
+    production.create_recipe(
+        session, "STUDY_ALCHEMY", name="Study Alchemy",
+        description="An evening at the fire working herb and water into "
+                    "medicine: the healer's rank, four studies up. Two "
+                    "herbs and a log, pottery in your hands already -- "
+                    "then the poultice and the tonic are yours to work.",
+        inputs={"HERB": D("2"), "WOOD": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["ALCHEMY"],
+    )
+    # The pastoralist's second study (Bundle A): the CHICKEN rung, one
+    # shelf over. Cord for the veil, wood for the smoker -- the hive
+    # itself is bought, like a hen; this rank is what keeps the comb.
+    production.create_recipe(
+        session, "STUDY_APIARY", name="Study Apiary",
+        description="A smoky afternoon learning what the yard wants: cord "
+                    "for the veil, wood for the smoker. Then a bought "
+                    "hive lays while you sleep.",
+        inputs={"YARN": D("1"), "WOOD": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["APIARY"],
     )
     production.create_recipe(
         session, "STUDY_SALT", name="Study Salt Curing",
@@ -2706,12 +2957,17 @@ def _create_markets(session: Session) -> None:
         "BAG": "Bag", "BOW": "Bow", "CHICKEN": "Hen",
         "TRAP": "Trap", "CLOTHES": "Clothes", "BED": "Bed",
         "PELT": "Pelt", "WATERSKIN": "Waterskin", "SALT": "Salt",
+        # The healer's shelf (Bundle A): the raw, the laying, the
+        # worked medicines, and the yard that pays while you sleep.
+        "HERB": "Herb", "HONEY": "Honey", "POULTICE": "Poultice",
+        "TONIC": "Tonic", "BEEHIVE": "Beehive",
     }
     for symbol in ("LABOR", "BERRIES", "APPLES", "MEAT", "COOKED_MEAT", "JERKY",
                    "EGGS", "WOOD",
                    "YARN", "FLINT", "SPEAR", "AXE", "BAG", "BOW", "CHICKEN",
                    "TRAP", "CLOTHES", "BED",
-                   "PELT", "WATERSKIN", "SALT"):
+                   "PELT", "WATERSKIN", "SALT",
+                   "HERB", "HONEY", "POULTICE", "TONIC", "BEEHIVE"):
         markets.create_market(session, symbol, COIN, name=_NAMES[symbol],
                               place="POST")
     # The far book (P3): IBEX_PELT trades at the salt lick, and only
