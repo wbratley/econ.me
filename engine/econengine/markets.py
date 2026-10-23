@@ -298,7 +298,7 @@ def place_order(
     side: str | OrderSide,
     quantity: Decimal,
     limit_price: Decimal,
-    account_id: str,
+    account_id: str | None = None,
     reference: str = "",
 ) -> Order:
     market = get_market(session, symbol)
@@ -312,6 +312,30 @@ def place_order(
         raise ValueError("unknown entity")
     if entity.status != EntityStatus.ACTIVE:
         raise ValueError("entity is incapacitated")
+
+    if account_id is None:
+        # A house trading on its own book does not name the account
+        # (run-58 postmortem #3: the nil-account gap killed a derived
+        # food strategy). Default to the entity's own settlement account
+        # in the market currency -- first by id, the same deterministic
+        # choice the holders() register makes.
+        account = session.execute(
+            select(Account)
+            .where(
+                Account.entity_id == entity_id,
+                Account.currency == market.currency,
+            )
+            .order_by(Account.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if account is None:
+            raise ValueError(
+                f"entity has no {market.currency} settlement account")
+        account_id = account.id
+    else:
+        account = session.get(Account, account_id)
+        if account is None:
+            raise ValueError("unknown settlement account")
 
     if market.place_id is not None:
         # The S2 seat (Fork 5): a placed market trades only for entities
@@ -340,9 +364,6 @@ def place_order(
     if limit_price <= 0:
         raise ValueError("limit_price must be positive")
 
-    account = session.get(Account, account_id)
-    if account is None:
-        raise ValueError("unknown settlement account")
     if account.entity_id != entity_id:
         raise ValueError("settlement account does not belong to ordering entity")
     if account.currency != market.currency:

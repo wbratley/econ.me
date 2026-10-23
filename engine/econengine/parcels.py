@@ -31,9 +31,14 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Deposit, Entity, Facility, Parcel, Process, ProcessStatus, Recipe
+from .models import (Deposit, Entity, Facility, FacilityHolding, Parcel, Place,
+                     Process, ProcessStatus, Recipe)
 
 _QUANTUM = Decimal("0.0001")
+# The shared-pool owner sentinel (docs/camp-storage.md): a FacilityHolding
+# row with owner_id == "*" is the facility's SHARED pool, touchable by any
+# entity; a real entity id is that entity's private store.
+SHARED = "*"
 
 
 class InsufficientDepositError(ValueError):
@@ -304,6 +309,321 @@ def reserved_facilities(session: Session, parcel_id: str, facility_type: str) ->
             Recipe.requires_facility == str(facility_type).upper(),
         )
     ).scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# Storage — goods physically at a facility's shelf (docs/camp-storage.md).
+#
+# One table (FacilityHolding) covers all three surfaces: the hearth's
+# private STORAGE (owner = the entity, capped), the shared WOODPILE
+# (owner = "*", wood only), and the shared DROP at every other place
+# (owner = "*", any symbol). store/take move between an entity's
+# holdings and its private rows; drop/pickup move between holdings and
+# the shared pool. Goods move between holdings and pools (and rot);
+# nothing is created or destroyed here — conservation holds, and
+# "theft" is just a pickup of goods someone else dropped.
+# ---------------------------------------------------------------------------
+
+def _facility_at(session: Session, entity: Entity, facility_type: str) -> Facility | None:
+    """The first facility of `facility_type` on a parcel at the entity's
+    standing place, creation-ordered (deterministic). None when the entity
+    stands nowhere or the place carries no such facility — the presence
+    gate: storage is where you are."""
+    if entity.location_place_id is None:
+        return None
+    return session.execute(
+        select(Facility)
+        .join(Parcel, Facility.parcel_id == Parcel.id)
+        .where(
+            Parcel.place_id == entity.location_place_id,
+            Facility.facility_type == str(facility_type).upper(),
+        )
+        .order_by(Facility.created_at, Facility.id)
+    ).scalars().first()
+
+
+def _holding_row(
+    session: Session, facility_id: str, owner_id: str, symbol: str
+) -> FacilityHolding | None:
+    return session.execute(
+        select(FacilityHolding).where(
+            FacilityHolding.facility_id == facility_id,
+            FacilityHolding.owner_id == owner_id,
+            FacilityHolding.symbol == str(symbol).upper(),
+        )
+    ).scalar_one_or_none()
+
+
+def _credit_row(session: Session, facility_id: str, owner_id: str,
+                 symbol: str, quantity: Decimal) -> FacilityHolding:
+    """Credit a (facility, owner, symbol) shelf row, creating it at 0 if the
+    shelf is bare. The pool's writer — the mirror of adjust_holding for the
+    pool side of a move."""
+    row = _holding_row(session, facility_id, owner_id, symbol)
+    if row is None:
+        row = FacilityHolding(
+            facility_id=facility_id, owner_id=owner_id,
+            symbol=str(symbol).upper(), quantity=Decimal("0"),
+        )
+        session.add(row)
+    row.quantity = (row.quantity + quantity).quantize(_QUANTUM)
+    session.flush()
+    return row
+
+
+def _draw_row(session: Session, facility_id: str, owner_id: str,
+              symbol: str, quantity: Decimal) -> FacilityHolding:
+    """Draw from a shelf row, refusing to overdraw (the pool cannot go
+    negative — a pickup of goods nobody dropped is impossible)."""
+    row = _holding_row(session, facility_id, owner_id, symbol)
+    have = row.quantity if row is not None else Decimal("0")
+    if have < quantity:
+        from . import markets as _markets
+        raise _markets.InsufficientHoldingsError(
+            f"the {str(owner_id)} shelf holds {have.quantize(_QUANTUM)} "
+            f"{str(symbol).upper()}, cannot draw {quantity.quantize(_QUANTUM)}"
+        )
+    if row is None:
+        row = FacilityHolding(
+            facility_id=facility_id, owner_id=owner_id,
+            symbol=str(symbol).upper(), quantity=Decimal("0"),
+        )
+        session.add(row)
+    row.quantity = (row.quantity - quantity).quantize(_QUANTUM)
+    session.flush()
+    return row
+
+
+def _store_total(session: Session, facility_id: str, owner_id: str) -> Decimal:
+    """A private store's total: every symbol the owner has shelved there.
+    The capacity is a per-owner policy (one total-unit cap), not a
+    per-symbol one."""
+    return Decimal(session.execute(
+        select(func.coalesce(func.sum(FacilityHolding.quantity), 0))
+        .where(
+            FacilityHolding.facility_id == facility_id,
+            FacilityHolding.owner_id == owner_id,
+        )
+    ).scalar_one())
+
+
+def _storage_place_key(session: Session, facility: Facility) -> str:
+    parcel = session.get(Parcel, facility.parcel_id)
+    place = parcel.place if parcel is not None else None
+    return place.key if place is not None else ""
+
+
+def _where(entity: Entity) -> str:
+    """The presence-gate refusal's place: the standing place's label, or
+    "nowhere" for an entity off the map (the legacy unplaced citizen)."""
+    from . import places as places_mod
+    return places_mod.label(entity.place) if entity.place is not None else "nowhere"
+
+
+def _clean(x: Decimal) -> str:
+    """A quantity for a human message: 4dp trimmed to the last real digit
+    (40 -> '40', 2.5 -> '2.5', 3.0000 -> '3'). The cap's message reads
+    'store is full (40/40)' -- whole units, not the ledger's 4dp."""
+    s = f"{x.quantize(_QUANTUM):f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
+def _storage_summary(session: Session, facility: Facility,
+                    symbol: str, quantity: Decimal) -> dict:
+    """The applied event's fact: who dropped/stored what, where — the audit
+    line the theft record reads (the applied row IS the record)."""
+    return {
+        "facility_type": facility.facility_type,
+        "symbol": str(symbol).upper(),
+        "quantity": str(quantity.quantize(_QUANTUM)),
+        "place": _storage_place_key(session, facility),
+    }
+
+
+def _held_quantity(session: Session, entity: Entity, symbol: str) -> Decimal:
+    from . import markets as _markets
+    h = _markets.get_holding(session, entity.id, str(symbol).upper())
+    return h.quantity if h is not None else Decimal("0")
+
+
+def facility_store(session: Session, entity: Entity,
+                   symbol: str, quantity: Decimal) -> dict:
+    """store(symbol, qty) — holdings -> the private STORAGE at the hearth.
+    Capped: the owner's total shelved <= the facility's capacity. The
+    load-release valve at home (run-57's Lagertha)."""
+    from . import markets as _markets
+    symbol = str(symbol).upper()
+    quantity = Decimal(quantity).quantize(_QUANTUM)
+    facility = _facility_at(session, entity, "STORAGE")
+    if facility is None:
+        raise ValueError(f"no storage at {_where(entity)}")
+    held = _held_quantity(session, entity, symbol)
+    if held < quantity:
+        raise ValueError(
+            f"holds {held.quantize(_QUANTUM)} {symbol}, "
+            f"cannot store {quantity}")
+    total = _store_total(session, facility.id, entity.id)
+    if total + quantity > facility.capacity:
+        raise ValueError(
+            f"store is full ({_clean(total)}/{facility.capacity})")
+    _markets.adjust_holding(session, entity, symbol, -quantity)
+    _credit_row(session, facility.id, entity.id, symbol, quantity)
+    return _storage_summary(session, facility, symbol, quantity)
+
+
+def facility_take(session: Session, entity: Entity,
+                  symbol: str, quantity: Decimal) -> dict:
+    """take(symbol, qty) — the private STORAGE -> holdings. The inverse of
+    store: reclaim what you set down at home."""
+    from . import markets as _markets
+    symbol = str(symbol).upper()
+    quantity = Decimal(quantity).quantize(_QUANTUM)
+    facility = _facility_at(session, entity, "STORAGE")
+    if facility is None:
+        raise ValueError(f"no storage at {_where(entity)}")
+    row = _holding_row(session, facility.id, entity.id, symbol)
+    have = row.quantity if row is not None else Decimal("0")
+    if have < quantity:
+        raise ValueError(
+            f"the store has {have.quantize(_QUANTUM)} {symbol}, "
+            f"cannot take {quantity}")
+    _draw_row(session, facility.id, entity.id, symbol, quantity)
+    _markets.adjust_holding(session, entity, symbol, quantity)
+    return _storage_summary(session, facility, symbol, quantity)
+
+
+def _drop_target(session: Session, entity: Entity, symbol: str):
+    """Route a drop/pickup to the shared pool at the entity's place:
+    WOOD goes to the WOODPILE where one stands (the camp's common wood,
+    pulled from first), anything else (and wood where no pile stands) to
+    the DROP. None when the place has no pool of the symbol's kind —
+    the hearth takes no shared non-wood (home is private)."""
+    symbol = str(symbol).upper()
+    if symbol == "WOOD":
+        facility = _facility_at(session, entity, "WOODPILE")
+        if facility is not None:
+            return facility
+    return _facility_at(session, entity, "DROP")
+
+
+def facility_drop(session: Session, entity: Entity,
+                  symbol: str, quantity: Decimal) -> dict:
+    """drop(symbol, qty) — holdings -> the shared pool at the caller's
+    place (WOODPILE for wood at the hearth, DROP elsewhere). The
+    away-from-home valve (run-57's Harald) and the theft source: once
+    dropped, the goods are in a pool nobody owns."""
+    from . import markets as _markets
+    symbol = str(symbol).upper()
+    quantity = Decimal(quantity).quantize(_QUANTUM)
+    facility = _drop_target(session, entity, symbol)
+    if facility is None:
+        raise ValueError(f"no drop at {_where(entity)}")
+    if facility.facility_type == "WOODPILE" and symbol != "WOOD":
+        raise ValueError("the woodpile takes WOOD only")
+    held = _held_quantity(session, entity, symbol)
+    if held < quantity:
+        raise ValueError(
+            f"holds {held.quantize(_QUANTUM)} {symbol}, "
+            f"cannot drop {quantity}")
+    _markets.adjust_holding(session, entity, symbol, -quantity)
+    _credit_row(session, facility.id, SHARED, symbol, quantity)
+    return _storage_summary(session, facility, symbol, quantity)
+
+
+def facility_pickup(session: Session, entity: Entity,
+                    symbol: str, quantity: Decimal) -> dict:
+    """pickup(symbol, qty) — the shared pool at the caller's place ->
+    holdings, drawn regardless of who dropped it. THE theft/scavenging
+    action: taking from a pool nobody owns is a normal goods move, not a
+    transfer between entities (the ownership invariant holds)."""
+    from . import markets as _markets
+    symbol = str(symbol).upper()
+    quantity = Decimal(quantity).quantize(_QUANTUM)
+    facility = _drop_target(session, entity, symbol)
+    if facility is None:
+        raise ValueError(f"no drop at {_where(entity)}")
+    row = _holding_row(session, facility.id, SHARED, symbol)
+    have = row.quantity if row is not None else Decimal("0")
+    if have < quantity:
+        raise ValueError(
+            f"the shared pile has {have.quantize(_QUANTUM)} {symbol}, "
+            f"cannot pickup {quantity}")
+    _draw_row(session, facility.id, SHARED, symbol, quantity)
+    _markets.adjust_holding(session, entity, symbol, quantity)
+    return _storage_summary(session, facility, symbol, quantity)
+
+
+def facility_at_place(session: Session, place_key: str,
+                      facility_type: str) -> Facility | None:
+    """The first facility of `facility_type` on any parcel at `place_key`
+    (creation-ordered), or None. The presence check for a place's
+    facilities (the pack's genesis guard and the catalog both want it)."""
+    place = session.execute(
+        select(Place).where(Place.key == str(place_key).upper())
+    ).scalar_one_or_none()
+    if place is None:
+        return None
+    return session.execute(
+        select(Facility)
+        .join(Parcel, Facility.parcel_id == Parcel.id)
+        .where(
+            Parcel.place_id == place.id,
+            Facility.facility_type == str(facility_type).upper(),
+        )
+        .order_by(Facility.created_at, Facility.id)
+    ).scalars().first()
+
+
+def woodpile_pool(session: Session, entity: Entity, symbol: str = "WOOD") -> Decimal:
+    """The WOODPILE's shared quantity of `symbol` at the entity's place —
+    0 when the place has no woodpile (the hearth is the only one in the
+    stone-age world). The pull-first source: production draws this BEFORE
+    the entity's own holdings, so a house never starves its fire for lack
+    of a carrying capacity it could have dropped."""
+    facility = _facility_at(session, entity, "WOODPILE")
+    if facility is None:
+        return Decimal("0")
+    row = _holding_row(session, facility.id, SHARED, str(symbol).upper())
+    return row.quantity if row is not None else Decimal("0")
+
+
+def draw_woodpile(session: Session, entity: Entity, symbol: str,
+                  quantity: Decimal) -> None:
+    """Draw from the WOODPILE at the entity's place (the pull-first source).
+    The caller has already checked the pool is deep enough; this is the
+    writer, refused (never silently short) if it is not."""
+    facility = _facility_at(session, entity, "WOODPILE")
+    if facility is None:
+        raise ValueError(f"no woodpile at {_where(entity)}")
+    _draw_row(session, facility.id, SHARED, str(symbol).upper(),
+              Decimal(quantity).quantize(_QUANTUM))
+
+
+def shared_pool_quantity(session: Session, entity: Entity, symbol: str) -> Decimal | None:
+    """ctx.query.dropped — the shared pool's quantity of `symbol` at the
+    caller's place (WOODPILE for wood at the hearth, DROP elsewhere). Nil
+    (None) when the place has no pool of the symbol's kind — "nil when
+    none"; a present-but-empty pool reads 0."""
+    facility = _drop_target(session, entity, symbol)
+    if facility is None:
+        return None
+    row = _holding_row(session, facility.id, SHARED, str(symbol).upper())
+    qty = row.quantity if row is not None else Decimal("0")
+    return qty.quantize(_QUANTUM)
+
+
+def stored_quantity(session: Session, entity: Entity, symbol: str) -> Decimal | None:
+    """ctx.query.stored — the caller's PRIVATE store's quantity of
+    `symbol`. Nil (None) when the caller is not at a place carrying a
+    STORAGE ("nil ... not at home"); a present-but-empty store reads 0."""
+    facility = _facility_at(session, entity, "STORAGE")
+    if facility is None:
+        return None
+    row = _holding_row(session, facility.id, entity.id, str(symbol).upper())
+    qty = row.quantity if row is not None else Decimal("0")
+    return qty.quantize(_QUANTUM)
 
 
 # ---------------------------------------------------------------------------

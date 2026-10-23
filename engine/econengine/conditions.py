@@ -44,8 +44,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
-    Account, Entity, EntityStatus, Good, Holding, Order, OrderStatus, Parcel,
-    Process, ProcessStatus, WorldSetting,
+    Account, Entity, EntityStatus, FacilityHolding, Good, Holding, Order,
+    OrderStatus, Parcel, Process, ProcessStatus, WorldSetting,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -288,6 +288,30 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
             goods_burned += holding.quantity
         holding.quantity = Decimal("0")
 
+    # Stowed goods are part of the estate too (docs/camp-storage.md):
+    # the decedent's PRIVATE store rows (owner = the entity) are moved or
+    # burned in the same pass. Shared rows (owner "*") are NOT the
+    # decedent's any more -- goods dropped into a shared pool are anyone's
+    # to pick up, so they persist in the pool, not in the estate.
+    for row in session.execute(
+        select(FacilityHolding)
+        .where(FacilityHolding.owner_id == entity.id, FacilityHolding.quantity > 0)
+        .order_by(FacilityHolding.symbol)
+    ).scalars():
+        if recipient is not None and row.symbol not in condition_symbols:
+            # The heir inherits the stored goods, still on the shelf: credit
+            # their private row on the same facility (merging under the
+            # unique (facility, owner, symbol) constraint) and zero the
+            # decedent's. No cap check -- the estate is a forced transfer,
+            # not a voluntary store (the 40-cap is the store action's
+            # policy, not a conservation rule).
+            target = _facility_row(session, row.facility_id, recipient.id, row.symbol)
+            target.quantity = (target.quantity + row.quantity).quantize(_QUANTUM)
+            goods_moved += row.quantity
+        else:
+            goods_burned += row.quantity
+        row.quantity = Decimal("0")
+
     money_moved = Decimal("0")
     money_burned = Decimal("0")
     for account in session.execute(
@@ -344,6 +368,26 @@ def _credit_holding(session: Session, entity: Entity, symbol: str, quantity: Dec
                 and holding.quantity > good.max_holding:
             holding.quantity = good.max_holding
     return holding.quantity - before
+
+
+def _facility_row(session: Session, facility_id: str, owner_id: str,
+                  symbol: str) -> FacilityHolding:
+    """The (facility, owner, symbol) shelf row, created at 0 if the shelf is
+    bare. The estate's merge target for a private store row."""
+    row = session.execute(
+        select(FacilityHolding).where(
+            FacilityHolding.facility_id == facility_id,
+            FacilityHolding.owner_id == owner_id,
+            FacilityHolding.symbol == symbol,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = FacilityHolding(
+            facility_id=facility_id, owner_id=owner_id, symbol=symbol,
+            quantity=Decimal("0"),
+        )
+        session.add(row)
+    return row
 
 
 def _credit_account(session: Session, entity: Entity, currency: str, amount: Decimal) -> None:

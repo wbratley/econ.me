@@ -33,7 +33,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import clock, conditions
-from .models import Entity, EntityStatus, EntityType, Good, Holding, MarketEscrow
+from .models import (Entity, EntityStatus, EntityType, FacilityHolding, Good, Holding,
+                    MarketEscrow)
 
 _QUANTUM = Decimal("0.0001")
 
@@ -213,6 +214,25 @@ def apply_decay(session: Session, tick_number: int) -> list[dict]:
                 lost = escrow.quantity
             if lost > 0:
                 escrow.quantity -= lost
+                decayed += lost
+        # A camp and a drop zone are not cellars either (docs/camp-storage.md):
+        # stowed/dropped goods rot at the same rate as carried goods. Same
+        # math, same event -- the rot ledger still has one column. Private
+        # and shared rows alike (a dropped meal is a race between rot and
+        # being picked off).
+        for row in session.execute(
+            select(FacilityHolding).where(
+                FacilityHolding.symbol == good.symbol,
+                FacilityHolding.quantity > 0,
+            ).order_by(FacilityHolding.id)
+        ).scalars().all():
+            lost = (row.quantity * good.decay_per_tick).quantize(
+                _QUANTUM, rounding=ROUND_HALF_UP
+            )
+            if lost == 0 and row.quantity > 0:
+                lost = row.quantity
+            if lost > 0:
+                row.quantity -= lost
                 decayed += lost
         if decayed > 0:
             event = {

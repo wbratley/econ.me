@@ -515,6 +515,43 @@ def test_the_starter_fishes_the_bank_when_the_meat_shelf_thins(session):
     assert _events(session, "script_error") == []
 
 
+def test_the_starter_keeps_the_floor_order_at_the_counter(session):
+    """run-58 postmortem #3: the floor's one worked order -- a house
+    standing at the counter with a fat wood back sells two logs at the
+    counter's bid (0.50, the price it opens at), settled on its OWN
+    COIN book -- the nil-account gap that used to kill exactly this
+    strategy is gone, and the reference is in the inherited source."""
+    create_content(session)
+    _no_wolves(session)
+    seat = _starter_seat(session, "Merchant")
+    _at(session, seat, "POST")
+    _set(session, seat, "WOOD", 6)     # two for the sale, two for the stoke
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)  # warm and fed: the counter, not meals
+    before = session.execute(
+        select(Account.balance).where(
+            Account.entity_id == seat.id, Account.currency == COIN)
+    ).scalar_one()
+    session.commit()
+    _run(session, 1)
+    placed = [e for e in _events(session, "place_order")
+             if e["entity_id"] == seat.id
+             and e.get("status") == "applied"
+             and e.get("params", {}).get("symbol") == "WOOD"
+             and e.get("params", {}).get("side") == "sell"]
+    assert placed, "the counter order never placed"
+    # the post's opening bid (0.50, half the genesis basis) crossed it
+    # the same tick: the books moved on the house's own book -- two
+    # logs for one coin
+    after = session.execute(
+        select(Account.balance).where(
+            Account.entity_id == seat.id, Account.currency == COIN)
+    ).scalar_one()
+    assert after == before + Decimal("1")
+    assert _hold(session, seat.id, "WOOD") == Decimal("4")
+    assert _events(session, "script_error") == []
+
+
 def test_the_starter_hafts_the_spear_rung(session):
     """Leg two: the floor's one rung of capital. A camp that has the
     materials and wood to spare spends an afternoon hafting -- the
@@ -775,12 +812,19 @@ def test_spear_hunt_beats_bare_hunt(session):
 # ===========================================================================
 
 def _commons_fire(session):
+    # the fire-ground is the commons parcel at the hearth (the shared drops
+    # live on their own commons parcels at the off-hearth places), and it
+    # now carries the private store and the woodpile beside the fire.
     ground = session.execute(
-        select(parcels.Parcel).where(parcels.Parcel.parcel_type == "COMMONS")
+        select(parcels.Parcel)
+        .join(Place, parcels.Parcel.place_id == Place.id)
+        .where(parcels.Parcel.parcel_type == "COMMONS",
+               Place.key == "HEARTH")
     ).scalar_one()
     return ground, session.execute(
         select(parcels.Facility)
-        .where(parcels.Facility.parcel_id == ground.id)
+        .where(parcels.Facility.parcel_id == ground.id,
+               parcels.Facility.facility_type == "FIRE")
     ).scalar_one()
 
 
@@ -815,6 +859,46 @@ def test_the_commons_fire_stands(session):
         assert production.get_recipe(session, code).requires_facility_lit
     from econengine.goods import get_good
     assert get_good(session, "WARMTH").max_holding == WARMTH_CAP
+
+
+def test_the_hearth_carries_the_store_and_the_woodpile(session):
+    """Genesis furniture (camp storage): the fire-ground also carries the
+    PRIVATE store (capped 40, PLACE-access so any house standing home may
+    use it) and the shared WOODPILE (wood only) -- the two home surfaces.
+    They sit on the commons ground parcel, so a house's own camp parcel
+    stays bare (test_seat_endowment)."""
+    create_content(session)
+    ground, _fire = _commons_fire(session)
+    by = {f.facility_type: f for f in
+          session.execute(select(parcels.Facility)
+                          .where(parcels.Facility.parcel_id == ground.id))
+          .scalars()}
+    assert set(by) == {"FIRE", "STORAGE", "WOODPILE"}
+    assert (by["STORAGE"].access, by["STORAGE"].capacity) == ("PLACE", 40)
+    assert by["WOODPILE"].access == "PLACE"
+
+
+def test_every_off_hearth_place_has_a_shared_drop(session):
+    """The shared drop: an unowned DROP at every place except the hearth
+    (home is private -- store and woodpile, no public drop there)."""
+    create_content(session)
+    places = {p.key: p for p in session.execute(select(Place)).scalars()}
+    for key in ("THICKET", "RIVER", "FLINT", "FOREST", "POST",
+                "RIDGE_PASS", "SALT_LICK", "VALE"):
+        drops = session.execute(
+            select(parcels.Facility)
+            .join(parcels.Parcel)
+            .where(parcels.Parcel.place_id == places[key].id,
+                   parcels.Facility.facility_type == "DROP")
+        ).scalars().all()
+        assert len(drops) == 1, key
+        assert session.get(parcels.Parcel, drops[0].parcel_id).owner_id is None
+    assert session.execute(
+        select(parcels.Facility)
+        .join(parcels.Parcel)
+        .where(parcels.Parcel.place_id == places["HEARTH"].id,
+               parcels.Facility.facility_type == "DROP")
+    ).scalars().first() is None
 
 
 def test_stoke_burns_and_goes_dark(session):

@@ -583,7 +583,16 @@ def start_process(
             f"cost {recipe.code}")
 
     for item in recipe.inputs:
-        available = _available_quantity(session, entity, item.symbol)
+        # WOOD pull-first (docs/camp-storage.md): the hearth's shared
+        # WOODPILE is the camp's first fuel, drawn BEFORE the entity's own
+        # holdings -- a house never starves its fire for lack of a carrying
+        # capacity it could have dropped. Non-wood inputs (and any place
+        # with no woodpile, where the pool reads 0) are unchanged.
+        woodpile = Decimal("0")
+        if item.symbol == "WOOD":
+            woodpile = parcels.woodpile_pool(session, entity, "WOOD")
+        available = (_available_quantity(session, entity, item.symbol)
+                     + woodpile)
         if available < item.quantity:
             # Name the balance the check actually drew on, and -- when
             # reservations hold part of it -- WHO holds them (run 15:
@@ -610,13 +619,22 @@ def start_process(
                 f", reserved by your running {', '.join(reservers)}"
                 if reservers else ""
             )
+            pile = (
+                f" plus {woodpile} in the woodpile"
+                if woodpile > 0 else ""
+            )
             raise InsufficientHoldingsError(
                 f"entity {entity.id} has {available} unreserved "
-                f"{item.symbol} of {held_qty} held{note} "
+                f"{item.symbol} of {held_qty} held{pile}{note} "
                 f"for recipe {recipe.code} input {item.quantity} "
                 f"(std.unreserved('{item.symbol}') is the spendable balance)"
             )
-        adjust_holding(session, entity, item.symbol, -item.quantity)
+        from_pool = min(woodpile, item.quantity)
+        from_holdings = item.quantity - from_pool
+        if from_pool > 0:
+            parcels.draw_woodpile(session, entity, "WOOD", from_pool)
+        if from_holdings > 0:
+            adjust_holding(session, entity, item.symbol, -from_holdings)
     for item in recipe.deposit_inputs:
         parcels.draw_deposit(session, parcel, item.symbol, item.quantity)
 

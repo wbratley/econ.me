@@ -305,6 +305,16 @@ def test_stdlib_sugar_helpers():
     assert abs(run("return std.balance()", _LIB_CTX) - 100.0) < 1e-9
     assert abs(run("return std.balance('USD')", _LIB_CTX) - 100.0) < 1e-9
     assert run("return std.balance('EUR')", _LIB_CTX) == 0
+    # std.account_id: the id of the first account in a currency (run-58
+    # #3) -- the settlement argument for place_order/transfer; nil when
+    # the book does not exist, so a nil flows through as "no account".
+    assert run("return std.account_id('USD')", _LIB_CTX) == "acct-1"
+    assert run("return std.account_id()", _LIB_CTX) == "acct-1"
+    assert run("return std.account_id('EUR')", _LIB_CTX) is None
+    other = dict(_LIB_CTX, accounts=[
+        {"id": "acct-b", "currency": "USD", "balance": "1.0000"},
+        {"id": "acct-a", "currency": "EUR", "balance": "2.0000"}])
+    assert run("return std.account_id('EUR')", other) == "acct-a"
 
 
 def test_stdlib_namespace_is_read_only():

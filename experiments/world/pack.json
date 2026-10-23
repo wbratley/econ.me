@@ -25,7 +25,7 @@
   "summary": "Two scenarios -- the frontier economy and the stone age -- plus the shared clerk, miner, smith and trading-post casts.",
   "title": "The Demo World"
  },
- "engine_std": "f1a7fad89397b98f",
+ "engine_std": "695b83c9bb0ddca7",
  "lua": {
   "boar.lua": "db7e6f24c21403a0",
   "clerk.lua": "999bf6c106578846",
@@ -33,7 +33,7 @@
   "pack.lua": "4f68c575e7a8057b",
   "smith.lua": "b5349eb816eb2282",
   "starter.lua": "4ac8f48df1e5b4b9",
-  "stone_age_starter.lua": "f9d722c67bb6a383",
+  "stone_age_starter.lua": "8d1f9e67b2197873",
   "trading_post.lua": "8a55c678ca0ccdbe",
   "wolf_pack.lua": "b1fca77c1401ee31",
   "world_lib.lua": "b1244db1c263994a"

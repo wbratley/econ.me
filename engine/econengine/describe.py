@@ -42,7 +42,8 @@ ENGINE_EVENT_TYPES: tuple[str, ...] = (
 FREE_INTENT_TYPES: tuple[str, ...] = (
     "transfer", "place_order", "cancel_order", "start_process",
     "cancel_process", "travel", "transfer_parcel", "set_behaviour",
-    "say",
+    "say", "facility_store", "facility_take", "facility_drop",
+    "facility_pickup",
 )
 
 
@@ -112,6 +113,18 @@ def _intent_text(intent_type: str, params: dict, names=None) -> str:
         return f"transferred parcel {p.get('parcel_id', '?')}"
     if intent_type == "say":
         return f'says: "{p.get("text", "")}"'
+    if intent_type == "facility_store":
+        return (f"stored {_num(p.get('quantity', 0))} "
+                f"{_g(p, 'symbol', names)} in the camp store")
+    if intent_type == "facility_take":
+        return (f"took {_num(p.get('quantity', 0))} "
+                f"{_g(p, 'symbol', names)} from the camp store")
+    if intent_type == "facility_drop":
+        return (f"dropped {_num(p.get('quantity', 0))} "
+                f"{_g(p, 'symbol', names)} (shared pile)")
+    if intent_type == "facility_pickup":
+        return (f"picked up {_num(p.get('quantity', 0))} "
+                f"{_g(p, 'symbol', names)} (shared pile)")
     # Total by construction: an unknown intent still renders.
     detail = ", ".join(f"{k}={v}" for k, v in sorted((p or {}).items()))
     return f"{intent_type} ({detail})" if detail else intent_type

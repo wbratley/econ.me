@@ -18,6 +18,7 @@ from .recipe import (
 from .process import Process, ProcessStatus
 from .intent import PendingIntent
 from .parcel import Parcel, Facility, Deposit
+from .facility_holding import FacilityHolding
 from .place import Place
 from .spatial_edge import SpatialEdge
 from .travel import TravelRoute, TravelRouteStatus
@@ -65,6 +66,7 @@ __all__ = [
     "Parcel",
     "Facility",
     "Deposit",
+    "FacilityHolding",
     "Place",
     "SpatialEdge",
     "TravelRoute",

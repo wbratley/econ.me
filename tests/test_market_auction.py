@@ -277,6 +277,33 @@ def test_script_places_order_and_trades_same_tick(world):
     assert len(trade_events) == 2  # one per side
 
 
+def test_script_place_order_without_account_settles_on_own_book(world):
+    """run-58 postmortem #3: a script that omits the account (the derived
+    food-buy strategy) settles on its own first account in the market
+    currency instead of dying with 'unknown settlement account'."""
+    session, buyer, seller, b, s, market = world
+    session.add(Script(
+        name="script-buyer-no-account",
+        script_type=ScriptType.BEHAVIOUR,
+        entity_id=buyer.id,
+        source="ctx.action.place_order('WHEAT', 'buy', '10', '12')",
+    ))
+    session.flush()
+    sell(session, seller, s, "10", "12")   # resting API-style order
+
+    tick = run_tick(session)
+
+    applied = [e for e in tick.events if e["type"] == "place_order"]
+    assert applied[0]["status"] == "applied"
+    assert holding_qty(session, buyer) == Decimal("10")
+    # settled on the buyer's own book, not a nil account
+    from sqlalchemy import select as sa_select
+    from econengine.models import Order as OrderModel
+    order = session.execute(sa_select(OrderModel).where(
+        OrderModel.entity_id == buyer.id)).scalar_one()
+    assert order.account_id == b.id
+
+
 def test_behaviour_requote_leaves_one_order_per_level(world):
     """The stone-run7 shape: a behaviour re-asserts the same quote every
     tick (no world.settle_last_orders discipline, no cancel). The engine's

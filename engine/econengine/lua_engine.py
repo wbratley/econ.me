@@ -316,6 +316,20 @@ function std.balance(currency)
   return 0
 end
 
+-- The id of the first account in `currency` (nil = your first account):
+-- the settlement argument for place_order and transfer. ctx.accounts is
+-- your own book, so this cannot name a stranger's account; nil when you
+-- hold no such account (place a nil or omit it -- the engine then names
+-- the missing currency in the refusal).
+function std.account_id(currency)
+  for _, a in ipairs(ctx.accounts) do
+    if currency == nil or a.currency == currency then
+      return a.id
+    end
+  end
+  return nil
+end
+
 return std
 """
 
@@ -336,6 +350,7 @@ ACTION_MEMBERS = (
     "enact", "spawn_entity",
     "place_order", "cancel_order", "start_process", "cancel_process",
     "travel", "transfer_parcel", "attack", "say",
+    "facility_store", "facility_take", "facility_drop", "facility_pickup",
 )
 
 # Strict-globals installer (docs/scripting.md section 4, the lint half of
@@ -655,14 +670,24 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=100,
         ))
 
-    def _place_order(symbol, side, quantity, limit_price, account_id, *rest):
-        _arity("place_order", rest, "(symbol, side, quantity, limit_price, account_id)")
+    def _place_order(symbol, side, quantity, limit_price,
+                     account_id=None, *rest):
+        _arity("place_order", rest,
+               "(symbol, side, quantity, limit_price, [account_id])")
+        # account_id is optional (run-58 #3): omitting it, or passing
+        # nil, settles on the entity's own first account in the
+        # market's currency -- the service defaults to the same one.
+        params = {"symbol": str(symbol), "side": str(side),
+                  "quantity": str(quantity), "limit_price": str(limit_price)}
+        resource_ids = [str(symbol)]
+        if account_id is not None:
+            params["account_id"] = str(account_id)
+            resource_ids.insert(0, str(account_id))
         intents.append(Intent(
             entity_id=entity_id,
             intent_type="place_order",
-            params={"symbol": str(symbol), "side": str(side), "quantity": str(quantity),
-                    "limit_price": str(limit_price), "account_id": str(account_id)},
-            resource_ids=[str(account_id), str(symbol)],
+            params=params,
+            resource_ids=resource_ids,
             priority=100,
         ))
 
@@ -1000,6 +1025,32 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
             priority=100,
         ))
 
+    def _facility_storage(intent_type, symbol, quantity, *rest):
+        _arity(intent_type, rest, "(symbol, quantity)")
+        # Camp storage (docs/camp-storage.md): one intent shape for all four
+        # moves (store/take/drop/pickup), the service routes by type. Instant
+        # and labor-free; the presence gate is the service's. `quantity`
+        # arrives as an exact-decimal string (the std.amount_str contract).
+        intents.append(Intent(
+            entity_id=entity_id,
+            intent_type=intent_type,
+            params={"symbol": str(symbol), "quantity": str(quantity)},
+            resource_ids=[str(symbol)],
+            priority=100,
+        ))
+
+    def _facility_store(symbol, quantity, *rest):
+        _facility_storage("facility_store", symbol, quantity, *rest)
+
+    def _facility_take(symbol, quantity, *rest):
+        _facility_storage("facility_take", symbol, quantity, *rest)
+
+    def _facility_drop(symbol, quantity, *rest):
+        _facility_storage("facility_drop", symbol, quantity, *rest)
+
+    def _facility_pickup(symbol, quantity, *rest):
+        _facility_storage("facility_pickup", symbol, quantity, *rest)
+
     action_tbl["transfer"]    = _transfer
     action_tbl["issue_money"] = _issue_money
     action_tbl["retire_money"] = _retire_money
@@ -1023,6 +1074,10 @@ def _build_ctx(lua, ctx: dict, entity_id: str, intents: list, queries: dict):
     action_tbl["transfer_parcel"] = _transfer_parcel
     action_tbl["attack"]         = _attack
     action_tbl["say"]              = _say
+    action_tbl["facility_store"]   = _facility_store
+    action_tbl["facility_take"]    = _facility_take
+    action_tbl["facility_drop"]    = _facility_drop
+    action_tbl["facility_pickup"]  = _facility_pickup
 
     ctx_tbl = lua.table()
     ctx_tbl["tick"]   = ctx.get("tick")

@@ -43,6 +43,14 @@
 --     if ctx.entity.place ~= "THICKET" then ctx.action.travel("THICKET") end
 --   price a walk before taking it:
 --     local it = world.route(ctx.entity.place, "POST")
+--   the counter (block 4b): every market trades at the POST, and
+--     only there; read the book (std.best_bid) and an order settles
+--     on your OWN book -- name it with std.account_id("COIN"), or
+--     omit it (the engine defaults to your first account in the
+--     market's currency):
+--     ctx.action.place_order("WOOD", "sell", "2",
+--                            std.amount_str(std.best_bid("WOOD", 0.50)),
+--                            std.account_id("COIN"))
 --   book prices are nil on an empty side -- ALWAYS pass a fallback:
 --     local ask = std.best_ask("JERKY", 0)
 --   a holding's spendable side is smaller than holding_qty when your
@@ -56,7 +64,13 @@ local river  = "RIVER"            -- the world's tap: free water at the bank
 
 local warmth = std.holding_qty("WARMTH")
 local rest   = std.holding_qty("REST")
-local wood   = std.holding_qty("WOOD")
+local wood_held = std.holding_qty("WOOD")
+-- Effective wood = the carried log + the camp's WOODPILE (docs/
+-- camp-storage.md): the engine pulls the pile from FIRST for any wood
+-- recipe, so a gate that asks "do I have wood?" must count the pile -- a
+-- house that set its logs down at home is not woodless. The pile is NOT
+-- carried, though: the back's burden (load, below) counts wood_held only.
+local wood    = wood_held + tonumber(ctx.query.dropped("WOOD") or 0)
 local meat   = std.holding_qty("MEAT")
 local berries = std.holding_qty("BERRIES")
 local apples = std.holding_qty("APPLES")
@@ -286,8 +300,10 @@ end
 --    always: no walk may LAND in the dark.
 local forest = "FOREST"           -- the spear game: the deep wood's table
 local load = berries + apples + cooked + jerky + meat
-         + wood + flint + yarn     -- the back's burden (bodies and
-                                    -- coins ride free; cargo does not)
+         + wood_held + flint + yarn  -- the back's burden (bodies and
+                                    -- coins ride free; cargo does not --
+                                    -- the woodpile stays put, so the
+                                    -- pile is not on this back)
 local walk_home = world.distance_ticks(place or home, home) or 1
 local dusk_closing = std.hour() + walk_home >= 19
 -- The protein walk: a speared house hunts the deep forest when the
@@ -406,4 +422,72 @@ end
 -- the larder, not the plan.
 if S.errand_day ~= std.day() then
   S.errand, S.errand_day = nil, nil
+end
+
+-- 4. Camp storage (docs/camp-storage.md): the load-release valve. A back
+--    at the old bar (load >= 16) used to be a day's work DONE -- the
+--    floor stood there, unable to gather (the load < 16 gate) and,
+--    worse, unable to WALK: the CARRY law refuses the road above
+--    twenty, whatever the hour, so a rich day's cargo strands the
+--    house with a full belly and no move (run 57's Harald, exactly).
+--    The valve sheds ONE unit a tick, and WHAT it sheds is the whole
+--    design: at home it is the NON-ROTTING BALLAST only -- wood to
+--    the shared woodpile (the fire's FIRST fuel; the wood gates read
+--    the pile, so the house is never wood-blind), flint/yarn/eggs to
+--    the private store -- NEVER the action shelf (berries, meat,
+--    jerky: their gates read the BACK, and goods in the store cannot
+--    be eaten, cooked, or smoked -- a house that stores its dinner
+--    starves on a fat pantry; the soak caught exactly that). Away
+--    from home it is the emergency: the heaviest thing on the back
+--    into the place's DROP, any hour, because a stranded back loses
+--    everything anyway. What is dropped is anyone's to pick up, so a
+--    drop is a gift the world may or may not return; food dropped in
+--    the field rots where it lies (the race the spec wants).
+if load >= 16 then
+  if place == home then
+    local ballast = { "WOOD", "FLINT", "YARN", "EGGS" }
+    local heaviest, heavy_q = nil, 0
+    for _, sym in ipairs(ballast) do
+      local q = std.holding_qty(sym)
+      if q > heavy_q then heaviest, heavy_q = sym, q end
+    end
+    if heaviest then
+      if heaviest == "WOOD" then
+        ctx.action.facility_drop(heaviest, "1")   -- the woodpile
+      else
+        ctx.action.facility_store(heaviest, "1")  -- the private shelf
+      end
+    end
+  else
+    local cargo = { "MEAT", "WOOD", "BERRIES", "APPLES", "FLINT",
+                    "YARN", "JERKY", "COOKED", "EGGS" }
+    local heaviest, heavy_q = nil, 0
+    for _, sym in ipairs(cargo) do
+      local q = std.holding_qty(sym)
+      if q > heavy_q then heaviest, heavy_q = sym, q end
+    end
+    if heaviest then
+      ctx.action.facility_drop(heaviest, "1")     -- the shared drop
+    end
+  end
+end
+
+-- 4b. The counter (S4): every market trades at the POST, and only
+--     there. The floor never plans the walk out -- the errand is the
+--     player's -- but a house standing at the counter with a fat wood
+--     back (4 carried: two for the sale, two for the stoke) keeps
+--     the floor's one worked order: read the counter's bid (0.50 is
+--     the price the counter opens at -- the book is empty before his
+--     first quotes) and sell two logs at it. The floor trades at the
+--     floor price; the haggling errand is the player's. Re-asserting
+--     does not stack: cancel-replace supersedes the same level, and
+--     the delivered wood sits on the counter shelf, reclaimable if it
+--     is not bought. The account is named on purpose --
+--     std.account_id("COIN") -- because the settlement book is yours;
+--     a nil (no such account) flows through as "no account", and the
+--     refusal then names the missing currency.
+if place == "POST" and wood_held >= 4 then
+  local bid = std.best_bid("WOOD", 0.50)
+  ctx.action.place_order("WOOD", "sell", "2", std.amount_str(bid),
+                         std.account_id("COIN"))
 end

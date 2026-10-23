@@ -178,6 +178,39 @@ def test_place_order_rejects_currency_mismatch(world):
         place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("1"), eur.id)
 
 
+def test_place_order_defaults_to_own_account(world):
+    """run-58 postmortem #3: a house trading on its own book does not
+    name the account -- omission settles on its own account."""
+    session, alice, a, market = world
+    order = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("1"))
+    assert order.account_id == a.id
+
+
+def test_place_order_default_picks_the_market_currency(world):
+    session, alice, a, market = world
+    create_account(session, alice, "EUR")
+    order = place_order(session, alice.id, "WHEAT", "buy", Decimal("1"), Decimal("1"))
+    # the WHEAT market is a USD market; the EUR book is not the default
+    assert order.account_id == a.id
+
+
+def test_place_order_default_is_deterministic(world):
+    session, alice, a, market = world
+    second = create_account(session, alice, "USD")
+    first = min(a.id, second.id)
+    for _ in range(2):
+        order = place_order(session, alice.id, "WHEAT", "buy",
+                            Decimal("1"), Decimal("1"))
+        assert order.account_id == first
+
+
+def test_place_order_default_without_account_refused(world):
+    session, alice, a, market = world
+    bob = create_entity(session, "Bob", EntityType.INDIVIDUAL)
+    with pytest.raises(ValueError, match="no USD settlement account"):
+        place_order(session, bob.id, "WHEAT", "buy", Decimal("1"), Decimal("1"))
+
+
 # --- cancel_order ---
 
 def test_cancel_order(world):

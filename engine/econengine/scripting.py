@@ -188,6 +188,8 @@ def synthetic_queries() -> dict:
         "best_ask": lambda symbol: None,
         "holding": lambda entity_id, symbol: None,
         "unreserved": lambda entity_id, symbol: None,
+        "stored": lambda symbol: None,
+        "dropped": lambda symbol: None,
         "has_unlock": lambda entity_id, code: False,
         "holders": lambda symbol: [],
         "world_setting": lambda key: None,
@@ -443,7 +445,8 @@ _FATAL_MARKERS = (
 # pins the tuple to the live dict (test_scripting_gate).
 QUERY_MEMBERS = (
     "balance", "total_supply", "market_price", "best_bid", "best_ask",
-    "market_shelf", "shelf", "holding", "unreserved", "has_unlock",
+    "market_shelf", "shelf", "holding", "unreserved", "stored",
+    "dropped", "has_unlock",
     "holders", "age", "lifespan", "population", "parents", "children",
     "route", "distance_ticks", "public_facilities", "conditions",
     "carriers", "world_setting", "fiscal_policy", "constitution",
@@ -1025,6 +1028,38 @@ def build_queries(session: Session, tick_number: int | None = None,
         held = h.quantity if h else Decimal("0")
         return str(held - markets.reserved_quantity(session, eid, str(symbol).upper()))
 
+    def stored(symbol):
+        """The CALLER's PRIVATE store quantity of `symbol` (docs/
+        camp-storage.md): what they shelved at the hearth's STORAGE. Nil
+        when the caller is not at a place carrying a STORAGE ("nil ... not
+        at home"); a present-but-empty store reads 0. The pool is not a
+        holding, so this is the read a script needs before a `take`."""
+        if owner_id is None:
+            return None  # no caller: the bare test form has no store
+        from . import parcels as parcels_mod
+        entity = session.get(Entity, owner_id)
+        if entity is None:
+            return None
+        qty = parcels_mod.stored_quantity(session, entity, str(symbol))
+        return str(qty) if qty is not None else None
+
+    def dropped(symbol):
+        """The SHARED pool quantity of `symbol` at the CALLER's place
+        (docs/camp-storage.md): the woodpile for WOOD at the hearth, the
+        DROP zone elsewhere. Nil when the place has no pool of the
+        symbol's kind. Named `dropped` (not `shelf`) because
+        `ctx.query.shelf` already means the market escrow. This is what a
+        script reads before a `pickup` -- and the effective wood a house
+        can draw (the engine pulls the pile from first)."""
+        if owner_id is None:
+            return None  # no caller: the bare test form has no pool
+        from . import parcels as parcels_mod
+        entity = session.get(Entity, owner_id)
+        if entity is None:
+            return None
+        qty = parcels_mod.shared_pool_quantity(session, entity, str(symbol))
+        return str(qty) if qty is not None else None
+
     def has_unlock(entity_id, code):
         technology = tech.get_technology(session, str(code))
         if technology is None:
@@ -1412,6 +1447,8 @@ def build_queries(session: Session, tick_number: int | None = None,
         "shelf": shelf,
         "holding": holding,
         "unreserved": unreserved,
+        "stored": stored,
+        "dropped": dropped,
         "has_unlock": has_unlock,
         "holders": holders,
         "age": age,
@@ -1946,7 +1983,9 @@ def resolve_intent(session: Session, intent: Intent,
                     side=intent.params.get("side", ""),
                     quantity=amount_of("quantity"),
                     limit_price=amount_of("limit_price"),
-                    account_id=intent.params.get("account_id", ""),
+                    # account_id omitted (or nil at the call site) settles
+                    # on the entity's own account in the market currency.
+                    account_id=intent.params.get("account_id"),
                     reference=reference,
                 )
             extra["order_id"] = order.id  # scripts need this to cancel later
@@ -2032,6 +2071,35 @@ def resolve_intent(session: Session, intent: Intent,
             # conditions register reads back. Applied says only — a refused
             # utterance never happened, and never echoes.
             event["loud"] = True
+
+        elif intent.intent_type in (
+                "facility_store", "facility_take", "facility_drop",
+                "facility_pickup"):
+            # Camp storage (docs/camp-storage.md): goods move between an
+            # entity's holdings and a facility's shelf — the private
+            # STORAGE at the hearth, the shared WOODPILE, the shared DROP
+            # at every other place. Self-directed (not in INTENT_CAPABILITIES,
+            # like travel/say): the presence gate (standing at the
+            # facility's place) and the cap/conservation checks are the
+            # service's; the applied line is the audit record (who moved
+            # what, where) — the theft trail reads it.
+            from . import parcels as parcels_mod
+            entity = session.get(Entity, intent.entity_id)
+            if entity is None:
+                return rejected("unknown entity")
+            services_map = {
+                "facility_store": parcels_mod.facility_store,
+                "facility_take": parcels_mod.facility_take,
+                "facility_drop": parcels_mod.facility_drop,
+                "facility_pickup": parcels_mod.facility_pickup,
+            }
+            with session.begin_nested():
+                summary = services_map[intent.intent_type](
+                    session, entity,
+                    intent.params.get("symbol", ""),
+                    amount_of("quantity"),
+                )
+            extra.update(summary)
 
         else:
             return rejected(f"unknown intent type {intent.intent_type!r}")

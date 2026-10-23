@@ -169,6 +169,8 @@ to your own entity). Prefer the `std.*` wrappers for the common ones.
 | `best_ask` | `(symbol)` | best OPEN sell, string or nil |
 | `market_shelf` | `(symbol)` | placed market's delivered depth: `{shelf, claimed, free}` (strings) or nil |
 | `shelf` | `(symbol)` | YOUR goods standing on that market's shelf, string or nil |
+| `stored` | `(symbol)` | YOUR private store at the hearth's STORAGE, string or nil (nil when you are not at a place carrying a store) |
+| `dropped` | `(symbol)` | the SHARED pool at your place — the woodpile for WOOD at the hearth, the drop zone elsewhere — string or nil (nil when the place has no pool of that kind) |
 | `holding` | `(entity_id, symbol)` | string or nil |
 | `unreserved` | `(entity_id, symbol)` | held minus process reservations, string or nil |
 | `has_unlock` | `(entity_id, code)` | boolean |
@@ -214,7 +216,10 @@ ctx.action.travel(to_place_key, modes?)        -- engine routes; each hop
                                                -- ticks. Walking is
                                                -- labor-free but is the
                                                -- tick's act.
-ctx.action.place_order(symbol, side, quantity, limit_price, account_id)
+ctx.action.place_order(symbol, side, quantity, limit_price, account_id?)
+-- account_id optional: omitted (or nil) settles on your own first
+-- account in the market's currency (std.account_id("COIN") is the
+-- same id, named for reference or when you hold several books)
 ctx.action.cancel_order(order_id)
 ctx.action.transfer(from_account_id, to_account_id, amount, reference)
 ctx.action.attack(target_id_or_nil)            -- nil = prowl: engine
@@ -225,10 +230,33 @@ ctx.action.say(text)                           -- speech, ≤256 chars, one
                                                -- per tick; rivals hear
                                                -- it next tick
 ctx.action.transfer_parcel(parcel_id, to_entity_id)
+ctx.action.facility_store(symbol, qty)         -- holdings -> YOUR private
+                                               -- store at the hearth (capped
+                                               -- 40/owner) -- the
+                                               -- load-release valve at home
+ctx.action.facility_take(symbol, qty)          -- your private store ->
+                                               -- holdings
+ctx.action.facility_drop(symbol, qty)          -- holdings -> the SHARED
+                                               -- pool where you stand (the
+                                               -- woodpile for WOOD at the
+                                               -- hearth, the drop zone
+                                               -- elsewhere). Instant,
+                                               -- labor-free; once dropped,
+                                               -- it is anyone's
+ctx.action.facility_pickup(symbol, qty)        -- the shared pool -> your
+                                               -- holdings, whoever dropped
+                                               -- it -- the theft act: the
+                                               -- pool owns nothing, so
+                                               -- picking up is a normal
+                                               -- goods move
 ```
 
 Quantities and prices go as STRINGS (`std.amount_str`), matching §1.
-`side` is `"buy"`/`"sell"`.
+`side` is `"buy"`/`"sell"`. The four storage moves are presence-gated
+(you must stand at the facility's place) and instant; stowed/dropped
+goods rot exactly like carried goods, and `load`-style script fictions
+do not see them — storage is how a script sheds weight (docs/
+camp-storage.md).
 
 **The governance set** (capability- or vote-gated; the resolver
 enforces the gates — see docs/game.md):
@@ -262,6 +290,7 @@ injected source is the normative doc; summary:
 | `std.at(key)` | boolean — true iff you stand on that place key (nil-safe; §1's trap, guarded for you) |
 | `std.need_level(code)` | the need's satisfaction as a NUMBER, or nil when no such need |
 | `std.balance(currency?)` | first account balance in that currency as a number (0 when none) |
+| `std.account_id(currency?)` | the id of your first account in that currency (first account when nil); nil when you hold no such account |
 | `std.unreserved(symbol)` | number or nil (spendable side of a holding) |
 | `std.market_price(symbol, fallback?)` | number or fallback |
 | `std.best_bid(symbol, fallback?)` / `std.best_ask(symbol, fallback?)` | number or fallback (never nil with a fallback) |

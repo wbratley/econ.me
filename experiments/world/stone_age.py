@@ -250,6 +250,17 @@ FIRE_FUEL_CAP = Decimal("6")
 FIRE_FUEL_BURN = Decimal("1")
 STOKE_FUEL = Decimal("4")
 WARM_BY_FIRE_WARMTH = Decimal("6")
+
+# --- Camp storage (docs/camp-storage.md) ------------------------------------
+# The load-release valve. A seat's carrying capacity is a script fiction
+# (load); the engine only moves goods between holdings and a facility's
+# shelf, so a house that over-gathers can set the surplus down (store at
+# home, drop away) instead of dying on the walk with a full belly. The
+# private store is per-owner and capped; the shared pools (the hearth's
+# WOODPILE, every other place's DROP) are unowned and unbounded -- goods
+# in them are anyone's to pick up, so theft and scavenging are emergent,
+# not a mechanic.
+STORAGE_CAP = 40
 WARM_BY_FIRE_REST = Decimal("0.5")
 
 # --- Torches: the night kit (P2, ROADMAP.md) ------------------------------
@@ -897,6 +908,7 @@ def create_content(session: Session, verify: bool = True) -> None:
     the author is regenerating them."""
     _create_map(session)   # the map first: everything sited below
     _create_commons(session)   # the fire-ground: the village hearth stands
+    _create_drops(session)   # the shared drop zones: every off-hearth place
     _create_goods(session)
     _create_recipes(session)
     _create_needs(session)
@@ -1078,6 +1090,38 @@ def _create_commons(session: Session) -> None:
         fuel=FIRE_FUEL_START, fuel_capacity=FIRE_FUEL_CAP,
         fuel_burn_per_tick=FIRE_FUEL_BURN,
     )
+    # Camp storage (docs/camp-storage.md): the hearth's two shared
+    # surfaces stand on the same unowned ground as the fire. The private
+    # STORAGE is where a house sets its surplus down (per-owner rows,
+    # each capped at STORAGE_CAP -- the load-release valve at home), and
+    # the WOODPILE is the camp's common wood: unowned, unbounded,
+    # wood-only, and the first fuel a recipe draws on (production pulls
+    # it before any holding, so a house never starves its fire for lack
+    # of a carrying capacity it could have dropped).
+    parcels.add_facility(
+        session, ground, "STORAGE", access="PLACE", capacity=STORAGE_CAP)
+    parcels.add_facility(
+        session, ground, "WOODPILE", access="PLACE", capacity=1)
+
+
+def _create_drops(session: Session) -> None:
+    """The shared drop zones (docs/camp-storage.md): every place EXCEPT the
+    hearth gets a dedicated UNOWNED parcel carrying a DROP facility -- the
+    shared pile where goods sit for anyone to pick up. Scavenging and
+    theft are emergent from this (a pickup of goods someone else dropped is
+    a normal goods move, not a transfer), so no separate theft mechanic
+    exists. The hearth has no shared drop: home is private (its shared
+    surface is the WOODPILE). Idempotent: a place that already carries a
+    DROP (a re-run of genesis) is left alone."""
+    for place in places.list_places(session):
+        if place.key == "HEARTH":
+            continue
+        if parcels.facility_at_place(session, place.key, "DROP") is not None:
+            continue
+        drop = parcels.create_parcel(
+            session, "COMMONS", name=f"{place.name} drop", place=place.key)
+        parcels.add_facility(session, drop, "DROP", access="PLACE",
+                            capacity=1)
 
 
 def _create_goods(session: Session) -> None:
