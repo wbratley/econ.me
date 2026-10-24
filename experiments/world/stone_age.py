@@ -1316,6 +1316,32 @@ def _create_goods(session: Session) -> None:
                       description="A wood-and-flint board: the answer to an "
                                   "opening shot. Defense, where the spear "
                                   "and axe give only offense.")
+    # The tanner's bench (Bundle C): the worked hide -- the first
+    # material that only exists because a rank made it. The tan is
+    # preservation (a pelt rots at 0.05; leather never does -- the
+    # tanner sells shelf-life, not just cloth).
+    goods.create_good(session, "LEATHER", name="Leather",
+                      description="A pelt scraped, smoked, and greased: the "
+                                  "worked hide. The tanner's output, the "
+                                  "tailor's input -- the first material "
+                                  "that only exists because a rank made it.")
+    # The ignition economy: RESIN the raw (a thicket roll), CHARCOAL
+    # the processed fuel, KINDLING what actually lights.
+    goods.create_good(session, "RESIN", name="Resin",
+                      description="Poured from a cut: the forest's own fire. "
+                                  "Durable, the raw of the ignition shelf.")
+    goods.create_good(session, "CHARCOAL", name="Charcoal",
+                      description="Wood sealed in a pit and starved of air: "
+                                  "denser fuel than the log, and the "
+                                  "charcoal's own heat. The processing step.")
+    goods.create_good(session, "ROPE", name="Rope",
+                      description="Yarn laid and bound: a step above the "
+                                  "cord. The bowstring, the trap, the net, "
+                                  "the repair.")
+    goods.create_good(session, "KINDLING", name="Kindling",
+                      description="Charcoal and resin: the reliable strike. "
+                                  "The difference between a fire that takes "
+                                  "and one that needs three tries.")
     goods.create_good(session, "TRAP", name="Trap",
                       description="One-shot hunting ammunition — consumed by "
                                   "the traps hunt, the best odds craft can buy.")
@@ -1881,6 +1907,12 @@ def _create_recipes(session: Session) -> None:
                     "The needle, the point, the scrape. Gates the fine "
                     "tools a pelt-and-bone kill earns.")
     tech.create_technology(
+        session, "LEATHERWORK", prerequisites=["TANNING"],
+        name="Leatherworking",
+        description="The split that makes a trade: a pelt into leather, the "
+                    "worked hide the tailor buys. The tanner and the tailor "
+                    "are finally different bodies.")
+    tech.create_technology(
         session, "SALT_CURING", name="Salt Curing",
         description="The keeper's trade: salt drawn through meat until it "
                     "keeps forever. Learnt over the post's own shelf -- and "
@@ -1948,7 +1980,7 @@ def _create_recipes(session: Session) -> None:
         requires_season=["SPRING", "SUMMER", "AUTUMN"],
         branches=[
             {"weight": D("35"), "outputs": {"BERRIES": D("12")}, "label": "berries"},
-            {"weight": D("27"), "outputs": {"APPLES": D("10")}, "label": "apples"},
+            {"weight": D("22"), "outputs": {"APPLES": D("10")}, "label": "apples"},
             {"weight": D("15"), "outputs": {"WOOD": D("6")}, "label": "wood"},
             {"weight": D("5"), "outputs": {"YARN": D("2")}, "label": "yarn"},
             {"weight": D("3"), "outputs": {"FLINT": D("2")}, "label": "flint"},
@@ -1957,6 +1989,16 @@ def _create_recipes(session: Session) -> None:
             # The healer's roll, doubled like the rest (Bundle A): the
             # bag finds four where bare hands find two.
             {"weight": D("5"), "outputs": {"HERB": D("4")}, "label": "herb"},
+            # The forest bleeds, doubled (Bundle C) -- and the BAG's
+            # table alone pays for it (the orchard's five: 27 -> 22).
+            # The bare table is the floor's, measured to its edge
+            # (Bundle C first tried resin there too and the soak
+            # collapsed 53% -> 13% house survival on a five-point food
+            # thin -- the doc's own rule governs: thicken trade
+            # WITHOUT starving the floor, so the geared hand finds
+            # what the bare hand misses; the bag is the tooled
+            # policy's table, its margin pays the shelf).
+            {"weight": D("5"), "outputs": {"RESIN": D("2")}, "label": "resin"},
         ],
     )
     production.create_recipe(
@@ -2124,6 +2166,26 @@ def _create_recipes(session: Session) -> None:
         },
         requires_place_kind="HEARTH",
     )
+    # The ignition shelf's whole value (Bundle C): kindling IMPROVES
+    # the light -- one log instead of two, and the fire stands the
+    # same hour you strike it (duration 0, the stoke precedent). The
+    # bare row stays and stays free: kindling buys speed and half the
+    # wood, NEVER access (a cold house without a shelf still lights
+    # its fire the plain way).
+    production.create_recipe(
+        session, "MAKE_FIRE_KINDLING", name="Light a Fire with Kindling",
+        description="Charcoal-and-resin kindling under one log: the "
+                    "reliable strike -- the fire stands the same hour it "
+                    "is struck, on half the wood.",
+        inputs={"LABOR": D("1"), "WOOD": D("1"), "KINDLING": D("1")},
+        outputs={}, duration_ticks=0, builds_facility="FIRE",
+        builds_facility_access="PLACE",
+        builds_facility_config={
+            "capacity": FIRE_SEATS, "fuel": D("2"),
+            "fuel_capacity": FIRE_FUEL_CAP, "fuel_burn_per_tick": FIRE_FUEL_BURN,
+        },
+        requires_place_kind="HEARTH",
+    )
     production.create_recipe(
         session, "STOKE_FIRE", name="Stoke Fire",
         description="Feed the fire: a split log buys two hours of light for "
@@ -2199,8 +2261,8 @@ def _create_recipes(session: Session) -> None:
     # The knife's margin (Bundle B): the held knife trims what the fire
     # would char -- the same two meat, half again the plate. The bare
     # row stays (the gateless cousin): the knife buys margin, never
-    # access. The tanning and rope variants ride the same idiom when
-    # their recipes arrive (Bundle C).
+    # access. The tanning and rope variants ride the same idiom below
+    # (Bundle C delivered them).
     production.create_recipe(
         session, "COOK_MEAT_KNIFE", name="Cook Meat with a Knife",
         description="Trimmed and turned against the flame: the same two "
@@ -2210,6 +2272,33 @@ def _create_recipes(session: Session) -> None:
         outputs={"COOKED_MEAT": D("3")}, duration_ticks=1,
         good_requirements={"KNIFE": D("1")},
         requires_facility="FIRE", requires_facility_lit=True,
+    )
+    # The tanner's bench (Bundle C): the split that creates the market.
+    # A pelt is raw; leather is worked. The tan takes water (the
+    # soak) and two daylight hours at any fire-lit ground, and its
+    # output NEVER ROTS where the pelt rotted at 0.05 -- the tanner
+    # sells preservation. No labor input: the cost is materials and
+    # time (the stoke precedent -- some work is tending, not toil).
+    production.create_recipe(
+        session, "TANN_HIDE", name="Tann a Hide",
+        description="Scrape, smoke, and grease a pelt into leather: the "
+                    "intermediate that makes the tailor a different body. "
+                    "The pelt would rot in a day; the leather never does.",
+        inputs={"PELT": D("1"), "WATER": D("1")},
+        outputs={"LEATHER": D("1")}, duration_ticks=2,
+        requires=["LEATHERWORK"], requires_daylight=True,
+    )
+    # The knife's margin on the tan: the scrape halves (2 hours -> 1).
+    # The knife is held, never spent; the bare row stays.
+    production.create_recipe(
+        session, "TANN_HIDE_KNIFE", name="Tann a Hide with a Knife",
+        description="The blade does the scraping: the same pelt and water, "
+                    "half the hours. A held knife (never spent) -- the "
+                    "tanner's bench runs twice the hides.",
+        inputs={"PELT": D("1"), "WATER": D("1")},
+        outputs={"LEATHER": D("1")}, duration_ticks=1,
+        good_requirements={"KNIFE": D("1")},
+        requires=["LEATHERWORK"], requires_daylight=True,
     )
     # The smokehouse: preservation as a craft. Smoking is deliberately
     # SLOW (5 ticks vs cooking's 1) and costs a log -- you pay time and
@@ -2606,9 +2695,10 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "MAKE_CLOTHES", name="Make Clothes",
         description="Worn warmth: with a shelter, the whole WARMTH need "
-                    "covered free.",
-        inputs={"LABOR": D("1"), "YARN": D("3"),
-                                          "FLINT": D("1")},
+                    "covered free. The body is leather now (Bundle C: a "
+                    "pelt is raw, leather is worked -- the tailor buys "
+                    "from the tanner); the yarn is the seam.",
+        inputs={"LABOR": D("1"), "LEATHER": D("1"), "YARN": D("2")},
         outputs={"CLOTHES": D("1")}, duration_ticks=2,
         requires=["TANNING"],
     )
@@ -2866,6 +2956,17 @@ def _create_recipes(session: Session) -> None:
         requires_place_kind="FLINT", unlocks=["BONEWORK"],
     )
     production.create_recipe(
+        session, "STUDY_LEATHERWORK", name="Study Leatherworking",
+        description="A soak and a scrape at the fire's edge: the bench's "
+                    "own trade. A pelt and a cup of water, tanning in "
+                    "your hands already -- then the worked hide is yours "
+                    "to sell, and the tailor is your customer.",
+        inputs={"PELT": D("1"), "WATER": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["LEATHERWORK"],
+    )
+    production.create_recipe(
         session, "STUDY_SALT", name="Study Salt Curing",
         description="A day at the counter watching salt draw through meat "
                     "until it keeps: the keeper's trade, learnt over the "
@@ -2913,10 +3014,11 @@ def _create_recipes(session: Session) -> None:
     # coin and no wolf of their own.
     production.create_recipe(
         session, "MAKE_WATERSKIN", name="Make Waterskin",
-        description="A pelt sewn shut and greased: eight carried hours of "
-                    "river. One wolf's hide is a season of dry larders -- "
-                    "held, never consumed, filled at the bank.",
-        inputs={"LABOR": D("1"), "PELT": D("1")},
+        description="Leather sewn shut and greased: eight carried hours "
+                    "of river. One worked hide is a season of dry "
+                    "larders -- held, never consumed, filled at the bank "
+                    "(Bundle C: the skin is the tanner's leather now).",
+        inputs={"LABOR": D("1"), "LEATHER": D("1")},
         outputs={"WATERSKIN": D("1")}, duration_ticks=2,
         requires=["TANNING"],
     )
@@ -2977,6 +3079,53 @@ def _create_recipes(session: Session) -> None:
         inputs={"LABOR": D("1"), "WOOD": D("2"), "FLINT": D("1")},
         outputs={"SHIELD": D("1")}, duration_ticks=2,
         requires_daylight=True,
+    )
+    # --- The tanner's bench and the ignition shelf (Bundle C) -----------
+    # ROPE: yarn laid and bound -- ungated (the gateless cousin is the
+    # yarn itself; rope buys strength, not access), an hour of
+    # daylight. The knife doubles the lay (cleaner cuts, two strands).
+    production.create_recipe(
+        session, "MAKE_ROPE", name="Make Rope",
+        description="Lay and bind the yarn into rope: a step above the "
+                    "cord -- the bowstring, the trap, the net, the repair.",
+        inputs={"LABOR": D("1"), "YARN": D("2"), "WOOD": D("1")},
+        outputs={"ROPE": D("1")}, duration_ticks=1,
+        requires_daylight=True,
+    )
+    production.create_recipe(
+        session, "MAKE_ROPE_KNIFE", name="Make Rope with a Knife",
+        description="Cut clean and laid double: the same yarn and wood, "
+                    "twice the rope. A held knife (never spent) -- the "
+                    "cordwainer's margin.",
+        inputs={"LABOR": D("1"), "YARN": D("2"), "WOOD": D("1")},
+        outputs={"ROPE": D("2")}, duration_ticks=1,
+        good_requirements={"KNIFE": D("1")},
+        requires_daylight=True,
+    )
+    # CHARCOAL: the processing step that is the shape of every later
+    # industry -- three logs sealed in a pit against a LIT fire, four
+    # dark hours, one denser fuel out. The stoke leg is PARKED by the
+    # doc's own arithmetic (stoking is free and instant at +2h/log;
+    # no charcoal stoke out-earns the three logs it is made of) --
+    # charcoal's value is the kindling leg alone.
+    production.create_recipe(
+        session, "MAKE_CHARCOAL", name="Make Charcoal",
+        description="Seal wood in a pit and starve it of air: denser fuel "
+                    "than the log. A slow, closed-pit burn -- needs a lit "
+                    "fire to draw from.",
+        inputs={"WOOD": D("3")},
+        outputs={"CHARCOAL": D("1")}, duration_ticks=4,
+        requires_facility="FIRE", requires_facility_lit=True,
+    )
+    # KINDLING: what actually lights -- night-legal on purpose (the
+    # cold hour is the hour that wants the reliable strike).
+    production.create_recipe(
+        session, "MAKE_KINDLING", name="Make Kindling",
+        description="Charcoal and resin: the reliable strike. The "
+                    "difference between a fire that takes and one that "
+                    "needs three tries.",
+        inputs={"CHARCOAL": D("1"), "RESIN": D("1")},
+        outputs={"KINDLING": D("1")}, duration_ticks=1,
     )
 
 
@@ -3125,7 +3274,15 @@ def _create_markets(session: Session) -> None:
     # the post leaves the niche empty on purpose.
     for _symbol, _name in (("ARROW", "Arrow"), ("BONE", "Bone"),
                            ("FEATHER", "Feather"), ("KNIFE", "Knife"),
-                           ("SHIELD", "Shield")):
+                           ("SHIELD", "Shield"),
+                           # the tanner's bench (Bundle C): the worked
+                           # hide and the ignition shelf, book-only
+                           # like the kit above -- the post leaves the
+                           # niche empty on purpose; the tanner is the
+                           # trader the tailor never was
+                           ("LEATHER", "Leather"), ("RESIN", "Resin"),
+                           ("CHARCOAL", "Charcoal"), ("ROPE", "Rope"),
+                           ("KINDLING", "Kindling")):
         markets.create_market(session, _symbol, COIN, name=_name,
                               place="POST")
 

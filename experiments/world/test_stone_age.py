@@ -197,7 +197,10 @@ def test_content_and_coin_markets(session):
         "BED", "PELT", "WATERSKIN", "SALT", "IBEX_PELT",
         "HERB", "HONEY", "POULTICE", "TONIC", "BEEHIVE",
         # the hunter's book (Bundle B): book-only at the post
-        "ARROW", "BONE", "FEATHER", "KNIFE", "SHIELD"}
+        "ARROW", "BONE", "FEATHER", "KNIFE", "SHIELD",
+        # the tanner's bench (Bundle C): worked hide + ignition shelf,
+        # book-only likewise
+        "LEATHER", "RESIN", "CHARCOAL", "ROPE", "KINDLING"}
     assert all(m.currency == COIN for m in rows)
     # the far book (P3): the lick's pelt market sits beyond the ridge,
     # and ONLY there -- every other market stays at the post
@@ -2198,7 +2201,7 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
 
     bare, bagged = table(gather), table(bag)
     assert set(bare) == {"berries", "apples", "wood", "yarn", "flint",
-                        "herb"}
+                        "herb"}   # resin is the bag's find (Bundle C)
     assert bare["berries"][1] == {"BERRIES": Decimal("6")}
     assert bare["apples"][1] == {"APPLES": Decimal("5")}
     assert bagged["berries"][1] == {"BERRIES": Decimal("12")}
@@ -2212,8 +2215,14 @@ def test_the_orchard_branch_feeds_the_bare_hand(session):
             ev += weight * qty * Decimal(str(per_hen[label]))
         return ev
 
-    assert food_ev(bare) >= Decimal("5.4")    # the thicket feeds a house
-    assert food_ev(bagged) >= Decimal("10.4")  # and the bag doubles down
+    # Bundle C's resin roll rides the BAG table only (its five from
+    # the orchard: 27 -> 22): the bare table is the floor's, measured
+    # to its edge -- resin there too thinned the meal base ~6% and the
+    # soak collapsed 53% -> 13% house survival. The doc's own rule
+    # governs (thicken trade WITHOUT starving the floor): the bare
+    # pin keeps run 52's number EXACTLY; the bag's margin pays.
+    assert food_ev(bare) >= Decimal("5.4")    # the floor's table untouched
+    assert food_ev(bagged) >= Decimal("9.6")  # the bag pays for its finds
 
 
 def test_the_crafts_pay_the_larders_bill(session):
@@ -2501,11 +2510,11 @@ def test_drink_is_free_at_the_river(session):
 
 
 def test_the_skin_is_a_dead_wolf_and_carries_a_day(session):
-    """The water kit's craft (P3): one PELT sewn shut is a WATERSKIN
-    (2 hours' work), and FILL_SKIN tops it at the bank -- the skin must
-    be held, and it carries eight hours where cupped hands carry four.
-    The WATER need draws the skin FIRST (symbol order), the cup is the
-    reserve."""
+    """The water kit's craft (P3; Bundle C moved the input): one
+    LEATHER sewn shut is a WATERSKIN (2 hours' work), and FILL_SKIN
+    tops it at the bank -- the skin must be held, and it carries
+    eight hours where cupped hands carry four. The WATER need draws
+    the skin FIRST (symbol order), the cup is the reserve."""
     create_content(session)
     _no_wolves(session)
     house = _seat(session, "Skinner")
@@ -2516,11 +2525,11 @@ def test_the_skin_is_a_dead_wolf_and_carries_a_day(session):
     tech.grant_unlock(
         session, house, tech.get_technology(session, "TANNING"),
         production.next_tick_number(session))
-    markets.adjust_holding(session, house, "PELT", Decimal("1"))
+    markets.adjust_holding(session, house, "LEATHER", Decimal("1"))
     assert _act(session, house, "MAKE_WATERSKIN")
     _run(session, 3)                        # 2 ticks + the completion tick
     assert _hold(session, house.id, "WATERSKIN") == Decimal("1")
-    assert _hold(session, house.id, "PELT") == Decimal("0")
+    assert _hold(session, house.id, "LEATHER") == Decimal("0")
     # fill at the bank: skin in hand, topped to the seam
     _at(session, house, "RIVER")
     assert _act(session, house, "FILL_SKIN")
@@ -3093,7 +3102,8 @@ def test_the_craft_aisle_is_refused_without_the_rank(session):
                        ("MAKE_BOW", "FIRE_HARDENING"),
                        ("MAKE_TRAP", "FIRE_HARDENING"),
                        ("MAKE_CLOTHES", "TANNING"),
-                       ("MAKE_WATERSKIN", "TANNING")):
+                       ("MAKE_WATERSKIN", "TANNING"),
+                       ("TANN_HIDE", "LEATHERWORK")):
         with pytest.raises(ValueError, match=f"requires {rank}"):
             prod.start_process(session, house, code)
     # and the pot aisle is the potter's alone
@@ -4705,3 +4715,239 @@ def test_the_fletching_and_bonework_ranks(session):
     assert [u.technology.code for u in study.unlocks] == ["BONEWORK"]
     assert {r.symbol: r.quantity for r in study.inputs} == {
         "BONE": Decimal("1"), "FLINT": Decimal("1")}
+
+
+# ---------------------------------------------------------------------------
+# Bundle C -- the tanner's bench (docs/stone-age-expansion.md). The
+# material chain splits (pelt -> leather -> clothes/waterskin) and fire
+# becomes managed (resin/charcoal -> kindling improves, never gates).
+
+
+def test_the_tanner_sells_and_the_tailor_buys(session):
+    """The bundle's headline: LEATHER is a real intermediate -- the
+    tanner studies the bench off TANNING, tans pelt+water into a hide
+    that NEVER ROTS where the pelt rotted at 0.05 (the tan sells
+    shelf-life), and the tailor (TANNING only) buys it across the
+    post's book and sews clothes and a waterskin from LEATHER, not
+    pelt. The fine coat keeps its ibex pelt (the review ruling: the
+    winter door is pinned on it). The knife halves the tan's hours."""
+    from econengine import tech as tech_mod
+    create_content(session)
+    _no_wolves(session)
+
+    def row_inputs(code):
+        return {r.symbol: r.quantity
+                for r in production.get_recipe(session, code).inputs}
+
+    # the data: the chain as installed rows
+    assert row_inputs("TANN_HIDE") == {"PELT": Decimal("1"),
+                                       "WATER": Decimal("1")}
+    assert row_inputs("MAKE_CLOTHES") == {
+        "LABOR": Decimal("1"), "LEATHER": Decimal("1"),
+        "YARN": Decimal("2")}
+    assert row_inputs("MAKE_WATERSKIN") == {
+        "LABOR": Decimal("1"), "LEATHER": Decimal("1")}
+    # the review ruling, pinned: the far valley's coat is its own chain
+    assert row_inputs("MAKE_FINE_CLOTHES") == {
+        "LABOR": Decimal("1"), "IBEX_PELT": Decimal("1"),
+        "YARN": Decimal("2")}
+    # the tan is preservation: the pelt rots, the leather does not
+    from econengine.models import Good
+    pelt = session.execute(select(Good).where(
+        Good.symbol == "PELT")).scalar_one()
+    hide = session.execute(select(Good).where(
+        Good.symbol == "LEATHER")).scalar_one()
+    assert pelt.decay_per_tick == Decimal("0.05")
+    assert hide.decay_per_tick == Decimal("0")
+    # the knife's margin on the tan: held, never spent, half the hours
+    bare = production.get_recipe(session, "TANN_HIDE")
+    knifed = production.get_recipe(session, "TANN_HIDE_KNIFE")
+    assert bare.duration_ticks == 2 and knifed.duration_ticks == 1
+    assert {r.symbol: r.quantity for r in knifed.good_requirements} == {
+        "KNIFE": Decimal("1")}
+
+    # THE TANNER: TANNING in hand, the bench studied off it (the
+    # ladder stays deep: KNAPPING -> FIRE_HARDENING -> TANNING ->
+    # LEATHERWORK)
+    tanner = _seat(session, "Tanner")
+    _at(session, tanner, "HEARTH")
+    tech_mod.grant_unlock(
+        session, tanner, tech_mod.get_technology(session, "TANNING"),
+        production.next_tick_number(session))
+    _set(session, tanner, "PELT", Decimal("2"))
+    _set(session, tanner, "WATER", Decimal("2"))
+    assert _act(session, tanner, "STUDY_LEATHERWORK")
+    _run(session, 1)
+    _set(session, tanner, "LABOR", Decimal("1"))   # the second hour's
+    _run(session, 2)                # + the completion tick
+    assert tech_mod.has_unlock(
+        session, tanner.id, tech_mod.get_technology(session, "LEATHERWORK"))
+    # the bench's arithmetic: a pelt and a cup in, one hide out. The
+    # raw ROTS at 0.05/tick (which is the point: the tan is
+    # preservation) -- top it AFTER the dawn wait, with no decay hour
+    # between the top and the reservation
+    from econengine import clock as _clock
+    while _clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    _set(session, tanner, "PELT", Decimal("1.05"))
+    _set(session, tanner, "WATER", Decimal("1.5"))
+    assert _act(session, tanner, "TANN_HIDE")
+    _run(session, 3)                # 2 ticks + the completion tick
+    assert _hold(session, tanner.id, "LEATHER") == Decimal("1")
+    # the spare pelt rots on -- never pin its exact residue
+    assert Decimal("0") < _hold(session, tanner.id, "PELT") < Decimal("1.1")
+
+    # THE TAILOR: TANNING only -- clothes are sewn from LEATHER now
+    # (a pelt is raw; the refusals name the worked hide)
+    tailor = _seat(session, "Tailor")
+    _at(session, tailor, "HEARTH")
+    tech_mod.grant_unlock(
+        session, tailor, tech_mod.get_technology(session, "TANNING"),
+        production.next_tick_number(session))
+    _set(session, tailor, "PELT", Decimal("1"))    # raw, and refused
+    _set(session, tailor, "LABOR", Decimal("1"))   # inputs first, then
+    with pytest.raises(Exception, match="LEATHER"):
+        production.start_process(session, tailor, "MAKE_CLOTHES")
+    # THE MARKET: the tanner's ask crosses the tailor's bid at the
+    # post's book (book-only: the post's shelf stays empty, the niche
+    # is the trader's)
+    _at(session, tanner, "POST")
+    _at(session, tailor, "POST")
+    t_acct = next(a for a in tanner.accounts if a.currency == COIN)
+    l_acct = next(a for a in tailor.accounts if a.currency == COIN)
+    markets.place_order(session, tanner.id, "LEATHER", "sell",
+                        Decimal("1"), Decimal("2.00"), t_acct.id)
+    markets.place_order(session, tailor.id, "LEATHER", "buy",
+                        Decimal("1"), Decimal("2.00"), l_acct.id)
+    _run(session, 1)
+    assert _hold(session, tailor.id, "LEATHER") == Decimal("1")
+    assert _hold(session, tanner.id, "LEATHER") == Decimal("0")
+    trades = [e for e in _events(session, "trade")
+              if e.get("market") == "LEATHER"]
+    assert trades and Decimal(trades[-1]["quantity"]) == Decimal("1")
+    # and the bought hide is worn: clothes from the market leg
+    _set(session, tailor, "YARN", Decimal("2"))
+    assert _act(session, tailor, "MAKE_CLOTHES")
+    _run(session, 3)
+    assert _hold(session, tailor.id, "CLOTHES") == Decimal("1")
+
+
+def test_the_ignition_shelf(session):
+    """Fire becomes managed: three logs seal into one charcoal against
+    a LIT fire (four dark hours -- the processing step), charcoal and
+    resin strike into kindling (night-legal on purpose), and kindling
+    IMPROVES the light: one log and the fire stands the hour it is
+    struck (duration 0), where the bare MAKE_FIRE pays two logs and an
+    hour. The bare row stays free -- the shelf sells speed and half
+    the wood, never access. Rope rides the same ungated shape, and
+    the knife doubles the lay."""
+    from econengine import clock
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Firekeeper")
+    _at(session, seat, "HEARTH")
+
+    # reach daylight FIRST (the dawn-wait itself burns the commons
+    # fire low), then keep it fed for the pit
+    _to_tick(session, 8)
+    commons = session.execute(
+        select(parcels.Facility).join(parcels.Parcel)
+        .where(parcels.Parcel.parcel_type == "COMMONS",
+               parcels.Facility.facility_type == "FIRE")).scalar_one()
+    if commons.fuel <= 1:
+        _set(session, seat, "WOOD", Decimal("1"))
+        assert _act(session, seat, "STOKE_FIRE")
+        _run(session, 1)
+    # the pit: three logs, four hours, denser fuel out
+    _set(session, seat, "WOOD", Decimal("3"))
+    assert _act_day(session, seat, "MAKE_CHARCOAL")
+    _run(session, 5)
+    assert _hold(session, seat.id, "CHARCOAL") == Decimal("1")
+    assert _hold(session, seat.id, "WOOD") == Decimal("0")
+    # the strike: night-legal on purpose (the cold hour wants it)
+    while not clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    _set(session, seat, "RESIN", Decimal("1"))
+    assert _act(session, seat, "MAKE_KINDLING")   # night-legal
+    _run(session, 2)
+    assert _hold(session, seat.id, "KINDLING") == Decimal("1")
+    # the reliable light: ONE log and the fire stands the same hour
+    # (duration 0; the bare row pays two logs and an hour)
+    bare_fire = production.get_recipe(session, "MAKE_FIRE")
+    kind_fire = production.get_recipe(session, "MAKE_FIRE_KINDLING")
+    ins = {r.symbol: r.quantity for r in kind_fire.inputs}
+    assert bare_fire.duration_ticks == 1
+    assert kind_fire.duration_ticks == 0
+    assert ins == {"LABOR": Decimal("1"), "WOOD": Decimal("1"),
+                   "KINDLING": Decimal("1")}
+    fires_before = len([f for f in _facilities(session, seat)
+                        if f == "FIRE"])
+    _set(session, seat, "WOOD", Decimal("1"))    # the pit ate the three
+    assert _act(session, seat, "MAKE_FIRE_KINDLING")
+    _run(session, 1)
+    fires_after = len([f for f in _facilities(session, seat)
+                       if f == "FIRE"])
+    assert fires_after == fires_before + 1
+    assert _hold(session, seat.id, "KINDLING") == Decimal("0")
+    assert _hold(session, seat.id, "WOOD") == Decimal("0")  # one log
+
+    # ROPE: ungated (the gateless cousin is the yarn itself), and the
+    # knife doubles the lay
+    worker = _seat(session, "Cordwainer")
+    _at(session, worker, "HEARTH")
+    _set(session, worker, "YARN", Decimal("4"))
+    _set(session, worker, "WOOD", Decimal("2"))
+    assert _act_day(session, worker, "MAKE_ROPE")
+    _run(session, 2)
+    assert _hold(session, worker.id, "ROPE") == Decimal("1")
+    _set(session, worker, "KNIFE", Decimal("1"))
+    assert _act_day(session, worker, "MAKE_ROPE_KNIFE")
+    _run(session, 2)
+    assert _hold(session, worker.id, "ROPE") == Decimal("3")  # 1 + 2
+
+
+def test_the_forest_bleeds_resin(session):
+    """The re-slice, pinned as data: RESIN takes its five from the
+    ORCHARD (the wood roll is the night budget and already paid herb's
+    five -- run 38's arithmetic keeps its own test), both tables stay
+    exactly 100, resin is plain cargo (no exemption: the shelf is
+    carried, not breathed), and the LEATHERWORK rank is TANNING's
+    child with its own study at the fire's edge."""
+    from econengine import tech as tech_mod
+    from econengine.models import Good
+    create_content(session)
+
+    def table(code):
+        rows = {}
+        for b in production.get_recipe(session, code).branches:
+            rows[b.label] = (b.weight, {o.symbol: o.quantity
+                                        for o in b.outputs})
+        assert sum(b.weight for b in
+                   production.get_recipe(session, code).branches) \
+            == Decimal("100")
+        return rows
+
+    bare = table("GATHER")
+    bagged = table("GATHER_BAG")
+    # the BAG table carries the roll and pays for it (orchard 27 -> 22)
+    assert bagged["resin"] == (Decimal("5"), {"RESIN": Decimal("2")})
+    assert bagged["apples"] == (Decimal("22"), {"APPLES": Decimal("10")})
+    # the bare table is EXACTLY Bundle A's edge: no resin, the food
+    # and wood slices untouched (the floor gathers bare-handed; its
+    # table is not the shelf's to thin)
+    assert "resin" not in bare
+    assert bare["apples"] == (Decimal("25"), {"APPLES": Decimal("5")})
+    assert bare["wood"] == (Decimal("20"), {"WOOD": Decimal("3")})
+    assert bagged["wood"] == (Decimal("15"), {"WOOD": Decimal("6")})
+    # plain cargo: the shelf is carried
+    resin = session.execute(select(Good).where(
+        Good.symbol == "RESIN")).scalar_one()
+    assert not resin.carry_exempt
+    # the rank and its study: TANNING's child, a pelt and a cup at the
+    # fire's edge
+    row = tech_mod.get_technology(session, "LEATHERWORK")
+    assert [p.prerequisite.code for p in row.prerequisites] == ["TANNING"]
+    study = production.get_recipe(session, "STUDY_LEATHERWORK")
+    assert [u.technology.code for u in study.unlocks] == ["LEATHERWORK"]
+    assert {r.symbol: r.quantity for r in study.inputs} == {
+        "PELT": Decimal("1"), "WATER": Decimal("1")}
