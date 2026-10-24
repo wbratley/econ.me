@@ -69,6 +69,35 @@ def test_rejected_intent_renders_the_refusal():
     )
 
 
+def test_combat_renders_the_exchange_and_the_tear():
+    """Bundle B: combat events read as one exchange -- the attempt
+    (missed, turned away) or the landed bite (damage, the wound it
+    tore, the kill and its carcass)."""
+    assert "missed" in render_event({
+        "type": "combat", "entity_id": "w", "target_id": "h",
+        "hit": False, "damage": "0",
+    })
+    assert "turned away by the firelight" in render_event({
+        "type": "combat", "entity_id": "w", "target_id": "h",
+        "hit": False, "deterred": True, "damage": "0",
+    })
+    line = render_event({
+        "type": "combat", "entity_id": "w", "target_id": "h",
+        "hit": True, "damage": "3.0000", "target_hits": "17.0000",
+        "granted": {"WOUND": "1.0000"},
+    })
+    assert "bit h for 3" in line and "the bite tore 1 WOUND" in line
+    line = render_event({
+        "type": "combat", "entity_id": "w", "target_id": "h",
+        "hit": True, "damage": "4.0000", "crit": True,
+        "killed": True, "granted": {"WOUND": "1.0000"},
+        "loot": {"MEAT": "3.0000", "PELT": "1.0000"},
+    })
+    assert "a clean opening" in line and "killed h" in line
+    # loot renders symbols bare without the catalog join
+    assert "took the carcass: 3 MEAT, 1 PELT" in line
+
+
 def test_condition_decay_renders_as_falling_not_rotting():
     """Run-13 shapes: conditions shed quantity (recovery or relapse), so
     HUNGER eases and WARMTH fades -- neither rots."""

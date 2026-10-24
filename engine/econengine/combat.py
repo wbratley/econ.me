@@ -14,6 +14,9 @@ pack's COMBAT_RULES world setting:
      "loot": {"*": 1, "MEAT": 3},  # "*": the estate, to CARRYing victors
      "carry_stat": "CARRY",        # victors with this stat seize "*"
      "bite_loot": {"MEAT": 1},      # a landed bite feeds the attacker
+     "on_hit_grants": {"WOUND": 1}, # ...and wounds the bitten side (the
+                                    # bite_loot precedent, mirrored: a landed
+                                    # hit credits the DEFENDER these holdings)
      "base_hit": 50, "per_point": 5}
 
 Resolution: hit% = clamp(base_hit + per_point x (ATK - DEF), 5, 95),
@@ -395,6 +398,21 @@ def resolve_attack(session: Session, attacker_id: str,
     # hunts houses eats by the bite, not only by the kill.
     for symbol, qty in sorted((rules.get("bite_loot") or {}).items()):
         markets.adjust_holding(session, attacker, symbol, Decimal(qty))
+    # ...and wounds what it bit (the bite_loot precedent, mirrored to
+    # the bitten side): on_hit_grants credits the DEFENDER on a
+    # landed hit -- a bite tears a wound, and what a wound breeds
+    # (infection) is the conditions register's business, not combat's.
+    # Symmetric by the same law as bite_loot: a landed spear tears
+    # too, so the beast bleeds its own wound into the fight. The
+    # grant rides the event's "granted" field, post-clip truth.
+    granted: dict[str, str] = {}
+    for symbol, qty in sorted((rules.get("on_hit_grants") or {}).items()):
+        credited = conditions._credit_holding(
+            session, defender, symbol, Decimal(qty))
+        if credited > 0:
+            granted[symbol] = str(credited.quantize(_QUANTUM))
+    if granted:
+        event["granted"] = granted
     event.update(hit=True, damage=str(dealt.quantize(_QUANTUM)),
                  target_hits=str(max(Decimal("0"), hits - dealt)
                                  .quantize(_QUANTUM)))

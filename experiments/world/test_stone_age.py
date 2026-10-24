@@ -195,7 +195,9 @@ def test_content_and_coin_markets(session):
         "EGGS", "CHICKEN", "WOOD", "YARN",
         "FLINT", "SPEAR", "AXE", "BAG", "BOW", "TRAP", "CLOTHES",
         "BED", "PELT", "WATERSKIN", "SALT", "IBEX_PELT",
-        "HERB", "HONEY", "POULTICE", "TONIC", "BEEHIVE"}
+        "HERB", "HONEY", "POULTICE", "TONIC", "BEEHIVE",
+        # the hunter's book (Bundle B): book-only at the post
+        "ARROW", "BONE", "FEATHER", "KNIFE", "SHIELD"}
     assert all(m.currency == COIN for m in rows)
     # the far book (P3): the lick's pelt market sits beyond the ridge,
     # and ONLY there -- every other market stays at the post
@@ -3597,9 +3599,13 @@ def test_ibex_want_the_ridge_and_a_weapon(session):
         for b in spear.branches)
     assert tables == sorted([
         (Decimal("30"), ()),
-        (Decimal("50"), (("IBEX_PELT", Decimal("1")),
+        (Decimal("50"), (("BONE", Decimal("1")),
+                         ("FEATHER", Decimal("1")),
+                         ("IBEX_PELT", Decimal("1")),
                          ("MEAT", Decimal("3")))),
-        (Decimal("20"), (("IBEX_PELT", Decimal("1")),
+        (Decimal("20"), (("BONE", Decimal("1")),
+                         ("FEATHER", Decimal("1")),
+                         ("IBEX_PELT", Decimal("1")),
                          ("MEAT", Decimal("6")))),
     ])
     bow = production.get_recipe(session, "HUNT_IBEX_BOW")
@@ -4471,3 +4477,231 @@ def test_the_posts_tonic_shelf_sells_the_day_one_exit(session):
     _run(session, 1)
     assert _hold(session, house.id, "TONIC") == Decimal("1")
     assert _hold(session, post.id, "TONIC") == Decimal("2")
+
+
+# --- Bundle B: the hunter's kit ---------------------------------------------
+# docs/stone-age-expansion.md -- the ammunition and injury economy: the
+# bow costs its arrow, a landed bite tears a wound (the bite_loot
+# precedent mirrored), and a kill yields three tradeables.
+
+
+def test_the_hunters_kit_rules_and_drops(session):
+    """The kit's data floor: the armor row gains the shield, the bite
+    tears (on_hit_grants), the beasts ride the kill's drops into the
+    world on their backs (the estate wiring -- data, not recipe), and
+    the five new symbols trade at the post book-only (the IBEX_PELT
+    precedent: no anchor, no maker -- the fletcher's niche)."""
+    from econengine import combat
+    create_content(session)
+    rules = combat.get_rules(session)
+    assert rules["armor"] == {"CLOTHES": 1, "SHIELD": 2}
+    assert rules["on_hit_grants"] == {"WOUND": 1}
+    # every wolf carries the kill's other two tradeables beside the
+    # pelt (make_wolf: the genesis packs; the cadence template too)
+    for wolf in session.execute(select(Entity)).scalars():
+        if not wolf.name.startswith("Wolf Pack"):
+            continue
+        assert _hold(session, wolf.id, "BONE") == Decimal("1")
+        assert _hold(session, wolf.id, "FEATHER") == Decimal("1")
+    boar = spawns_spawn(session, "Wild Boar X")
+    assert _hold(session, boar.id, "BONE") == Decimal("1")
+    assert _hold(session, boar.id, "FEATHER") == Decimal("1")
+    # the book-only markets: tradeable, unpriced, empty
+    for symbol in ("ARROW", "BONE", "FEATHER", "KNIFE", "SHIELD"):
+        market = markets.get_market(session, symbol)
+        assert market is not None and market.place_id is not None
+        assert not list(_open_orders(session, _post(session).id,
+                                     symbol=symbol))
+
+
+def test_a_wolf_bite_tears_a_wound_that_festers_until_bound(session):
+    """Bundle B's center: the injury is REAL now (combat-granted, not
+    test-injected). A dark camp, a landed bite, a torn wound -- then
+    Bundle A's chain takes over: the wound festers while it rides
+    above the scab floor, the poultice binds it, the residue sits
+    under the floor and the fester stops."""
+    from econengine import clock, combat
+    create_content(session)
+    house = _seat(session, "Bitten")
+    wolf = spawns_spawn(session, "Wolf Pack B")
+    _at(session, wolf, "THICKET")   # a dark camp: no firelight there
+    _at(session, house, "THICKET")
+    ev = None
+    for t in range(1, 40):          # night ticks; the roll is certain
+        if clock.is_day(t):
+            break
+        ev = combat.resolve_attack(session, wolf.id, house.id, t)
+        if ev.get("hit"):
+            break
+    assert ev is not None and ev.get("hit") is True
+    assert ev["granted"] == {"WOUND": "1.0000"}
+    assert _hold(session, house.id, "WOUND") == Decimal("1")
+    # the wound festers: the register drips infection while the tear
+    # rides above the 0.5 scab floor (Bundle A's row, live on a REAL
+    # combat-granted wound)
+    _no_wolves(session)
+    _run(session, 3)
+    assert _hold(session, house.id, "INFECTION") >= Decimal("0.10")
+    # the bind: a poultice against the tear, night-legal, instant
+    markets.adjust_holding(session, house, "POULTICE", Decimal("1"))
+    assert _act(session, house, "BIND_WOUND")   # night-legal (duration 0)
+    assert _hold(session, house.id, "POULTICE") == Decimal("0")
+    residue = _hold(session, house.id, "WOUND")
+    assert Decimal("0.4") < residue < Decimal("0.5")
+    held_infection = _hold(session, house.id, "INFECTION")
+    # under the floor the drip stops: two more days, no new infection
+    _run(session, 10)
+    assert _hold(session, house.id, "INFECTION") <= held_infection
+
+
+def test_the_bow_costs_its_arrow(session):
+    """The behavioral change: HUNT_BOW (and the ibex bow table) eat an
+    arrow per start -- the bow is held, never spent; the arrow is the
+    shot's price. Without a quiver the hunt refuses naming the arrow;
+    MAKE_ARROW is FLETCHING-gated and climbs the deep ladder."""
+    from econengine import tech
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Archer")   # bare: the kit's test, not the floor's
+    _at(session, seat, "FOREST")
+    _set(session, seat, "BOW", 1)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)
+    _to_tick(session, 8)             # daylight
+    # no quiver: the hunt refuses on the arrow, not the bow (and the
+    # ridge table refuses the same way, standing on the ridge)
+    with pytest.raises(Exception, match="ARROW"):
+        production.start_process(session, seat, "HUNT_BOW")
+    _at(session, seat, "RIDGE_PASS")
+    with pytest.raises(Exception, match="ARROW"):
+        production.start_process(session, seat, "HUNT_IBEX_BOW")
+    _at(session, seat, "FOREST")
+    # the fletcher's bench is rank-gated, and the rank is deep
+    with pytest.raises(Exception, match="FLETCHING"):
+        production.start_process(session, seat, "MAKE_ARROW")
+    for code in ("KNAPPING", "FIRE_HARDENING", "FLETCHING"):
+        tech.grant_unlock(
+            session, seat, tech.get_technology(session, code),
+            production.next_tick_number(session))
+    for sym in ("FLINT", "WOOD", "FEATHER"):
+        _set(session, seat, sym, 1)
+    assert _act_day(session, seat, "MAKE_ARROW")
+    _run(session, 2)
+    assert _hold(session, seat.id, "ARROW") == Decimal("1")
+    # a quiver of one buys exactly one shot: the arrow is consumed,
+    # the bow is not
+    assert _act_day(session, seat, "HUNT_BOW")
+    _run(session, 2)
+    assert _hold(session, seat.id, "ARROW") == Decimal("0")
+    assert _hold(session, seat.id, "BOW") == Decimal("1")
+    _run(session, 1)   # the held-tool reservation releases at the next
+    #                  # boundary (SPEAR's shape); then the empty quiver
+    #                  # refuses naming the ARROW
+    with pytest.raises(Exception, match="ARROW"):
+        production.start_process(session, seat, "HUNT_BOW")
+
+
+def test_the_knife_and_shield_crafts_and_margins(session):
+    """The two general tools: ungated crafts (the gateless cousin is
+    the bare hand, never a rank), and their margins -- the shield wears
+    +2 defense beside clothes' +1 (the armor dict, data not mechanism),
+    the knife's cook variant turns two meat into three while the bare
+    cook stays at two."""
+    from econengine import combat
+    create_content(session)
+    _no_wolves(session)
+    seat = _seat(session, "Smith")    # bare: the kit's test, not the floor's
+    _set(session, seat, "FLINT", 2)
+    _set(session, seat, "WOOD", 3)
+    _set(session, seat, "WARMTH", 7)
+    _set(session, seat, "SATIETY", 4)
+    _to_tick(session, 8)             # daylight: the crafts keep day hours
+    assert _act_day(session, seat, "MAKE_KNIFE")
+    _run(session, 2)
+    assert _hold(session, seat.id, "KNIFE") == Decimal("1")
+    assert _act_day(session, seat, "MAKE_SHIELD")
+    _run(session, 3)
+    assert _hold(session, seat.id, "SHIELD") == Decimal("1")
+    # the shield wears: 1 born + 2 the board
+    assert combat.effective_defense(session, seat.id) == Decimal("3")
+    # the knife's margin at the fire: the same cook, half again the
+    # plate -- and the bare row still runs for the knifeless (the
+    # commons fire auto-binds, no parcel id needed). The day is older
+    # now and the commons fire has burned low -- stoke it first (the
+    # same hour any cook's house pays)
+    _set(session, seat, "WOOD", 2)
+    _act_day(session, seat, "STOKE_FIRE")
+    # the margin, pinned as a RATIO across two seats cooking the SAME
+    # hour (tree-agnostic: any per-labor output scaling applies to
+    # both cooks equally, and no decay passes between the measures)
+    bare = _seat(session, "Barehanded")
+    _at(session, bare, seat.place.key)
+    _set(session, bare, "MEAT", 4)
+    _set(session, seat, "MEAT", 4)
+    with pytest.raises(Exception, match="KNIFE"):
+        production.start_process(session, bare, "COOK_MEAT_KNIFE")
+    assert _act_day(session, seat, "COOK_MEAT_KNIFE")
+    assert _act_day(session, bare, "COOK_MEAT")
+    _run(session, 2)
+    knifed = _hold(session, seat.id, "COOKED_MEAT")
+    bare_cook = _hold(session, bare.id, "COOKED_MEAT")
+    assert knifed > 0 and bare_cook > 0
+    assert knifed == Decimal("1.5") * bare_cook
+    assert _hold(session, seat.id, "KNIFE") == Decimal("1")  # held, not spent
+
+
+def test_a_kill_yields_three_tradeables_and_the_ibex_table_keeps_its_odds(
+        session):
+    """A wolf kill pays pelt AND bone AND feather (the estate seizure
+    on the carried carcass), and the ibex table thickens the same way
+    without touching its odds: the success branches gain the drops,
+    the weights sum to the same hundred."""
+    from econengine import combat
+    create_content(session)
+    hunter = _seat(session, "Hunter")
+    wolf = spawns_spawn(session, "Wolf Pack K")
+    _at(session, hunter, "FOREST")
+    markets.adjust_holding(session, hunter, "SPEAR", Decimal("1"))
+    for t in range(49, 200):
+        if session.get(Entity, wolf.id).status != EntityStatus.ACTIVE:
+            break
+        ev = combat.resolve_attack(session, hunter.id, wolf.id, t)
+    assert session.get(Entity, wolf.id).status != EntityStatus.ACTIVE
+    assert ev["killed"] and ev["loot"]["BONE"] == "1.0000"
+    assert _hold(session, hunter.id, "PELT") >= Decimal("1")
+    assert _hold(session, hunter.id, "BONE") >= Decimal("1")
+    assert _hold(session, hunter.id, "FEATHER") >= Decimal("1")
+    # the ibex branches: the drops ride the successes, odds unchanged
+    for code in ("HUNT_IBEX", "HUNT_IBEX_BOW"):
+        recipe = production.get_recipe(session, code)
+        branches = {b.label: b for b in recipe.branches}
+        total = sum(int(b.weight) for b in recipe.branches)
+        assert total == 100
+        for label in ("small", "big"):
+            outs = {o.symbol: o.quantity
+                    for o in branches[label].outputs}
+            assert outs["BONE"] == Decimal("1")
+            assert outs["FEATHER"] == Decimal("1")
+        assert not [o for o in branches["nothing"].outputs]
+
+
+def test_the_fletching_and_bonework_ranks(session):
+    """The hunter's ranks, asserted as data: FLETCHING wants
+    FIRE_HARDENING (the deep ladder -- the prize ruling holds for the
+    quiver too), BONEWORK wants KNAPPING, and both studies exist with
+    the craft's own raw in hand."""
+    from econengine import tech as tech_mod
+    create_content(session)
+    def prereq(code):
+        row = tech_mod.get_technology(session, code)
+        return [p.prerequisite.code for p in row.prerequisites]
+    assert prereq("FLETCHING") == ["FIRE_HARDENING"]
+    assert prereq("BONEWORK") == ["KNAPPING"]
+    study = production.get_recipe(session, "STUDY_FLETCHING")
+    assert [u.technology.code for u in study.unlocks] == ["FLETCHING"]
+    assert {r.symbol: r.quantity for r in study.inputs} == {
+        "FEATHER": Decimal("1"), "WOOD": Decimal("1")}
+    study = production.get_recipe(session, "STUDY_BONEWORK")
+    assert [u.technology.code for u in study.unlocks] == ["BONEWORK"]
+    assert {r.symbol: r.quantity for r in study.inputs} == {
+        "BONE": Decimal("1"), "FLINT": Decimal("1")}

@@ -12,12 +12,12 @@
   },
   "stone_age": {
    "edges": 13,
-   "goods": 49,
-   "markets": 27,
+   "goods": 54,
+   "markets": 32,
    "needs": 5,
    "places": 9,
-   "recipes": 74,
-   "technologies": 8,
+   "recipes": 80,
+   "technologies": 10,
    "threats": 1
   }
  },

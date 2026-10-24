@@ -1289,6 +1289,33 @@ def _create_goods(session: Session) -> None:
                       description="Herbs worked into a dose: the craftable "
                                   "answer to a disease that would otherwise "
                                   "ride to the threshold.")
+    # The hunter's kit (Bundle B -- docs/stone-age-expansion.md): the
+    # kill's two drops and the three craftables they feed. FEATHER and
+    # BONE ride the beasts' estate holdings (a kill yields a pelt AND a
+    # bone AND a feather, not one tradeable -- the wiring is the
+    # templates' held set, data not recipe); the arrow is the bow's
+    # true price (a shot spent on the flight); the knife speeds what
+    # the fire does; the shield is the armor row's second entry.
+    goods.create_good(session, "FEATHER", name="Feather",
+                      description="Picked off a kill: the fletch on an "
+                                  "arrow. Durable, light, worth nothing but "
+                                  "the fletcher's bench.")
+    goods.create_good(session, "BONE", name="Bone",
+                      description="Harvested from a kill: the material of "
+                                  "needles, points, and the fine edge flint "
+                                  "cannot reach. Durable.")
+    goods.create_good(session, "ARROW", name="Arrow",
+                      description="Flint, wood, and feather: one shot, "
+                                  "spent on the flight. The bow's real "
+                                  "cost -- a quiver is a bank of odds.")
+    goods.create_good(session, "KNIFE", name="Knife",
+                      description="A flint blade on a haft: the general "
+                                  "cutter. Speeds the cook, the tan, the "
+                                  "cord -- the tool the world has lacked.")
+    goods.create_good(session, "SHIELD", name="Shield",
+                      description="A wood-and-flint board: the answer to an "
+                                  "opening shot. Defense, where the spear "
+                                  "and axe give only offense.")
     goods.create_good(session, "TRAP", name="Trap",
                       description="One-shot hunting ammunition — consumed by "
                                   "the traps hunt, the best odds craft can buy.")
@@ -1638,10 +1665,21 @@ def _create_combat(session: Session) -> None:
         # flame. A dark camp is a camp that can be bitten.
         "deterrence": {"FIRESIDE": 1, "LIT": 1},
         "weapons": {"SPEAR": 3, "AXE": 2, "BOW": 3},
-        "armor": {"CLOTHES": 1},
+        # Bundle B: the shield is the armor dict's second entry -- +2
+        # DEFENSE per board held, data not mechanism (the engine's
+        # effective_defense already reads the dict; clothes were always
+        # armor). Offense is the spear's, the answer is the board's.
+        "armor": {"CLOTHES": 1, "SHIELD": 2},
         "loot": {"*": 1, "MEAT": 3},
         "carry_stat": "CARRY",
         "bite_loot": {"MEAT": 1},
+        # Bundle B: a landed bite tears (the bite_loot precedent
+        # mirrored -- the attacker eats, the BITTEN side bleeds). The
+        # tear is symmetric like the feeding: a landed spear wounds
+        # the beast too. What a wound breeds is the conditions
+        # register's business (WOUND >= 0.5 drips INFECTION -- Bundle
+        # A's row, already live).
+        "on_hit_grants": {"WOUND": 1},
         "base_hit": 50, "per_point": 5,
         # P4, sleep: a tired body (FATIGUE held at/above 5 -- the end
         # of the second sleepless night) fights at -1/-1: the sleepy
@@ -1696,7 +1734,8 @@ def _create_combat(session: Session) -> None:
             "template": {
                 "entity_type": "individual",
                 "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-                "holdings": {"MEAT": 1, "PELT": 1, "WATER": 2,
+                "holdings": {"MEAT": 1, "PELT": 1, "BONE": 1,
+                             "FEATHER": 1, "WATER": 2,
                              "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "wolf",
                 "account": {"COIN": 0},
@@ -1735,8 +1774,10 @@ def _create_combat(session: Session) -> None:
                 "entity_type": "individual",
                 "stats": {"ATTACK": 4, "DEFENSE": 2, "HITS": 12},
                 # Born carrying its own carcass: the estate seizure on a
-                # kill is the point -- high meat, big pelt.
-                "holdings": {"MEAT": 6, "PELT": 2, "WATER": 2,
+                # kill is the point -- high meat, big pelt, and (Bundle
+                # B) the bone and feather a kill yields beside them.
+                "holdings": {"MEAT": 6, "PELT": 2, "BONE": 1,
+                             "FEATHER": 1, "WATER": 2,
                              "REST": float(REST_BEAST_BUFFER)},
                 "script_setting": "boar",
                 "account": {"COIN": 0},
@@ -1821,6 +1862,24 @@ def _create_recipes(session: Session) -> None:
                     "is water, the craft is the hand. Gates the two "
                     "work-crafts only; the cures themselves are free acts "
                     "on a held medicine.")
+    # The hunter's ranks (Bundle B): the bow's missing cost, and the
+    # bone edge. FLETCHING wants FIRE_HARDENING first (the hand that
+    # cannot temper cannot fletch) -- the crafts ladder stays DEEP on
+    # purpose (the prize ruling); BONEWORK wants KNAPPING (bone is
+    # struck, not carved).
+    tech.create_technology(
+        session, "FLETCHING", prerequisites=["FIRE_HARDENING"],
+        name="Fletching",
+        description="The bow's missing cost: feather, shaft, and point "
+                    "into a shot that is spent on the flight. Gates the "
+                    "arrow -- the bow's maker and the arrow's maker are "
+                    "finally different bodies.")
+    tech.create_technology(
+        session, "BONEWORK", prerequisites=["KNAPPING"],
+        name="Bonework",
+        description="The finer edge: bone where flint is too brittle. "
+                    "The needle, the point, the scrape. Gates the fine "
+                    "tools a pelt-and-bone kill earns.")
     tech.create_technology(
         session, "SALT_CURING", name="Salt Curing",
         description="The keeper's trade: salt drawn through meat until it "
@@ -1982,8 +2041,12 @@ def _create_recipes(session: Session) -> None:
         session, "HUNT_BOW", name="Hunt with a Bow",
         description="Ranged hunting: the best odds a lone crafter can buy, "
                     "with nothing hunting you back. Held bow, never "
-                    "consumed. Daylight only, in the deep forest.",
-        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+                    "consumed -- but the shot costs its arrow now "
+                    "(Bundle B): a quiver of five is five hunts, and a "
+                    "fletcher who sells arrows is the trader the bow's "
+                    "maker never was. Daylight only, in the deep forest.",
+        inputs={"LABOR": D("1"), "ARROW": D("1")},
+        outputs={}, duration_ticks=2,
         good_requirements={"BOW": D("1")},
         requires_daylight=True, requires_place_kind="FOREST",
         branches=[
@@ -2131,6 +2194,21 @@ def _create_recipes(session: Session) -> None:
                     "Needs a LIT fire -- coals do not cook.",
         inputs={"LABOR": D("1"), "MEAT": D("2")},
         outputs={"COOKED_MEAT": D("2")}, duration_ticks=1,
+        requires_facility="FIRE", requires_facility_lit=True,
+    )
+    # The knife's margin (Bundle B): the held knife trims what the fire
+    # would char -- the same two meat, half again the plate. The bare
+    # row stays (the gateless cousin): the knife buys margin, never
+    # access. The tanning and rope variants ride the same idiom when
+    # their recipes arrive (Bundle C).
+    production.create_recipe(
+        session, "COOK_MEAT_KNIFE", name="Cook Meat with a Knife",
+        description="Trimmed and turned against the flame: the same two "
+                    "meat, half again the plate. A held knife (never "
+                    "spent) -- needs a LIT fire like any cook.",
+        inputs={"LABOR": D("1"), "MEAT": D("2")},
+        outputs={"COOKED_MEAT": D("3")}, duration_ticks=1,
+        good_requirements={"KNIFE": D("1")},
         requires_facility="FIRE", requires_facility_lit=True,
     )
     # The smokehouse: preservation as a craft. Smoking is deliberately
@@ -2634,10 +2712,12 @@ def _create_recipes(session: Session) -> None:
         requires_daylight=True, requires_place_kind="RIDGE",
         branches=[
             {"weight": D("50"),
-             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3"),
+                         "BONE": D("1"), "FEATHER": D("1")},
              "label": "small"},
             {"weight": D("20"),
-             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6"),
+                         "BONE": D("1"), "FEATHER": D("1")},
              "label": "big"},
             {"weight": D("30"), "outputs": {}, "label": "nothing"},
         ],
@@ -2645,17 +2725,21 @@ def _create_recipes(session: Session) -> None:
     production.create_recipe(
         session, "HUNT_IBEX_BOW", name="Hunt Ibex with a Bow",
         description="The high shot: the bow's steadier table on the "
-                    "ridge's quarry. Held bow, never consumed. Daylight "
-                    "only, on the ridge.",
-        inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
+                    "ridge's quarry. Held bow, never consumed -- but the "
+                    "shot costs its arrow now (Bundle B), same as the "
+                    "forest table. Daylight only, on the ridge.",
+        inputs={"LABOR": D("1"), "ARROW": D("1")},
+        outputs={}, duration_ticks=2,
         good_requirements={"BOW": D("1")},
         requires_daylight=True, requires_place_kind="RIDGE",
         branches=[
             {"weight": D("55"),
-             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3")},
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("3"),
+                         "BONE": D("1"), "FEATHER": D("1")},
              "label": "small"},
             {"weight": D("25"),
-             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6")},
+             "outputs": {"IBEX_PELT": D("1"), "MEAT": D("6"),
+                         "BONE": D("1"), "FEATHER": D("1")},
              "label": "big"},
             {"weight": D("20"), "outputs": {}, "label": "nothing"},
         ],
@@ -2760,6 +2844,28 @@ def _create_recipes(session: Session) -> None:
         requires_place_kind="HEARTH", unlocks=["APIARY"],
     )
     production.create_recipe(
+        session, "STUDY_FLETCHING", name="Study Fletching",
+        description="An evening at the fire truing shafts and laying the "
+                    "fletch: the arrow-maker's rank. A feather, a log, "
+                    "and fire-hardening in your hands already -- then "
+                    "the quiver is yours to fill.",
+        inputs={"FEATHER": D("1"), "WOOD": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="HEARTH", unlocks=["FLETCHING"],
+    )
+    production.create_recipe(
+        session, "STUDY_BONEWORK", name="Study Bonework",
+        description="An afternoon at the scrape working bone against "
+                    "flint: the finer edge. A bone and a stone, knapping "
+                    "in your hands already -- then needle and point are "
+                    "yours to grind.",
+        inputs={"BONE": D("1"), "FLINT": D("1")}, outputs={},
+        duration_ticks=2,
+        per_tick_inputs={"LABOR": D("1")},
+        requires_place_kind="FLINT", unlocks=["BONEWORK"],
+    )
+    production.create_recipe(
         session, "STUDY_SALT", name="Study Salt Curing",
         description="A day at the counter watching salt draw through meat "
                     "until it keeps: the keeper's trade, learnt over the "
@@ -2837,6 +2943,40 @@ def _create_recipes(session: Session) -> None:
                                         "WOOD": D("2"), "YARN": D("1")},
         outputs={"BOW": D("1")}, duration_ticks=3,
         requires_daylight=True, requires=["FIRE_HARDENING"],
+    )
+    # The hunter's kit (Bundle B): the fletcher's bench, the general
+    # cutter, and the board. MAKE_ARROW is FLETCHING-gated (the rank is
+    # the point -- a quiver is bought from a fletcher or earned by
+    # study); the knife and shield are ungated crafts (the gateless
+    # cousin is the bare hand, not a rank) -- margin tools, never
+    # access tools.
+    production.create_recipe(
+        session, "MAKE_ARROW", name="Make Arrow",
+        description="Flint point, straight shaft, a feather's fletch: one "
+                    "shot, spent on the flight. A quiver is a bank of "
+                    "odds. Daylight only; the FLETCHING rank.",
+        inputs={"LABOR": D("1"), "WOOD": D("1"), "FLINT": D("1"),
+                "FEATHER": D("1")},
+        outputs={"ARROW": D("1")}, duration_ticks=1,
+        requires_daylight=True, requires=["FLETCHING"],
+    )
+    production.create_recipe(
+        session, "MAKE_KNIFE", name="Make Knife",
+        description="A flint edge on a haft: the general cutter -- held, "
+                    "never spent, speeds the cook and (soon) the tan and "
+                    "the cord. Daylight only.",
+        inputs={"LABOR": D("1"), "FLINT": D("1"), "WOOD": D("1")},
+        outputs={"KNIFE": D("1")}, duration_ticks=1,
+        requires_daylight=True,
+    )
+    production.create_recipe(
+        session, "MAKE_SHIELD", name="Make Shield",
+        description="A board of wood and flint: the answer to an opening "
+                    "shot -- held, never spent, two defense worn beside "
+                    "clothes' one. Daylight only.",
+        inputs={"LABOR": D("1"), "WOOD": D("2"), "FLINT": D("1")},
+        outputs={"SHIELD": D("1")}, duration_ticks=2,
+        requires_daylight=True,
     )
 
 
@@ -2978,6 +3118,16 @@ def _create_markets(session: Session) -> None:
     # what the trip was worth.
     markets.create_market(session, "IBEX_PELT", COIN,
                           name="Ibex Pelt", place="SALT_LICK")
+    # The hunter's book (Bundle B): ARROW, BONE, FEATHER, KNIFE, and
+    # SHIELD trade at the post book-only -- no NPC maker, no anchor
+    # prices, no genesis quotes (the IBEX_PELT precedent one valley
+    # over). The fletcher is the trader the bow's maker never was;
+    # the post leaves the niche empty on purpose.
+    for _symbol, _name in (("ARROW", "Arrow"), ("BONE", "Bone"),
+                           ("FEATHER", "Feather"), ("KNIFE", "Knife"),
+                           ("SHIELD", "Shield")):
+        markets.create_market(session, _symbol, COIN, name=_name,
+                              place="POST")
 
 
 # ---------------------------------------------------------------------------
@@ -3026,7 +3176,8 @@ def make_wolf(session: Session, name: str) -> Entity:
     return spawns.spawn_one(session, name, {
         "entity_type": "individual",
         "stats": {"ATTACK": 4, "DEFENSE": 1, "HITS": 12},
-        "holdings": {"MEAT": 1, "PELT": 1, "WATER": WATER_BEAST_BUFFER,
+        "holdings": {"MEAT": 1, "PELT": 1, "BONE": 1, "FEATHER": 1,
+                     "WATER": WATER_BEAST_BUFFER,
                      "REST": REST_BEAST_BUFFER},
         # The beast's biology, same as the cadence template (run 56):
         # genesis packs omit comfort too -- or the first two packs (the

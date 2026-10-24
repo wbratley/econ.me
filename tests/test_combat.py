@@ -389,3 +389,106 @@ def test_an_attack_wakes_a_sleeper(session):
     ev = combat.resolve_attack(session, wolf.id, house.id, 2)
     assert "interrupted" not in ev
     assert again.status == ProcessStatus.RUNNING
+
+
+# --- on_hit_grants: a landed bite wounds the bitten side --------------------
+# Bundle B (docs/stone-age-expansion.md): the bite_loot precedent mirrored --
+# the attacker eats, the defender bleeds. The row is pack data in the
+# combat rules; the engine credits the defender on a landed hit and only
+# on a landed hit.
+
+def test_a_landed_bite_wounds_the_bitten_side(session):
+    """A landed bite feeds the attacker (bite_loot) AND wounds the
+    defender (on_hit_grants) -- one exchange, two sides paid. The grant
+    rides the event's post-clip truth."""
+    goods.create_good(session, "WOUND")
+    wolf, house = _world(session, night_only=False, base_hit=100,
+                         on_hit_grants={"WOUND": 1})
+    for t in range(1, 40):
+        ev = combat.resolve_attack(session, wolf.id, house.id, t)
+        if ev.get("hit"):
+            break
+    assert ev["hit"] is True
+    # the bite fed the wolf and tore the house: both rules fired
+    assert markets.get_holding(session, wolf.id, "MEAT").quantity \
+        == Decimal("1")
+    assert markets.get_holding(session, house.id, "WOUND").quantity \
+        == Decimal("1")
+    assert ev["granted"] == {"WOUND": "1.0000"}
+
+
+def test_misses_deterrence_and_refusals_grant_nothing(session):
+    """Only a LANDED hit wounds: a turned-away bark, a clean miss, and a
+    refused attempt leave the defender unmarked -- the tear is the
+    bite's, not the attempt's."""
+    goods.create_good(session, "WOUND")
+    wolf, house = _world(session, night_only=False, base_hit=0,
+                         on_hit_grants={"WOUND": 1})
+    # the 5% clamp keeps a floor under every swing -- scan for the
+    # certain miss (P(40 straight hits) is 0.05**40) and check THAT
+    # exchange: a missed bite tears nothing
+    for t in range(1, 40):
+        ev = combat.resolve_attack(session, wolf.id, house.id, t)
+        if not ev.get("hit"):
+            break
+    assert ev["hit"] is False and "granted" not in ev
+    assert markets.get_holding(session, house.id, "WOUND") is None
+    # the firelight turns the pack at the door: a loud miss, no wound
+    markets.adjust_holding(session, house, "WARMTH", Decimal("1"))
+    rules = combat.get_rules(session)
+    rules["base_hit"] = 100
+    combat.set_rules(session, rules)
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)
+    assert ev["deterred"] is True and "granted" not in ev
+    assert markets.get_holding(session, house.id, "WOUND") is None
+
+
+def test_the_spear_tears_too_on_hit_grants_is_symmetric(session):
+    """The same law as bite_loot: a landed hit is a landed hit whatever
+    the species -- a house's spear on a wolf grants the wolf its wound.
+    What a wound breeds is the conditions register's business."""
+    goods.create_good(session, "WOUND")
+    wolf, house = _world(session, night_only=False, base_hit=100,
+                         on_hit_grants={"WOUND": 1})
+    for t in range(1, 40):
+        ev = combat.resolve_attack(session, house.id, wolf.id, t)
+        if ev.get("hit"):
+            break
+    assert ev["hit"] is True
+    assert markets.get_holding(session, wolf.id, "WOUND").quantity \
+        == Decimal("1")
+    assert ev["granted"] == {"WOUND": "1.0000"}
+
+
+def test_on_hit_grants_clip_at_the_goods_cap(session):
+    """A grant is a credit like any other: it clips at the good's
+    banking cap and the event reports the credited truth, not the
+    declared row (the condition_grants precedent)."""
+    goods.create_good(session, "WOUND", max_holding=Decimal("3"))
+    wolf, house = _world(session, night_only=False, base_hit=100,
+                         on_hit_grants={"WOUND": 1})
+    markets.adjust_holding(session, house, "WOUND", Decimal("2.5"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)
+    assert ev["hit"] is True
+    assert markets.get_holding(session, house.id, "WOUND").quantity \
+        == Decimal("3")
+    assert ev["granted"] == {"WOUND": "0.5000"}
+    # a defender already at the cap: the tear lands, nothing banks,
+    # and the event omits the grant rather than lying with a zero
+    ev = combat.resolve_attack(session, wolf.id, house.id, 2)
+    assert ev["hit"] is True and "granted" not in ev
+
+
+def test_a_killing_bite_still_wounds_then_the_estate_carries_it(session):
+    """The killing bite tears too -- the grant fires with the hit (the
+    bite_loot ordering: paid on the exchange, before the incapacity
+    pass takes the body), and the estate machinery moves what the dead
+    still hold without complaint."""
+    goods.create_good(session, "WOUND")
+    wolf, house = _world(session, night_only=False, base_hit=100,
+                         on_hit_grants={"WOUND": 1})
+    markets.adjust_holding(session, house, "HITS", Decimal("-19"))
+    ev = combat.resolve_attack(session, wolf.id, house.id, 1)
+    assert ev["killed"] is True and ev["granted"] == {"WOUND": "1.0000"}
+    assert session.get(Entity, house.id).status != EntityStatus.ACTIVE
+    assert ev["death"]["type"] == "entity_incapacitated"

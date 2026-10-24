@@ -27,7 +27,8 @@ from econengine.catalog import _num
 #: goods/needs/markets/production/parcels/conditions/tick/services). Each
 #: has a renderer below; the coverage test walks this list.
 ENGINE_EVENT_TYPES: tuple[str, ...] = (
-    "auction", "auto_issue", "compute_budget_exceeded", "decay",
+    "auction", "auto_issue", "combat", "compute_budget_exceeded",
+    "decay",
     "deposit_regen", "entity_incapacitated", "need_satisfied",
     "need_unmet", "order_cancelled", "process_completed",
     "process_failed", "script_error", "script_reverted", "trade",
@@ -227,6 +228,38 @@ def _auto_issue(e, names):
 def _deposit_regen(e, names):
     return (f"seam regrew {_num(e.get('regenerated', 0))} "
             f"{_g(e, 'symbol', names)} (now {_num(e.get('quantity', 0))})")
+
+
+@_renders("combat")
+def _combat(e, names):
+    # One exchange, one sentence: the attempt (refused, turned away,
+    # missed) or the landed hit (damage, the tear, the kill). Target
+    # ids render bare -- combat events carry ids, not names, and a
+    # witness reads who from the row's own context.
+    target = e.get("target_id") or "the dark"
+    if e.get("status") == "rejected":
+        return f"attack refused: {e.get('reason', '?')}"
+    if e.get("deterred"):
+        return f"struck at {target} and was turned away by the firelight"
+    if not e.get("hit"):
+        return f"struck at {target} and missed"
+    line = f"bit {target} for {_num(e.get('damage', 0))}"
+    if e.get("crit"):
+        line += " (a clean opening)"
+    granted = e.get("granted") or {}
+    if granted:
+        what = ", ".join(f"{_num(q)} {_g({'symbol': s}, 'symbol', names)}"
+                          for s, q in sorted(granted.items()))
+        line += f" — the bite tore {what}"
+    if e.get("killed"):
+        line += f"; killed {target}"
+        loot = e.get("loot") or {}
+        if loot:
+            took = ", ".join(
+                f"{_num(q)} {_g({'symbol': s}, 'symbol', names)}"
+                for s, q in sorted(loot.items()))
+            line += f" and took the carcass: {took}"
+    return line
 
 
 @_renders("condition_granted")
