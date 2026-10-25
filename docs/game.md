@@ -395,10 +395,12 @@ Distance/maps/transport were **out of scope for v0** and safely so:
 
 The revisit has happened: the full spec — places, travel-as-process,
 presence gates, located markets and danger, six PR-sized steps (S1–S6),
-with the Luanti world-server boundary deliberately last — lives in
-`docs/spatial.md`. This section remains the record of *why it waited*
-and what the layer must not break (the abstract-economy modelling
-product, which still ships zero places).
+with the real-time world-layer boundary deliberately last — lives in
+`docs/spatial.md`. The platform-era navigable world is scoped in
+`docs/world-layer.md` (real-time 2D first, multiple clients, and pure
+spectators). This section remains the record of *why it waited* and what
+the layer must not break (the abstract-economy modelling product, which
+still ships zero places).
 
 ## 11. Phase plan
 

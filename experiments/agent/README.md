@@ -154,6 +154,80 @@ xdg-open http://127.0.0.1:8090/
 #    viewer's route to the world server (which binds 0.0.0.0 too).
 ```
 
+### See it as a living world (and optionally play from the browser)
+
+The dashboard above is the run's forensic/accounting view. The navigable
+2D world is the separate `web/` client. For a local browser-playable run,
+arm the world clock and provision a browser account at launch:
+
+```bash
+.venv/bin/python -m experiments.agent.nim_run \
+    --models <slug-1> <slug-2> <slug-3> \
+    --names "House Llama" "House Qwen" "House Mistral" \
+    --scenario stone_age --rounds 40 --ticks-per-round 20 \
+    --edit-mode --diary \
+    --port 8917 --serve 8113 \
+    --world-tick-seconds 15 \
+    --browser-user "Your Name" \
+    --out /tmp/stone-run
+```
+
+The console now prints three different things; do not conflate the ports:
+
+- **world server** — `http://127.0.0.1:8917` (the API/websocket authority);
+- **old dashboard** — `http://127.0.0.1:8113` (round tables and journals);
+- **browser token** — a bearer token for `Your Name`, printed once. It is
+  full control of that account; keep it out of the served run dir.
+
+Start the living-world client against the world server port:
+
+```bash
+cd web
+npm install
+ECON_API_PROXY_TARGET=http://127.0.0.1:8917 npm run dev
+```
+
+Open <http://localhost:5173> (or `http://<this-host>:5173` from a phone —
+the Vite server binds the LAN by default), paste the browser token, and the
+map appears immediately. At this point you are a spectator. To enter the
+running world, click **Join the world** in the Walk & talk panel; the
+client calls the ordinary `POST /join`, receives the pack's founder
+endowment/starter, refreshes, and then offers **Possess**. Walking is
+immediate; `say` appears to spectators and AI scripts on the next world
+tick (15s in the example).
+
+`--world-tick-seconds` is the important join flag: joining makes the new
+account eligible for the readiness gate, so an unarmed readiness-only run
+can wait forever for a browser account that has no `set_ready` button. The
+world clock closes rounds on tick multiples instead, and it is also what
+makes world-layer speech visible without waiting for an operator advance.
+For a slower exhibition use 30–60s; for a local playable demo 10–15s keeps
+speech responsive while still giving seats several minutes per 20-tick
+round.
+
+To add browser access to a stopped run, resume it with the same seats plus
+the flag:
+
+```bash
+.venv/bin/python -m experiments.agent.nim_run \
+    --models <slug-1> <slug-2> <slug-3> \
+    --names "House Llama" "House Qwen" "House Mistral" \
+    --scenario stone_age --rounds 40 --ticks-per-round 20 \
+    --edit-mode --diary --port 8917 --serve 8113 \
+    --world-tick-seconds 15 --browser-user "Your Name" \
+    --out /tmp/stone-run --resume
+```
+
+A run launched without `--browser-user` can still be spectated with any
+valid account token (OAuth where configured), but it has no fresh local
+browser account to paste into the client. Use `--resume --browser-user ...`
+for that. Add `--keep-server` if the API should remain reachable after the
+final round.
+
+The living-world client and the dashboard can be open side by side: the
+client shows terrain, actors, presence, and speech; the dashboard remains
+the per-round strategy/audit record.
+
 The live page is the dashboard itself: rewritten atomically after every
 resolved round (write-then-rename, so a browser never reads a torn
 file), wearing a `● LIVE · round N of K · elapsed` header and a 10s
@@ -243,15 +317,37 @@ as NIM, pointed at `ECON_LLAMA_BASE` (default
 `http://127.0.0.1:8080`), no key, no shared rate budget. The prefix
 argument is the server's own model id (what `/v1/models` reports).
 Thinking models get family budgets from the same table that sizes
-gpt-oss/deepseek (qwen3.8 → 24000 against the server's `-c 32768`);
-the ctx wall is real, so the budget must leave room for the prompt.
+gpt-oss/deepseek (qwen3.8 → 110000 against the server's 128k ctx — the
+cap sits OVER a full hard-rewrite think, so a verbose think completes
+rather than dying at the budget; if it does outgrow the cap it dies at
+the budget, a readable retry, never at the ctx, a server-side
+truncation). The think is slow (~32 tok/s on this box), so the run's
+round window is slowed to match — see the launch script's
+`--world-tick-seconds`.
 Inline `<think>` blocks are stripped and a separate
 `reasoning_content` channel is ignored either way. Note the server
 is shared: whatever else talks to that port queues with the seats
 unless it runs `--parallel`.
 
+Empty-finish recovery + the liveness gate (run 54 r4-5's
+post-mortem): a finish that ends in the thinking channel (all
+reasoning, no script) is the typed `EmptyFinalContent` — when the
+seat can switch thinking off (the llama seat advertises
+`no_thinking`), the loop recovers with ONE follow-up call carrying
+`enable_thinking: false` (same prompt + "emit the script now";
+persisted as `author-nudge`) instead of re-thinking fresh, and the
+journal marks the attempt `nudge: true`. A SEARCH/REPLACE block that
+misses the source verbatim flips the seat to full-rewrite mode for
+the rest of the cycle (the edit grammar leaves its system prompt and
+the feedback says so) — a mismatched patch can no longer eat the
+whole round. And `nim_run` probes every remote model before the
+world exists: a non-rate-limit 4xx (410 gone, 404 misspelled)
+refuses the start outright, a 5xx/429/timeout backs off until
+`ECON_MODEL_PROBE_BUDGET_S` (default 1800s) — a dead model never
+again inherits the scenario starter silently.
+
 Repetition breaker (default ON): run 32's forensics showed reasoning
-marathons — a degenerated stream burning its whole 65,536-token budget
+marathons — a degenerated stream burning its whole token budget
 re-walking the same lines ("We can..." x7,120; one warmth argument
 x330; four burns = 57% of the run's wall-clock) — and every burn's
 follow-up attempt succeeding with 15–40× less thinking. So the streamed

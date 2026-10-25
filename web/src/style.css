@@ -1,0 +1,164 @@
+:root {
+  color: #f4edda;
+  background: #1e302b;
+  font-family: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-synthesis: none;
+  --ink: #f4edda;
+  --muted: #b9c5ac;
+  --panel: #2a4037;
+  --panel-deep: #22372f;
+  --line: #496052;
+  --accent: #efbf68;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; }
+body { overflow: hidden; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+
+.topbar {
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 16px;
+  background: #263d35;
+  border-bottom: 2px solid #14251f;
+  box-shadow: 0 2px 0 #3d5647;
+  position: relative;
+  z-index: 2;
+}
+
+h1, h2, p { margin: 0; }
+h1 { font-size: 18px; letter-spacing: 0.04em; color: #fff4d7; }
+.topbar p { color: var(--muted); font-size: 11px; margin-top: 4px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: #e8d9b6; margin-bottom: 10px; }
+
+.badge {
+  color: #273b31;
+  background: var(--accent);
+  border: 2px solid #f8d78e;
+  border-radius: 3px;
+  box-shadow: 2px 2px 0 #15271f;
+  padding: 5px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.camera-controls { margin-left: auto; display: flex; gap: 6px; }
+button {
+  border: 2px solid #17281f;
+  border-radius: 3px;
+  background: #e5d3a7;
+  color: #26372e;
+  min-height: 32px;
+  padding: 4px 10px;
+  box-shadow: 2px 2px 0 #14251e;
+}
+button:hover { background: #f4e5bd; }
+button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #14251e; }
+button:disabled { opacity: 0.55; cursor: wait; }
+.camera-controls button:first-child, .camera-controls button:nth-child(2) { width: 34px; padding: 0; font-size: 20px; }
+
+main {
+  height: calc(100% - 70px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+}
+
+#viewport {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: #172d29;
+}
+#world { width: 100%; height: 100%; display: block; touch-action: none; image-rendering: pixelated; }
+.map-status, .map-help {
+  position: absolute;
+  left: 12px;
+  pointer-events: none;
+  background: rgba(25, 42, 35, 0.88);
+  border: 1px solid rgba(238, 222, 181, 0.28);
+  border-radius: 3px;
+  color: #f5e8c8;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+.map-status { top: 12px; }
+.map-help { bottom: 12px; color: #cad2b9; }
+
+aside {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--panel-deep);
+  border-left: 2px solid #14251f;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px; box-shadow: 2px 2px 0 #192b24; }
+.panel label { display: block; color: #e8d9b6; font-size: 11px; margin-bottom: 7px; }
+.token-row { display: flex; gap: 6px; }
+.token-row input, .token-row select { min-width: 0; width: 100%; background: #1d3029; color: var(--ink); border: 1px solid #657565; border-radius: 3px; padding: 7px; }
+.fine-print { color: var(--muted); font-size: 10px; line-height: 1.55; margin-top: 8px; }
+.status { color: #efc778; font-size: 11px; line-height: 1.45; margin-top: 8px; overflow-wrap: anywhere; }
+#clock { color: #fff0cd; font-size: 13px; }
+.section-heading { display: flex; align-items: start; justify-content: space-between; gap: 6px; }
+.text-button { border: 0; box-shadow: none; background: transparent; color: #efc778; min-height: 0; padding: 0; font-size: 10px; }
+.text-button:hover { background: transparent; text-decoration: underline; }
+
+#join-world { width: 100%; margin-bottom: 8px; }
+.say-form { display: flex; gap: 6px; margin-top: 9px; }
+.say-form input { min-width: 0; width: 100%; background: #1d3029; color: var(--ink); border: 1px solid #657565; border-radius: 3px; padding: 7px; }
+.dpad {
+  width: 118px;
+  display: grid;
+  grid-template-columns: repeat(3, 36px);
+  grid-template-rows: repeat(2, 34px);
+  gap: 4px;
+  justify-content: center;
+  margin: 10px auto 2px;
+  touch-action: none;
+}
+.dpad button { min-height: 34px; padding: 0; touch-action: none; user-select: none; }
+.dpad [data-direction="up"] { grid-column: 2; grid-row: 1; }
+.dpad [data-direction="left"] { grid-column: 1; grid-row: 2; }
+.dpad [data-direction="right"] { grid-column: 3; grid-row: 2; }
+.dpad [data-direction="down"] { grid-column: 2; grid-row: 2; }
+.play-panel.possessed { border-color: #d5b876; }
+
+.actor-list, .speech-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+.actor-row {
+  width: 100%; display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 7px;
+  background: #23382f; color: var(--ink); border: 1px solid #465c4e; box-shadow: none; padding: 6px; text-align: left;
+}
+.actor-row:hover, .actor-row.following { background: #395044; border-color: #d5b876; }
+.actor-dot { width: 8px; height: 8px; background: #d9b567; border-radius: 1px; }
+.actor-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.actor-state { color: #bac8b4; font-size: 9px; text-transform: uppercase; }
+.empty { color: #aebcab; font-size: 11px; font-style: italic; }
+.speech-row { border-left: 2px solid #708063; padding-left: 8px; font-size: 10px; line-height: 1.45; }
+.speech-row strong { color: #f0cb7c; font-weight: 600; }
+.speech-row small { display: block; color: #98aa98; margin-top: 2px; }
+
+@media (max-width: 760px) {
+  .topbar { min-height: 58px; padding: 8px 10px; gap: 8px; }
+  .topbar p, .badge { display: none; }
+  h1 { font-size: 14px; }
+  .camera-controls { gap: 4px; }
+  .camera-controls button { min-height: 30px; padding: 3px 7px; font-size: 11px; }
+  main { height: calc(100% - 58px); grid-template-columns: 1fr; grid-template-rows: minmax(260px, 1fr) 218px; }
+  aside { border-left: 0; border-top: 2px solid #14251f; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; overflow-y: auto; }
+  .connected .connect-panel, .world-panel { display: none; }
+  .play-panel[hidden] { display: none; }
+  .play-panel { grid-column: 1 / -1; }
+  .actors-panel, .speech-panel { min-height: 0; }
+  .actor-list, .speech-list { max-height: 150px; }
+  .map-help { font-size: 9px; bottom: 8px; left: 8px; }
+  .map-status { top: 8px; left: 8px; font-size: 10px; }
+}

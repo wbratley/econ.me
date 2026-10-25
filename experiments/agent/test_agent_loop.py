@@ -25,9 +25,9 @@ from econ.api.main import app
 from econengine.models import Base, User, WorldSetting
 
 from experiments.agent.llm import (
-    AnthropicModel, OpenAIModel, ScriptedModel, ScriptedModelEmpty,
-    extract_script, extract_script_detailed, model_from_env, strip_fences,
-    strip_think,
+    AnthropicModel, EmptyFinalContent, OpenAIModel, ScriptedModel,
+    ScriptedModelEmpty, extract_script, extract_script_detailed,
+    model_from_env, strip_fences, strip_think,
 )
 from experiments.agent.loop import (
     AgentLoop, McpClient, McpError, _apply_edits, _closest_region,
@@ -360,6 +360,138 @@ def test_failed_patch_feeds_back_and_retries(client):
     assert "SEARCH not found" in model.calls[1]["user"]
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(3)"
+
+
+def test_failed_patch_forces_full_rewrite_mode(client):
+    """Run 54 r4, Lagertha's last authoring: a SEARCH block that cannot
+    match the source verbatim — the old loop fed the model the same
+    patch again (the model cannot see its own block's bytes) and the
+    seat re-sent the same patch until the round ran out. A miss now
+    takes the edit grammar out of the seat's system prompt for the
+    rest of the cycle and says so in the feedback: attempt 2 is a
+    full rewrite, and a mismatched patch cannot break that."""
+    bad = "<<<<<<< SEARCH\nnot in the source anywhere\n=======\nx\n>>>>>>> REPLACE"
+    model = ScriptedModel([bad, CLEAN])
+    lp = AgentLoop(mcp(client), model, edit_mode=True)
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert entry["action"] == "rewrite"
+    # attempt 1 saw the edit grammar; attempt 2's system prompt does not
+    assert "<<<<<<< SEARCH" in model.calls[0]["system"]
+    assert "<<<<<<< SEARCH" not in model.calls[1]["system"]
+    # and the feedback names the fallback plainly
+    assert "do not send edit blocks" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+class _NudgableModel:
+    """The empty-finish shape: the thinking call ends empty, the
+    no-thinking nudge emits a script. `no_thinking = True` is what the
+    llama seat advertises (NimModel.no_thinking); `calls` records
+    (system, user, thinking) per call — ScriptedModel's assertion
+    surface plus the thinking switch."""
+
+    name = "nudgable"
+    no_thinking = True
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def complete(self, system, user, thinking=True):
+        self.calls.append({"system": system, "user": user,
+                           "thinking": thinking})
+        if len(self.calls) == 1:
+            raise EmptyFinalContent(
+                "empty final content (finish_reason=stop; "
+                "reasoning consumed the token budget)", "stop")
+        return CLEAN
+
+
+def test_empty_finish_is_recovered_by_no_thinking_nudge(client):
+    """Run 54's Lagertha r4: two ~20-min thinking attempts ended empty
+    (all reasoning, no script) and the round ran out with the seat
+    having never spoken. The recovery is one follow-up call with
+    thinking structurally off — same prompt, a nudge that says EMIT —
+    and it counts as the same attempt: the seat's script lands this
+    round, and the journal marks it."""
+    model = _NudgableModel()
+    lp = AgentLoop(mcp(client), model)
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 1
+    assert entry["nudge"] is True
+    assert len(model.calls) == 2
+    assert model.calls[0]["thinking"] is True
+    assert model.calls[1]["thinking"] is False
+    # the nudge rides the same prompt and says emit now
+    assert model.calls[1]["user"].startswith(model.calls[0]["user"])
+    assert "no thinking budget" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+class _AlwaysEmptyModel:
+    """Every call — author AND nudge — ends empty: the worst case,
+    where the nudge cannot save the round either."""
+
+    name = "always-empty"
+    no_thinking = True
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def complete(self, system, user, thinking=True):
+        self.calls.append({"thinking": thinking})
+        raise EmptyFinalContent(
+            "empty final content (finish_reason=stop)", "stop")
+
+
+def test_failed_nudge_counts_the_attempt_and_rethinks(client):
+    """A failed nudge is not a special case: the attempt counts, the
+    combined error (nudge failed) lands in the feedback, and the next
+    attempt re-thinks fresh — the loop's plain retry, unchanged."""
+    model = _AlwaysEmptyModel()
+    lp = AgentLoop(mcp(client), model, max_attempts=2)
+    entry = lp.cycle()
+    assert not entry["accepted"]
+    # 2 attempts × (author + nudge) = 4 calls: author thinks, the
+    # nudge does not — and the nudge died too
+    assert len(model.calls) == 4
+    assert [c["thinking"] for c in model.calls] == [True, False, True, False]
+    assert "nudge failed" in entry["refusal"]
+
+
+class _PlainEmptyModel:
+    """Hosted-seat shape (plain NIM, DeepSeek): no_thinking is False —
+    an empty finish is a plain failed attempt (re-think fresh with the
+    failure in the feedback), never a nudge."""
+
+    name = "plain-empty"
+    no_thinking = False
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def complete(self, system, user, thinking=True):
+        self.calls.append({"user": user, "thinking": thinking})
+        if len(self.calls) == 1:
+            raise EmptyFinalContent(
+                "empty final content (finish_reason=stop)", "stop")
+        return CLEAN
+
+
+def test_empty_finish_without_no_thinking_is_a_plain_attempt(client):
+    model = _PlainEmptyModel()
+    lp = AgentLoop(mcp(client), model, max_attempts=2)
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert entry["nudge"] is False
+    # attempt 2 re-thinks fresh with attempt 1's failure in the prompt
+    assert len(model.calls) == 2
+    assert "the previous model call failed" in model.calls[1]["user"]
+    assert "empty final content" in model.calls[1]["user"]
 
 
 def test_missed_search_echoes_the_closest_region(client):

@@ -85,6 +85,11 @@ local comfort = std.holding_qty("COMFORT")  -- ease banked (run 54 P2)
 local squalor = std.holding_qty("SQUALOR")  -- the unloved hours' memory
 local flint  = std.holding_qty("FLINT")
 local yarn   = std.holding_qty("YARN")
+local bag    = std.holding_qty("BAG")     -- the gather's key (held,
+                                           -- never spent): the doubled
+                                           -- table, USED when held -- the
+                                           -- bag is the player's rung
+                                           -- (2b), not the floor's
 local herb   = std.holding_qty("HERB")   -- the healer's raw (Bundle A):
                                            -- ballast to the floor (no rank
                                            -- works it) -- a POCKET good
@@ -434,7 +439,8 @@ if not std.is_night() then
     -- the commitment (no sideways walk) while the catch accumulates.
   elseif (food < 8 or wood < 6) and not dusk_closing
      and load < 16
-     and not std.running_recipe("GATHER") then
+     and not std.running_recipe("GATHER")
+     and not std.running_recipe("GATHER_BAG") then
     -- load < 16: a full back is a day's work DONE (the soak's
     -- finding: a floor that gathered past its shoulders -- twenty-
     -- nine units on a back that carries twenty -- was refused the
@@ -443,7 +449,9 @@ if not std.is_night() then
     if place ~= woods then
       ctx.action.travel(woods)
     else
-      ctx.action.start_process("GATHER")
+      -- the bag's table when the player's bag is in hand (2b: the floor
+      -- uses the rung, it does not build it); bare hands otherwise
+      ctx.action.start_process(bag >= 1 and "GATHER_BAG" or "GATHER")
     end
   elseif place ~= home and (dusk_closing or load >= 16
                             or (food >= 8 and wood >= 6)) then

@@ -51,6 +51,7 @@ def create_good(
     modifies_pattern: str | None = None,
     modifies_factor: Decimal | None = None,
     incapacitates_at: Decimal | None = None,
+    productivity_factor: Decimal | None = None,
     max_holding: Decimal | None = None,
     carry_exempt: bool = False,
 ) -> Good:
@@ -85,6 +86,16 @@ def create_good(
         incapacitates_at = Decimal(incapacitates_at).quantize(_QUANTUM)
         if incapacitates_at <= 0:
             raise ValueError("incapacitates_at must be positive")
+    if productivity_factor is not None:
+        productivity_factor = Decimal(productivity_factor).quantize(_QUANTUM)
+        if not Decimal("0") <= productivity_factor <= Decimal("1"):
+            raise ValueError("productivity_factor must be between 0 and 1")
+        if modifies_pattern is None and incapacitates_at is None:
+            # a condition must be the thing being held: a held berry must
+            # not tax work (docs/productivity.md §2)
+            raise ValueError(
+                "productivity_factor is for condition goods only -- declare "
+                "modifies_pattern or incapacitates_at")
 
     good = Good(
         symbol=symbol.upper(),
@@ -97,6 +108,7 @@ def create_good(
         modifies_pattern=modifies_pattern.upper() if modifies_pattern else None,
         modifies_factor=modifies_factor,
         incapacitates_at=incapacitates_at,
+        productivity_factor=productivity_factor,
         max_holding=max_holding,
         carry_exempt=bool(carry_exempt),
     )

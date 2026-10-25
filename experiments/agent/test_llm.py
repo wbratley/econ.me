@@ -12,7 +12,8 @@ import time
 import pytest
 
 from experiments.agent.llm import (
-    _RateLimiter, _final_content, NimModel, OpenAIModel,
+    _RateLimiter, _final_content, DeepSeekModel, EmptyFinalContent,
+    NimModel, OpenAIModel, llama_model,
 )
 
 
@@ -354,8 +355,8 @@ def test_llama_model_points_the_nim_client_at_localhost():
     assert m._api_key == "no-key"
     # family budget matching is case-insensitive: the hosted slugs are
     # lowercase but llama.cpp ids carry capitals
-    assert m._max_tokens == 24000
-    assert llm._default_max_tokens("qwen3.8-27b") == 24000
+    assert m._max_tokens == 110000
+    assert llm._default_max_tokens("qwen3.8-27b") == 110000
     assert llm._default_max_tokens("some-plain-model") == 8192
     # ECON_LLAMA_BASE retargets (a second instance on another port)
     alt = llm.llama_model("qwen3.8-27b",
@@ -819,3 +820,130 @@ def test_approval_timeout_keeps_the_prompt(tmp_path):
     # postmortem artifact (FileModel's doctrine, kept)
     prompt = tmp_path / "seat-house-x.prompt.md"
     assert prompt.exists() and "-- draft" in prompt.read_text()
+
+
+# ===========================================================================
+# Empty final content: typed, and the no-thinking nudge's plumbing
+# ===========================================================================
+
+def test_empty_final_content_is_typed_with_finish_reason():
+    # run 54's Lagertha r4 shape, non-streamed: the model ended in its
+    # thinking channel (finish stop, content null). Typed, so the loop
+    # can tell "the model said nothing" apart from "the provider was
+    # unreachable" — and still a RuntimeError, so the loop's plain
+    # failure path (and every old test) catches it unchanged.
+    body = {"choices": [{"finish_reason": "stop", "message": {
+        "content": None, "reasoning_content": "all thinking, no script",
+    }}]}
+    with pytest.raises(EmptyFinalContent) as exc:
+        _final_content(body)
+    assert exc.value.finish_reason == "stop"
+    with pytest.raises(RuntimeError):
+        _final_content(body)
+
+
+def test_streamed_empty_finish_raises_typed(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "stream",
+                        lambda *a, **k: _Stream(200, [
+                            'data: {"choices": [{"delta": '
+                            '{"reasoning_content": "thinking"}}]}',
+                            'data: {"choices": [{"finish_reason": "stop", '
+                            '"delta": {}}]}',
+                            'data: [DONE]',
+                        ]))
+    with pytest.raises(EmptyFinalContent) as exc:
+        NimModel("k", "openai/gpt-oss-20b").complete("s", "u")
+    assert exc.value.finish_reason == "stop"
+
+
+def test_llama_seat_advertises_and_sends_no_thinking(monkeypatch):
+    import httpx
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return _Stream(200, [
+            'data: {"choices": [{"delta": {"content": "return 7"}}]}',
+            'data: {"choices": [{"finish_reason": "stop", "delta": {}}]}',
+            'data: [DONE]',
+        ])
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    m = llama_model("unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS")
+    assert m.no_thinking
+    # the authoring call thinks as usual — no thinking switch in the
+    # payload (the nudge, not the authoring, is where thinking dies)
+    m.complete("s", "u")
+    assert "enable_thinking" not in posts[0]["json"]
+    # the no-thinking call carries the server-side switch: the reply
+    # structurally cannot spend the window in the thinking channel
+    m.complete("s", "u", thinking=False)
+    assert posts[1]["json"]["enable_thinking"] is False
+
+
+def test_plain_nim_and_deepseek_do_not_advertise_no_thinking():
+    # hosted seats have no thinking switch to throw: for them an empty
+    # finish is a plain failed attempt (re-think fresh), not a nudge
+    assert not NimModel("k", "openai/gpt-oss-20b").no_thinking
+    assert not DeepSeekModel("k", "deepseek/deepseek-v4-flash").no_thinking
+
+
+def test_nim_probe_reports_a_gone_slug(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: _Stream(410, []))
+    ok, detail, status = NimModel("k", "moonshotai/kimi-k3").probe()
+    assert not ok
+    assert status == 410
+    assert "HTTP 410" in detail
+
+
+def test_nim_probe_passes_on_content(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "stream",
+                        lambda *a, **k: _Stream(200, [
+                            'data: {"choices": [{"delta": {"content": "OK"}}]}',
+                            'data: [DONE]',
+                        ]))
+    ok, detail, status = NimModel(
+        "k", "nvidia/nemotron-3-ultra-550b-a55b").probe()
+    assert ok and status == 200
+
+
+def test_nim_probe_treats_any_200_as_live(monkeypatch):
+    # A thinking model handed 5 tokens spends them thinking and emits
+    # nothing — that is an answer, not a failure: the endpoint is live
+    # (any 200 is). The empty-EMIT case is the seat's no-thinking
+    # nudge's job (the run 54 post-mortem fix), not the gate's — a
+    # gate that refused on "200 no content" would have refused the
+    # healthy llama seat.
+    import httpx
+    monkeypatch.setattr(httpx, "stream",
+                        lambda *a, **k: _Stream(200, [
+                            'data: {"choices": [{"delta": '
+                            '{"reasoning_content": "hm"}}]}',
+                            'data: {"choices": [{"finish_reason": "stop", '
+                            '"delta": {}}]}',
+                            'data: [DONE]',
+                        ]))
+    ok, detail, status = NimModel("k", "openai/gpt-oss-20b").probe()
+    assert ok and status == 200
+
+
+def test_llama_probe_uses_the_no_thinking_payload(monkeypatch):
+    # the llama seat probes with thinking structurally off — the exact
+    # path the empty-finish nudge uses — so the probe verifies emission,
+    # not just the endpoint
+    import httpx
+    posts = []
+
+    def fake_stream(*a, **k):
+        posts.append(k)
+        return _Stream(200, ["data: [DONE]"])
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    m = llama_model("unsloth/Qwen3.8-27B-GGUF:UD-IQ3_XXS")
+    ok, detail, status = m.probe()
+    assert ok and status == 200
+    assert posts[0]["json"]["enable_thinking"] is False
+    assert posts[0]["json"]["stream"] is True

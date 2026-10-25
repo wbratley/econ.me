@@ -65,6 +65,8 @@ def test_script_starts_process_and_completes_over_ticks(world):
         "process_id": applied[0]["process_id"],
         "recipe": "BAKE_BREAD",
         "outputs": {"BREAD": "3.0000"},
+        "effort": "1.0000",
+        "productivity": "1.0000",
     }]
 
 

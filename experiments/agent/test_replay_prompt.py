@@ -67,4 +67,4 @@ def test_build_model_routes_llama_prefix_without_any_key():
     assert m._base_url == "http://127.0.0.1:8080"
     assert m._limiter_factory is None      # the box is ours: no RPM budget
     # the thinking qwen family gets the big budget, capitals and all
-    assert m._max_tokens == 24000
+    assert m._max_tokens == 110000

@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from econengine import rng
 from econengine.markets import InsufficientHoldingsError, adjust_holding, get_holding
 from econengine.models import (
     Base, EntityType, Process, ProcessStatus, Transaction, TransactionType,
@@ -136,6 +137,8 @@ def test_completion_waits_for_due_tick(world):
         "process_id": process.id,
         "recipe": "BAKE_BREAD",
         "outputs": {"BREAD": "3.0000"},
+        "effort": "1.0000",
+        "productivity": "1.0000",
     }]
 
     # idempotent: a completed process never completes twice
@@ -743,3 +746,434 @@ def test_unscaled_recipes_stamp_no_factor(herd):
     assert process.scale_factor is None
     assert credited_outputs(process) == {"EGG": "1.0000"}
     assert get_holding(session, keeper.id, "EGG").quantity == Decimal("1")
+
+
+# --- LABOR effort (docs/productivity.md §1): the ration, not the gate ---
+
+
+@pytest.fixture
+def gatherer(session):
+    """A gatherer with the full daylight ration: 1 LABOR held, and a
+    1-LABOR gather that yields 2 BERRIES (duration 0)."""
+    from econengine.goods import create_good
+    create_good(session, "LABOR")
+    create_good(session, "BERRIES")
+    g = create_entity(session, "Gatherer", EntityType.INDIVIDUAL)
+    adjust_holding(session, g, "LABOR", Decimal("1"))
+    recipe = create_recipe(
+        session, "gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("2")}, duration_ticks=0,
+        name="Gather")
+    return session, g, recipe
+
+
+def test_full_ration_is_the_status_quo(gatherer):
+    """1.0 held against a 1.0 input: full effort is stored as NULL
+    (reads as 1), the hour is paid, and the berries land verbatim."""
+    session, g, recipe = gatherer
+    process = start_process(session, g, "gather")
+    assert process.effort_factor is None
+    assert get_holding(session, g.id, "LABOR").quantity == Decimal("0")
+    assert get_holding(session, g.id, "BERRIES").quantity == Decimal("2")
+    assert credited_outputs(process) == {"BERRIES": "2.0000"}
+
+
+def test_throttled_ration_scales_the_work_not_the_gate(gatherer):
+    """The run-58 shape: SQUALOR issues the ration at 0.85. The gather
+    still STARTS (no boolean gate), pays exactly what is held (no
+    overdraft), and the berries land at the fraction worked."""
+    session, g, recipe = gatherer
+    adjust_holding(session, g, "LABOR", Decimal("-0.15"))  # ration 0.85
+    process = start_process(session, g, "gather")
+    assert process.effort_factor == Decimal("0.8500")
+    assert get_holding(session, g.id, "LABOR").quantity == Decimal("0")
+    assert get_holding(session, g.id, "BERRIES").quantity == Decimal("1.7")
+    assert credited_outputs(process) == {"BERRIES": "1.7000"}
+
+
+def test_exhaustion_is_the_only_refusal(gatherer):
+    """Zero hours never start anything; below the floor (a quarter of
+    the declared input) neither; at the floor the work starts at the
+    floor's effort."""
+    session, g, recipe = gatherer
+    adjust_holding(session, g, "LABOR", Decimal("-1"))  # ration 0
+    with pytest.raises(InsufficientHoldingsError, match="exhausted"):
+        start_process(session, g, "gather")
+    adjust_holding(session, g, "LABOR", Decimal("0.2"))  # 0.2 < 0.25 floor
+    with pytest.raises(InsufficientHoldingsError, match="exhausted"):
+        start_process(session, g, "gather")
+    adjust_holding(session, g, "LABOR", Decimal("0.05"))  # 0.25 = the floor
+    process = start_process(session, g, "gather")
+    assert process.effort_factor == Decimal("0.2500")
+    assert get_holding(session, g.id, "BERRIES").quantity == Decimal("0.5")
+
+
+def test_materials_stay_hard_when_the_ration_is_soft(session):
+    """Effort applies to LABOR only: a short material input still
+    refuses, and the refusal does not burn the (soft) ration."""
+    from econengine.goods import create_good
+    create_good(session, "LABOR")
+    create_good(session, "FLOUR")
+    create_good(session, "BREAD")
+    b = create_entity(session, "Baker", EntityType.INDIVIDUAL)
+    adjust_holding(session, b, "LABOR", Decimal("0.85"))
+    adjust_holding(session, b, "FLOUR", Decimal("1"))
+    create_recipe(
+        session, "bake", inputs={"LABOR": Decimal("1"), "FLOUR": Decimal("2")},
+        outputs={"BREAD": Decimal("3")}, duration_ticks=0, name="Bake")
+    with pytest.raises(InsufficientHoldingsError, match="FLOUR"):
+        start_process(session, b, "bake")
+    assert get_holding(session, b.id, "LABOR").quantity == Decimal("0.85")
+
+
+def test_effort_persists_to_the_completion(gatherer):
+    """The factor is stamped at start and applied at completion even
+    ticks later: the duration-1 shape, and the completion event carries
+    the effort fact."""
+    session, g, recipe = gatherer
+    create_recipe(
+        session, "deep_gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("4")}, duration_ticks=1,
+        name="Deep gather")
+    adjust_holding(session, g, "LABOR", Decimal("-0.15"))  # ration 0.85
+    process = start_process(session, g, "deep_gather")
+    assert process.status == ProcessStatus.RUNNING
+    events = complete_processes(session, tick_number=2)
+    assert process.effort_factor == Decimal("0.8500")
+    assert get_holding(session, g.id, "BERRIES").quantity == Decimal("3.4")
+    assert credited_outputs(process) == {"BERRIES": "3.4000"}
+    assert events[0]["effort"] == "0.8500"
+
+
+def test_full_effort_completion_event_reads_one(gatherer):
+    session, g, recipe = gatherer
+    create_recipe(
+        session, "walk_gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("2")}, duration_ticks=1,
+        name="Walk gather")
+    process = start_process(session, g, "walk_gather")
+    events = complete_processes(session, tick_number=2)
+    assert process.effort_factor is None
+    assert events[0]["effort"] == "1.0000"
+
+
+def test_the_herd_and_the_ration_price_together(session):
+    """P5 × effort: 1 EGG per HEN held (cap 3) at the fraction of the
+    declared hour paid — the flock and the fatigue both price the
+    basket, and both facts stay on the row."""
+    from econengine.goods import create_good
+    create_good(session, "HEN")
+    create_good(session, "EGG")
+    create_good(session, "LABOR")
+    k = create_entity(session, "Keeper", EntityType.INDIVIDUAL)
+    adjust_holding(session, k, "HEN", Decimal("4"))
+    adjust_holding(session, k, "LABOR", Decimal("0.85"))
+    create_recipe(
+        session, "lay", inputs={"LABOR": Decimal("1")},
+        outputs={"EGG": Decimal("1")}, duration_ticks=1,
+        good_requirements={"HEN": Decimal("1")},
+        scales_with={"HEN": 3}, name="Lay")
+    process = start_process(session, k, "lay")
+    complete_processes(session, tick_number=2)
+    assert process.scale_factor == Decimal("3")
+    assert process.effort_factor == Decimal("0.8500")
+    assert get_holding(session, k.id, "EGG").quantity == Decimal("2.55")
+    assert credited_outputs(process) == {"EGG": "2.5500"}
+
+
+def test_effort_scales_banked_outputs_too(gatherer):
+    """Production-minted currency (the stone age finds shiny stones
+    while gathering) lands at the effort fraction: the money path
+    prices the same factor as the goods path."""
+    session, g, recipe = gatherer
+    from econengine import services
+    services.create_account(session, g, "COIN")
+    create_recipe(
+        session, "mine", inputs={"LABOR": Decimal("1")},
+        outputs={"COIN": Decimal("2")}, duration_ticks=0, name="Mine")
+    adjust_holding(session, g, "LABOR", Decimal("-0.15"))
+    start_process(session, g, "mine")
+    assert g.accounts[0].balance == Decimal("1.7")
+
+
+# --- Productivity (docs/productivity.md §2): conditions as modifiers ---
+
+
+def test_productivity_factor_is_for_condition_goods(session):
+    """A held berry must not tax work: the factor is refused on a
+    non-condition good, accepted on a condition good (either condition
+    property qualifies), and bounded to [0, 1]."""
+    from econengine.goods import create_good
+    with pytest.raises(ValueError, match="condition goods only"):
+        create_good(session, "BERRIES", productivity_factor=Decimal("0.9"))
+    f = create_good(
+        session, "FATIGUE", incapacitates_at=Decimal("7.5"),
+        productivity_factor=Decimal("0.9"))
+    assert f.productivity_factor == Decimal("0.9000")
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        create_good(
+            session, "WARM", modifies_pattern="LABOR",
+            modifies_factor=Decimal("0.5"), productivity_factor=Decimal("1.5"))
+
+
+def test_effect_kind_validation(session):
+    """The axis vocabulary is none/yield/success; 'success' needs a failure
+    branch to shift into (the last, highest position); 'none' normalizes
+    to NULL."""
+    with pytest.raises(ValueError, match="must be none, yield, or success"):
+        create_recipe(session, "X", inputs={}, outputs={"Y": Decimal("1")},
+                      duration_ticks=0, effect_kind="meh")
+    with pytest.raises(ValueError, match="at least two branches"):
+        create_recipe(
+            session, "X2", inputs={}, outputs={}, duration_ticks=0,
+            branches=[{"weight": Decimal("1"), "outputs": {"B": Decimal("1")}}],
+            effect_kind="success")
+    r = create_recipe(
+        session, "X3", inputs={}, outputs={}, duration_ticks=0,
+        branches=[{"weight": Decimal("1"), "outputs": {"B": Decimal("1")}},
+                  {"weight": Decimal("1"), "outputs": {}}],
+        effect_kind="success")
+    assert r.effect_kind == "success"
+    r2 = create_recipe(
+        session, "X4", inputs={}, outputs={"Y": Decimal("1")},
+        duration_ticks=0, effect_kind="none")
+    assert r2.effect_kind is None
+
+
+@pytest.fixture
+def worker(session):
+    """A gatherer and a yield-axis gather (1 LABOR -> 2 BERRIES, duration 0),
+    plus the productivity-taxing conditions the tests may hand them."""
+    from econengine.goods import create_good
+    create_good(session, "LABOR")
+    create_good(session, "BERRIES")
+    create_good(session, "FATIGUE", incapacitates_at=Decimal("7.5"),
+                productivity_factor=Decimal("0.9"))
+    create_good(session, "DISEASE", incapacitates_at=Decimal("2.5"),
+                productivity_factor=Decimal("0.8"))
+    w = create_entity(session, "Gatherer", EntityType.INDIVIDUAL)
+    adjust_holding(session, w, "LABOR", Decimal("1"))
+    recipe = create_recipe(
+        session, "gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("2")}, duration_ticks=0,
+        effect_kind="yield", name="Gather")
+    return session, w, recipe
+
+
+def test_no_productivity_condition_is_the_identity(worker):
+    """No productivity-taxing condition held: P = 1, stamped NULL (reads
+    1), the yield recipe credits its declared outputs verbatim."""
+    session, w, recipe = worker
+    process = start_process(session, w, "gather")
+    assert process.productivity is None
+    assert get_holding(session, w.id, "BERRIES").quantity == Decimal("2")
+    assert credited_outputs(process) == {"BERRIES": "2.0000"}
+
+
+def test_held_conditions_multiply_to_the_tax(worker):
+    """P is the product of the held conditions' factors (symbol-ascending):
+    FATIGUE 0.9 and DISEASE 0.8 held together read 0.72, and the yield axis
+    prices the credited berries at that fraction."""
+    session, w, recipe = worker
+    adjust_holding(session, w, "FATIGUE", Decimal("1"))
+    adjust_holding(session, w, "DISEASE", Decimal("1"))
+    process = start_process(session, w, "gather")
+    assert process.productivity == Decimal("0.7200")
+    assert get_holding(session, w.id, "BERRIES").quantity == Decimal("1.44")
+    assert credited_outputs(process) == {"BERRIES": "1.4400"}
+
+
+def test_yield_axis_prices_the_completion_and_the_event(worker):
+    """Duration-1 shape: the applied P is stamped on the row and rides the
+    completion event next to the effort fact, and the credited berries are
+    the declared output priced by it."""
+    session, w, recipe = worker
+    create_recipe(
+        session, "deep_gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("4")}, duration_ticks=1,
+        effect_kind="yield", name="Deep gather")
+    adjust_holding(session, w, "FATIGUE", Decimal("1"))
+    adjust_holding(session, w, "DISEASE", Decimal("1"))
+    process = start_process(session, w, "deep_gather")
+    events = complete_processes(session, tick_number=2)
+    assert process.productivity == Decimal("0.7200")
+    assert get_holding(session, w.id, "BERRIES").quantity == Decimal("2.88")
+    assert credited_outputs(process) == {"BERRIES": "2.8800"}
+    assert events[0]["effort"] == "1.0000"
+    assert events[0]["productivity"] == "0.7200"
+    assert events[0]["outputs"] == {"BERRIES": "2.8800"}
+
+
+def test_yield_only_shrinks_and_never_mints(worker):
+    """Conservation: the yield axis can only shrink the credited output
+    (P <= 1). Nothing is minted that was not declared; the uncredited
+    fraction is unproduced, not destroyed-and-replaced."""
+    session, w, recipe = worker
+    declared = Decimal("2")
+    adjust_holding(session, w, "FATIGUE", Decimal("1"))
+    adjust_holding(session, w, "DISEASE", Decimal("1"))
+    process = start_process(session, w, "gather")
+    credited = credited_outputs(process)["BERRIES"]
+    assert Decimal(credited) <= declared
+    assert Decimal(credited) == (declared * Decimal("0.72")).quantize(
+        Decimal("0.0001"))
+
+
+def test_all_three_factors_read_one_when_absent(session):
+    """NULL-reads-1 across the board: no herd (no scales_with), full effort
+    (no shortfall), no condition — the credit factor is 1 and the event
+    reads every fact as 1.0000."""
+    from econengine.goods import create_good
+    create_good(session, "LABOR")
+    create_good(session, "BERRIES")
+    w = create_entity(session, "Gatherer", EntityType.INDIVIDUAL)
+    adjust_holding(session, w, "LABOR", Decimal("1"))
+    create_recipe(
+        session, "gather", inputs={"LABOR": Decimal("1")},
+        outputs={"BERRIES": Decimal("2")}, duration_ticks=0, name="Gather")
+    process = start_process(session, w, "gather")
+    assert process.scale_factor is None
+    assert process.effort_factor is None
+    assert process.productivity is None
+    assert get_holding(session, w.id, "BERRIES").quantity == Decimal("2")
+    assert credited_outputs(process) == {"BERRIES": "2.0000"}
+
+
+def test_the_herd_the_ration_and_the_conditions_price_together(session):
+    """All three factors on one row: 1 EGG per HEN held (cap 3), at the
+    fraction of the declared hour paid, at the fraction the held conditions
+    convert — the flock, the fatigue, and the fever all price the basket,
+    and all three facts stay stamped."""
+    from econengine.goods import create_good
+    create_good(session, "HEN")
+    create_good(session, "EGG")
+    create_good(session, "LABOR")
+    create_good(session, "FATIGUE", incapacitates_at=Decimal("7.5"),
+                productivity_factor=Decimal("0.9"))
+    k = create_entity(session, "Keeper", EntityType.INDIVIDUAL)
+    adjust_holding(session, k, "HEN", Decimal("4"))
+    adjust_holding(session, k, "LABOR", Decimal("0.85"))
+    adjust_holding(session, k, "FATIGUE", Decimal("1"))
+    create_recipe(
+        session, "lay", inputs={"LABOR": Decimal("1")},
+        outputs={"EGG": Decimal("1")}, duration_ticks=1,
+        good_requirements={"HEN": Decimal("1")},
+        scales_with={"HEN": 3}, effect_kind="yield", name="Lay")
+    process = start_process(session, k, "lay")
+    complete_processes(session, tick_number=2)
+    # herd 3 (cap) x effort 0.85 x productivity 0.9 = 2.2950 eggs
+    assert process.scale_factor == Decimal("3")
+    assert process.effort_factor == Decimal("0.8500")
+    assert process.productivity == Decimal("0.9000")
+    assert get_holding(session, k.id, "EGG").quantity == Decimal("2.295")
+    assert credited_outputs(process) == {"EGG": "2.2950"}
+
+
+# --- the success axis: the roll and its seed are untouched ---
+
+
+def test_shift_success_weights_preserves_the_total():
+    """The success-axis transform: success branches (all but last) lose
+    mass, the failure branch (last) receives it, the total is preserved,
+    P = 1 is the identity, and P -> 0 sends all success mass to failure."""
+    from econengine.production import _shift_success_weights
+    declared = [Decimal("0.5"), Decimal("0.3"), Decimal("0.2")]
+    total = sum(declared)
+    assert _shift_success_weights(declared, Decimal("1")) == declared
+    for P in (Decimal("0.9"), Decimal("0.8"), Decimal("0.5"), Decimal("0.1")):
+        shifted = _shift_success_weights(declared, P)
+        assert sum(shifted) == total
+        assert shifted[0] == Decimal("0.5") * P
+        assert shifted[1] == Decimal("0.3") * P
+        assert shifted[2] == Decimal("0.2") + (Decimal("1") - P) * Decimal("0.8")
+    near_zero = _shift_success_weights(declared, Decimal("0.0001"))
+    assert sum(near_zero) == total
+    assert near_zero[2] > Decimal("0.99")
+    # a single-branch table has no failure branch to shift into: identity
+    assert _shift_success_weights([Decimal("1")], Decimal("0.5")) == [Decimal("1")]
+
+
+def test_success_axis_shifts_the_roll_toward_the_failure_branch(session):
+    """The success axis end to end: the roll and its seed are untouched;
+    only the branch weights move. P = 1 reproduces today's branch exactly;
+    a held condition shifts the (different) roll toward the last (failure)
+    branch on the shifted table, and the total is preserved so the roll
+    still maps onto [0, total)."""
+    from econengine.goods import create_good
+    from econengine.production import _shift_success_weights
+    create_good(session, "LABOR")
+    create_good(session, "MEAT")
+    create_good(session, "FATIGUE", incapacitates_at=Decimal("7.5"),
+                productivity_factor=Decimal("0.5"))
+    recipe = create_recipe(
+        session, "fish", inputs={"LABOR": Decimal("1")}, outputs={},
+        duration_ticks=0, effect_kind="success", name="Fish",
+        branches=[
+            {"weight": Decimal("0.45"), "outputs": {"MEAT": Decimal("2")},
+             "label": "small"},
+            {"weight": Decimal("0.25"), "outputs": {"MEAT": Decimal("4")},
+             "label": "big"},
+            {"weight": Decimal("0.30"), "outputs": {}, "label": "nothing"},
+        ])
+    declared = [b.weight for b in recipe.branches]
+
+    # P = 1 (no condition): the same table the roll has always used
+    w1 = create_entity(session, "Fisher", EntityType.INDIVIDUAL)
+    adjust_holding(session, w1, "LABOR", Decimal("1"))
+    p1 = start_process(session, w1, "fish")
+    roll1 = rng.outcome_roll(rng.GENESIS_HASH, p1.id)
+    assert p1.productivity is None
+    assert p1.outcome_branch == rng.weighted_index(roll1, declared)
+
+    # P = 0.5 (FATIGUE held): the roll is recomputed fresh for this process,
+    # and the engine picks the branch the SHIFTED table says — the failure
+    # branch is the last position
+    w2 = create_entity(session, "Fisher2", EntityType.INDIVIDUAL)
+    adjust_holding(session, w2, "LABOR", Decimal("1"))
+    adjust_holding(session, w2, "FATIGUE", Decimal("1"))
+    p2 = start_process(session, w2, "fish")
+    roll2 = rng.outcome_roll(rng.GENESIS_HASH, p2.id)
+    shifted = _shift_success_weights(declared, Decimal("0.5"))
+    assert p2.productivity == Decimal("0.5000")
+    assert p2.outcome_branch == rng.weighted_index(roll2, shifted)
+    # conservation: the failure branch credits only what it declares
+    # (here, nothing) — a shifted miss is a miss, not a silent shrink
+    if p2.outcome_branch == 2:
+        held = get_holding(session, w2.id, "MEAT")
+        assert held is None or held.quantity == Decimal("0")
+
+
+def test_success_axis_failure_branch_credits_its_own_outputs(session):
+    """A shifted failure branch is still an ordinary branch: it credits
+    exactly what it declares (here, a partial catch), scaled like any
+    other credited output — the failure is a real outcome, not an error."""
+    from econengine.goods import create_good
+    create_good(session, "LABOR")
+    create_good(session, "MEAT")
+    create_good(session, "FATIGUE", incapacitates_at=Decimal("7.5"),
+                productivity_factor=Decimal("0.2"))
+    # a success branch, a partial branch, and a partial-loss failure branch
+    # last (the catch spoiled in the fever heat — not a total loss)
+    recipe = create_recipe(
+        session, "hunt", inputs={"LABOR": Decimal("1")}, outputs={},
+        duration_ticks=0, effect_kind="success", name="Hunt",
+        branches=[
+            {"weight": Decimal("0.5"), "outputs": {"MEAT": Decimal("4")},
+             "label": "big"},
+            {"weight": Decimal("0.3"), "outputs": {"MEAT": Decimal("2")},
+             "label": "a scrap"},
+            {"weight": Decimal("0.2"), "outputs": {"MEAT": Decimal("1")},
+             "label": "spoiled"},
+        ])
+    w = create_entity(session, "Hunter", EntityType.INDIVIDUAL)
+    adjust_holding(session, w, "LABOR", Decimal("1"))
+    adjust_holding(session, w, "FATIGUE", Decimal("1"))
+    process = start_process(session, w, "hunt")
+    # whichever branch the shifted roll lands on, it credits exactly what
+    # that branch declares — a failure branch is an ordinary branch, and
+    # the success axis never multiplies its credited outputs (only the
+    # weights move); the herd and effort read 1 here
+    branch = recipe.branches[process.outcome_branch]
+    for output in branch.outputs:
+        held = get_holding(session, w.id, output.symbol)
+        assert held is not None and held.quantity == output.quantity

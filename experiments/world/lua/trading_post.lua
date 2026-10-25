@@ -116,7 +116,14 @@ local STOCK = {          -- the larder's shape: bids stop at the max
                                 -- nowhere to buy more from
 }
 local RETAIL = { "JERKY", "BERRIES", "APPLES", "EGGS", "CHICKEN",
-                 "WATERSKIN", "SALT", "HONEY", "TONIC", "BEEHIVE" }
+                 "WATERSKIN", "SALT", "HONEY", "TONIC", "BEEHIVE",
+                 -- the cord shelf (ladder bundle): the raw the floor rolls
+                 -- one in twenty at the thicket, now on the counter at the
+                 -- standing ask. Appended LAST so it never displaces the
+                 -- six-sell say cap (the sell ORDER stands regardless);
+                 -- the post both sells and bids on YARN (a market maker on
+                 -- the bag's raw), restocking from the houses' surplus.
+                 "YARN" }
 local FOREST = { "MEAT", "WOOD", "YARN", "FLINT", "SALT", "BERRIES",
                  "APPLES", "EGGS", "PELT", "HONEY" }
 -- Genesis one-offs with no larder future (they rot, or they are

@@ -10,3 +10,5 @@ econ.db
 experiments/inequality/dashboard.html
 experiments/inequality/comparison.html
 experiments/inequality/class_tax.html
+web/node_modules/
+web/dist/

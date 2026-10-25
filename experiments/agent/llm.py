@@ -7,6 +7,13 @@ behaviour source. Everything else — transport, auth, provider quirks —
 lives behind this seam, so the loop (`loop.py`) and its tests never
 import a vendor SDK.
 
+Every call is one-shot — a system turn and a user turn in, content out —
+and no provider's reasoning channel is ever sent back: thinking is read
+(forensics, length-cap detection, the repetition breaker) and discarded,
+so no deliberation crosses turns. What a round knows of the last is the
+behaviour source, the observations, and the platform's findings — never
+its thinking.
+
 `ScriptedModel` is the honest offline implementation: a FIFO of canned
 responses (or a JSONL file via `ECON_AGENT_SCRIPTED_FILE`), recording
 every prompt it was shown so tests can assert what the model *saw*.
@@ -36,6 +43,20 @@ class ScriptedModelEmpty(RuntimeError):
     """The canned queue ran dry — the loop asked for a response nobody
     scripted. In tests this is a missing fixture; in an offline run it
     means the scenario needed more cycles than were scripted."""
+
+
+class EmptyFinalContent(RuntimeError):
+    """The provider finished with an empty final channel: the model ended
+    in its own thinking channel (all reasoning, no answer) or starved the
+    completion budget while thinking. Typed, not a plain RuntimeError,
+    so the loop can tell "the model said nothing" apart from "the
+    provider was unreachable" — the first is re-prompted cheaply (a
+    no-thinking nudge must EMIT), the second re-thinks fresh. Carries
+    the finish_reason for the journal."""
+
+    def __init__(self, message: str, finish_reason: str | None = None):
+        super().__init__(message)
+        self.finish_reason = finish_reason
 
 
 class Model(Protocol):
@@ -475,8 +496,8 @@ def _final_content(data: dict) -> str:
         finish = choice.get("finish_reason") or "?"
         why = ("; reasoning consumed the token budget — raise max_tokens"
                if message.get("reasoning_content") else "")
-        raise RuntimeError(
-            f"empty final content (finish_reason={finish}{why})")
+        raise EmptyFinalContent(
+            f"empty final content (finish_reason={finish}{why})", finish)
     return str(content)
 
 
@@ -572,12 +593,18 @@ _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     "deepseek-reasoner": 32768,
     "deepseek-v4": 32768,
     # The local llama.cpp qwen seat (run 42): Qwen3.8-27B is a thinking
-    # model, and unlike the hosted endpoints there is a hard ctx wall —
-    # the server runs -c 32768. 24000 for thinking+script leaves ~8k
-    # for a ~2-3k-token round prompt plus headroom, so a verbose think
-    # dies at the budget (a readable retry) instead of the ctx (a
-    # server-side truncation).
-    "qwen3.8": 24000,
+    # model, ~32 tok/s on this box. Run-54's smoke sized it at 65536 and
+    # round 2's hard rewrite consumed the WHOLE 65536 on reasoning and
+    # died mid-draft (finish_reason=length, empty content) — the cap was
+    # under the think, not over it. 110000 sits over a full hard-rewrite
+    # think and still under the server's 128k ctx wall (prompt ~5-10k +
+    # 110k completion < 128k), so a verbose think COMPLETES; if it
+    # outgrows the cap it dies at the budget (a readable retry), never at
+    # the ctx (a server-side truncation). Cap, not target — unspent
+    # headroom is free. Pacing pairs with the launch script's slow round
+    # window (world-tick-seconds ~120): the ~40-50-min think must fit a
+    # round, so the world ticks slower than a fast seat would want.
+    "qwen3.8": 110000,
 }
 
 
@@ -637,8 +664,11 @@ def llama_model(model: str,
     another port. ECON_LLAMA_THINKING=0 disables Qwen's thinking mode
     via chat_template_kwargs (unset leaves the server default).
     max_tokens comes from the family default — see
-    _REASONING_TOKEN_DEFAULTS for why qwen3.8 is budgeted, and note
-    the ctx wall is real: the budget must leave room for the prompt.
+    _REASONING_TOKEN_DEFAULTS for why qwen3.8 is budgeted; the budget is
+    a cap sized to fit a full hard-rewrite think inside the server's 128k
+    ctx wall, so a verbose think COMPLETES rather than dying at the
+    budget — and if it does outgrow the cap it dies at the budget (a
+    readable retry), never at the ctx (a server-side truncation).
     """
     e = dict(env if env is not None else os.environ)
     extra: dict | None = None
@@ -656,6 +686,12 @@ def llama_model(model: str,
         extra_body=extra,
         on_trace=on_trace)
     m.name = f"llama:{model}"
+    # The empty-finish nudge (run 54 r4): when a think ends with an empty
+    # final channel, the loop re-asks the same prompt with thinking
+    # structurally off — the Qwen3.8 chat template honors enable_thinking
+    # (verified live, both positions), so the nudge call cannot end in
+    # the thinking channel; it reads the prompt and emits.
+    m._no_thinking_body = {"enable_thinking": False}
     return m
 
 
@@ -899,6 +935,14 @@ class NimModel(OpenAIModel):
         # Wall-clock guard against diverse trickles the breaker cannot
         # see (see _DrainCapExceeded): 0 disarms it.
         self._drain_cap_s = _drain_cap_s(drain_cap_s)
+        # The no-thinking body for the empty-finish nudge (run 54 r4: the
+        # qwen seat ended in its thinking channel with an empty final
+        # channel, twice — the thinking is gone by the time the empty
+        # reply lands, so the recovery is a call that CANNOT think). Only
+        # the local llama advertises one (its chat template honors
+        # enable_thinking, verified live); hosted seats leave it unset
+        # and recover by re-thinking fresh.
+        self._no_thinking_body: dict | None = None
 
     @property
     def on_trace(self) -> Callable[[dict], None] | None:
@@ -908,6 +952,12 @@ class NimModel(OpenAIModel):
     def on_trace(self, cb: Callable[[dict], None] | None) -> None:
         self._on_trace = cb
 
+    @property
+    def no_thinking(self) -> bool:
+        """Whether this seat can take a no-thinking call (the empty-finish
+        nudge): the local llama advertises True, hosted seats False."""
+        return self._no_thinking_body is not None
+
     def _emit_trace(self, **fields) -> None:
         if self._on_trace is None:
             return
@@ -916,7 +966,7 @@ class NimModel(OpenAIModel):
         except Exception:
             pass                 # forensics must never be the failure
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, thinking: bool = True) -> str:
         import httpx
 
         last_error = None
@@ -962,6 +1012,9 @@ class NimModel(OpenAIModel):
                         "top_p": 0.95,
                         "stream": True,
                         **self._extra_body,
+                        **(self._no_thinking_body
+                           if not thinking and self._no_thinking_body
+                           else {}),
                     },
                 ) as r:
                     if r.status_code == 429 or r.status_code >= 500:
@@ -1052,7 +1105,7 @@ class NimModel(OpenAIModel):
                         reasoning_deltas=n_reasoning,
                         max_tokens=self._max_tokens,
                         usage=usage, reasoning_text="".join(reason_bits))
-                    raise RuntimeError(error)
+                    raise EmptyFinalContent(error, finish)
                 self._emit_trace(
                     model=self.name, attempt=attempt + 1, ok=True,
                     elapsed_s=round(elapsed, 1),
@@ -1114,6 +1167,45 @@ class NimModel(OpenAIModel):
                     max_tokens=self._max_tokens)
         raise RuntimeError(f"NIM {self._model} failed after 3 attempts: "
                            f"{last_error}")
+
+    def probe(self, timeout: float = 60.0) -> tuple[bool, str, int | None]:
+        """One small streamed call: the startup gate's (nim_run's) only
+        traffic. It classifies what a retry can and cannot fix — a 4xx
+        (other than a rate-limit 429) is a configuration fact (the slug
+        is gone or misspelled), a 5xx/429 or a timeout is a busy
+        endpoint that backoff may outlast, and ANY 200 is a live
+        endpoint: a thinking model handed 5 tokens spends them thinking
+        and emits nothing, and that is an answer, not a failure — the
+        empty-emit case is the seat's no-thinking nudge's job, not the
+        gate's. A no-thinking seat (the llama one) probes with thinking
+        structurally off — the exact path the nudge uses — so the probe
+        verifies emission, not just the endpoint. Returns (ok, detail,
+        status); status is the HTTP status, None when no response
+        arrived."""
+        import httpx
+        body = {
+            "model": self._model,
+            "messages": [{"role": "user",
+                          "content": "Reply with exactly: OK"}],
+            "max_tokens": 5,
+            "stream": True,
+        }
+        if self._no_thinking_body:
+            body.update(self._no_thinking_body)
+        try:
+            with httpx.stream(
+                    "POST",
+                    f"{self._base_url}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    timeout=timeout,
+                    json=body) as r:
+                if r.status_code != 200:
+                    return (False,
+                            f"HTTP {r.status_code}: {r.read()[:120]!r}",
+                            r.status_code)
+                return True, "ok", 200
+        except Exception as exc:  # noqa: BLE001 — the gate wants a verdict
+            return False, f"{type(exc).__name__}: {exc}", None
 
 
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
@@ -1222,7 +1314,7 @@ class DeepSeekModel(NimModel):
         self._window = window
         self._wait_minutes = wait_minutes
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, thinking: bool = True) -> str:
         mode = (self._window if self._window is not None
                 else os.environ.get("ECON_DEEPSEEK_WINDOW", "offpeak"))
         if mode != "any" and not deepseek_offpeak():
@@ -1238,7 +1330,7 @@ class DeepSeekModel(NimModel):
                     f"{minutes / 60:.1f}h — no credit spent; the house "
                     f"keeps its behaviour (ECON_DEEPSEEK_WINDOW=any "
                     f"ignores billing windows)")
-        return super().complete(system, user)
+        return super().complete(system, user, thinking=thinking)
 
 
 def model_from_env(env: dict[str, str] | None = None) -> Model:

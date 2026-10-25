@@ -1,0 +1,1 @@
+mkdir -p /tmp/stone-run13 && .venv/bin/python -m experiments.agent.nim_run --models meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct meta/llama-3.3-70b-instruct --names "House Ivar" "House Lagertha" "House Harald" --scenario stone_age --rounds 40 --ticks-per-round 20 --edit-mode --diary --port 8917 --serve 8113 --out /tmp/stone-run13

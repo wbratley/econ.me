@@ -15,8 +15,10 @@ The governing architecture principles live in `docs/design.md` (§2
 mechanism/data/policy, §4.3 the world-layer boundary, §4.5 what the
 engine demands of itself). The consumer of this layer is first the
 batched agent game (`docs/game.md`) and the experiment campaign
-(`experiments/`); the Luanti/Godot navigable world stays platform-era and
-is deliberately last (S6).
+(`experiments/`); the real-time navigable world stays platform-era and is
+deliberately last (S6). Its durable scope is `docs/world-layer.md`: a
+custom 2D tile world first, with Luanti/Godot as later geometry/client
+options rather than assumptions.
 
 ## 1. The framing
 
@@ -179,7 +181,7 @@ location becomes a real state the pack chose to make meaningful.
 | **S3** | Topology + travel (edges, route, travel processes) | `travel` intent + routing + process marks | new behavior, opt-in |
 | **S4** | Located danger + the stone-age map | threat/spawn/combat scoping + pack content | wolves with home ranges |
 | **S5** | Local markets made real: carrying (**S5a shipped**) + fulfillment presence (S5b) | departure gate + arrival spill (shipped); order checks (next) | couriers parked |
-| **S6** | The Luanti boundary | none (platform) — node↔voxel mapping, fork copies | gated on platform era |
+| **S6** | The world-layer boundary — real-time 2D first (`world-layer.md`) | none for W1 (platform) — geometry mapping, chunks, spectators; fork copies later | gated on platform era |
 
 Each step is PR-sized, independently shippable, and ordered so the
 next one only consumes shipped surface. The full suite (1189 tests
@@ -308,14 +310,23 @@ ships. Concretely:
   another entity), vehicle entities with their own damage. None
   block the payoff above.
 
-### S6 — The Luanti boundary (platform era, gated)
+### S6 — The world-layer boundary (platform era, gated)
 
-Node ↔ voxel-chunk mapping through `extent_ref`; fork petitions copy
-regions as engine place/edge/parcel rows + world-layer chunks
-(design.md §4.2/§4.3 — chunked terrain is why); physics-level votes
-mirror the engine's parameter surface. Decision Luanti vs Godot stays
-what design.md says: prototype the farming loop first. Nothing in
-S1–S5 assumes it; the batched game never needs it.
+The durable roadmap is **`docs/world-layer.md`**. The first navigable
+world is a custom, server-authoritative real-time 2D tile world with a
+web reference client, generated chunks, animated human and AI actors, pure
+spectators, and the first possession/local-walk channel (W1 core plus the
+first W2 walk/talk slice shipped). `extent_ref` joins engine places and
+parcels to a versioned world-layer geometry; local coordinates and collision
+stay outside the engine, while inter-place arrival remains owned by the S3
+travel Process. The build order is W1 living spectator → W2 walk and talk →
+W3 economic interaction → W4 scale/other geometries.
+
+Luanti and Godot remain later geometry/client options, not prerequisites.
+Fork petitions eventually copy regions as engine place/edge/parcel rows +
+world-layer chunks (design.md §4.2/§4.3 — chunked terrain is why);
+physics-level votes mirror the engine's parameter surface. Nothing in
+S1–S5 assumes a world layer; the batched game never needs it.
 
 ## 7. What stays explicitly unbuilt
 

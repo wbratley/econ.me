@@ -55,9 +55,30 @@ start), or builds a facility (builds_facility, erected on the bound parcel
 at completion) must be started bound to a parcel the entity controls —
 checked at start like the tech gates; a parcel with bound running processes
 cannot change hands, so the binding stays valid through completion.
+
+EFFORT (docs/productivity.md): the LABOR input is energy, not material.
+A short ration is not a refusal — the work starts at the fraction of the
+declared effort that is held (never overdrawn), the fraction is stamped on
+the process (effort_factor, NULL = full effort) and applied to credited
+outputs at completion; only exhaustion refuses (below EFFORT_FLOOR of the
+declared input). Every other input stays hard: a recipe transforms exactly
+what it declares.
+
+PRODUCTIVITY (docs/productivity.md §2): the conditions a worker holds while
+working supply a factor P (the product of the held condition goods'
+productivity_factor, read at completion, 1 when none apply). The recipe
+declares the AXIS (recipes.effect_kind): "yield" multiplies credited
+outputs by P (the work converts less); "success" shifts completion-branch
+weight from the success branches (all but last) toward the last (failure)
+branch (the work misses more) — the roll and its seed are untouched, only
+the weight vector changes, and the total is preserved; NULL/"none" is
+immune (comfort acts, travel). P ≤ 1, so it only ever shrinks: uncredited
+output is unproduced, and the shifted failure branch credits only what it
+declares. The applied P is stamped on the process (productivity, NULL = no
+tax) and reported on the completion event next to the effort fact.
 """
 
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -71,6 +92,13 @@ from .models import (
 )
 
 _QUANTUM = Decimal("0.0001")
+
+# Effort floor (docs/productivity.md §1): the minimum fraction of a
+# recipe's declared LABOR input at which a start is still allowed — below
+# it the entity is exhausted and the work cannot begin. A quarter-hour of
+# the declared effort is the honest "too tired to start" line; with zero
+# hours nothing starts at all.
+EFFORT_FLOOR = Decimal("0.25")
 
 
 def next_tick_number(session: Session) -> int:
@@ -108,6 +136,7 @@ def create_recipe(
     scales_with: dict | None = None,
     currency_cost: Decimal | None = None,
     carry_capacity: Decimal | None = None,
+    effect_kind: str | None = None,
 ) -> Recipe:
     """Branches, if given, are the outcome table: each entry is
     {"weight": Decimal, "outputs": {symbol: qty}, "label": str}, in table
@@ -134,6 +163,22 @@ def create_recipe(
             # gate reads NULL as "the CARRY stat decides" — a negative
             # limit is not a world, it is a typo
             raise ValueError("carry_capacity must be positive when set")
+    # Productivity axis (docs/productivity.md §2): the recipe declares HOW
+    # the worker's held conditions P price its completion. Vocabulary is
+    # none/yield/success; "success" needs a failure branch to shift into.
+    if effect_kind is not None:
+        effect_kind = str(effect_kind).lower()
+        if effect_kind not in ("none", "yield", "success"):
+            raise ValueError(
+                f"effect_kind must be none, yield, or success, "
+                f"not {effect_kind!r}")
+        if effect_kind == "success" and len(branches or []) < 2:
+            raise ValueError(
+                "effect_kind 'success' needs at least two branches -- the "
+                "last (highest position) is the failure branch the shifted "
+                "weight flows to; one branch leaves it nowhere to go")
+        if effect_kind == "none":
+            effect_kind = None
     if branches and outputs:
         raise ValueError("recipe declares either outputs or branches, not both")
     # The reserved TRAVEL_ namespace (docs/spatial.md S3): a travel
@@ -282,6 +327,7 @@ def create_recipe(
         scales_with=scales_with,
         currency_cost=currency_cost,
         carry_capacity=carry_capacity,
+        effect_kind=effect_kind,
         inputs=rows(RecipeInput, inputs),
         outputs=rows(RecipeOutput, outputs),
         branches=branch_rows,
@@ -589,24 +635,50 @@ def start_process(
             session, account, recipe.currency_cost,
             f"cost {recipe.code}")
 
+    # Effort (docs/productivity.md §1): the LABOR input is energy, not
+    # material — paid at the fraction held, stamped on the process,
+    # applied to credited outputs at completion. Only exhaustion refuses.
+    effort_factor = Decimal("1")
     for item in recipe.inputs:
         # WOOD pull-first (docs/camp-storage.md): the hearth's shared
         # WOODPILE is the camp's first fuel, drawn BEFORE the entity's own
-        # holdings -- a house never starves its fire for lack of a carrying
+        # holdings — a house never starves its fire for lack of a carrying
         # capacity it could have dropped. Non-wood inputs (and any place
         # with no woodpile, where the pool reads 0) are unchanged.
+        symbol = item.symbol
         woodpile = Decimal("0")
-        if item.symbol == "WOOD":
+        if symbol == "WOOD":
             woodpile = parcels.woodpile_pool(session, entity, "WOOD")
-        available = (_available_quantity(session, entity, item.symbol)
-                     + woodpile)
+        available = _available_quantity(session, entity, symbol) + woodpile
+        if symbol == "LABOR":
+            # The engine's effort good (design.md: the labor market
+            # auto-issues LABOR as a top-up) — same hard-coded convention
+            # as the "COIN" leg above.
+            min_effort = (item.quantity * EFFORT_FLOOR).quantize(_QUANTUM)
+            if available < min_effort:
+                held = get_holding(session, entity.id, symbol)
+                held_qty = held.quantity if held else Decimal("0")
+                raise InsufficientHoldingsError(
+                    f"entity {entity.id} has {available} unreserved "
+                    f"LABOR of {held_qty} held for recipe {recipe.code} "
+                    f"input {item.quantity} -- exhausted (a start needs "
+                    f"at least {min_effort} LABOR)"
+                )
+            drawn = min(available, item.quantity)
+            effort_factor = min(
+                Decimal("1"),
+                (drawn / item.quantity).quantize(
+                    _QUANTUM, rounding=ROUND_HALF_UP),
+            )
+            adjust_holding(session, entity, symbol, -drawn)
+            continue
         if available < item.quantity:
             # Name the balance the check actually drew on, and -- when
             # reservations hold part of it -- WHO holds them (run 15:
             # 144 "insufficient unreserved LABOR" refusals against a
             # holdings read that looked fine, with no way to see the
             # spendable side from the refusal).
-            held = get_holding(session, entity.id, item.symbol)
+            held = get_holding(session, entity.id, symbol)
             held_qty = held.quantity if held else Decimal("0")
             reservers = sorted({
                 code for code in session.execute(
@@ -618,7 +690,7 @@ def start_process(
                     .where(
                         Process.entity_id == entity.id,
                         Process.status == ProcessStatus.RUNNING,
-                        RecipeGoodRequirement.symbol == item.symbol,
+                        RecipeGoodRequirement.symbol == symbol,
                     )
                 ).scalars()
             })
@@ -632,16 +704,16 @@ def start_process(
             )
             raise InsufficientHoldingsError(
                 f"entity {entity.id} has {available} unreserved "
-                f"{item.symbol} of {held_qty} held{pile}{note} "
+                f"{symbol} of {held_qty} held{pile}{note} "
                 f"for recipe {recipe.code} input {item.quantity} "
-                f"(std.unreserved('{item.symbol}') is the spendable balance)"
+                f"(std.unreserved('{symbol}') is the spendable balance)"
             )
         from_pool = min(woodpile, item.quantity)
         from_holdings = item.quantity - from_pool
         if from_pool > 0:
             parcels.draw_woodpile(session, entity, "WOOD", from_pool)
         if from_holdings > 0:
-            adjust_holding(session, entity, item.symbol, -from_holdings)
+            adjust_holding(session, entity, symbol, -from_holdings)
     for item in recipe.deposit_inputs:
         parcels.draw_deposit(session, parcel, item.symbol, item.quantity)
 
@@ -652,6 +724,7 @@ def start_process(
         parcel=parcel,
         started_tick=tick,
         completes_tick=tick + recipe.duration_ticks,
+        effort_factor=None if effort_factor == 1 else effort_factor,
     )
     session.add(process)
     session.flush()  # assigns process.id, which seeds a duration-0 outcome roll
@@ -812,15 +885,24 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
 def credited_outputs(process: Process) -> dict:
     """The outputs a completion actually credited, symbol → str(quantity)
     — the branch's when stochastic, else the plain set; each output scaled
-    by the factor the herd priced it at (processes.scale_factor, P5). The
-    shared read for process_completed events and travel arrivals
-    (``carried``)."""
+    by the factor the herd priced it at (processes.scale_factor, P5), the
+    effort paid at start (processes.effort_factor, docs/productivity.md
+    §1), and — on a yield-axis recipe — the conditions held while working
+    (processes.productivity, docs/productivity.md §2). The shared read for
+    process_completed events and travel arrivals (``carried``)."""
     recipe = process.recipe
     if recipe.branches:
         outputs = recipe.branches[process.outcome_branch].outputs
     else:
         outputs = recipe.outputs
     factor = process.scale_factor if process.scale_factor is not None else Decimal("1")
+    effort = (process.effort_factor
+              if process.effort_factor is not None else Decimal("1"))
+    factor = factor * effort
+    if recipe.effect_kind == "yield":
+        productivity = (process.productivity
+                        if process.productivity is not None else Decimal("1"))
+        factor = factor * productivity
     return {o.symbol: str((o.quantity * factor).quantize(_QUANTUM))
             for o in outputs}
 
@@ -831,12 +913,18 @@ def _completed_event(process: Process, granted: list) -> dict:
         branch = recipe.branches[process.outcome_branch]
     else:
         branch = None
+    effort = (process.effort_factor
+              if process.effort_factor is not None else Decimal("1"))
+    productivity = (process.productivity
+                    if process.productivity is not None else Decimal("1"))
     event = {
         "type": "process_completed",
         "entity_id": process.entity_id,
         "process_id": process.id,
         "recipe": recipe.code,
         "outputs": credited_outputs(process),
+        "effort": str(effort.quantize(_QUANTUM)),
+        "productivity": str(productivity.quantize(_QUANTUM)),
     }
     if process.parcel_id is not None:
         event["parcel_id"] = process.parcel_id
@@ -895,6 +983,23 @@ def _scale_factor(session: Session, process: Process) -> Decimal:
     return max(Decimal("0"), min(Decimal(cap), herd))
 
 
+def _shift_success_weights(weights: list[Decimal], P: Decimal) -> list[Decimal]:
+    """The success axis of docs/productivity.md §2: shift branch mass from
+    the success branches (all but last) toward the designated failure branch
+    (the last, highest position). w_i <- w_i * P for the success branches;
+    the failure branch receives (1 - P) * sum(success). The total is
+    preserved, so the roll maps onto the same span of [0, total) — only the
+    branch boundaries move. P = 1 is the identity; a P near 0 sends the
+    whole success mass to the failure branch."""
+    n = len(weights)
+    if n < 2 or P == Decimal("1"):
+        return list(weights)
+    success_total = sum(weights[:n - 1])
+    shifted = [w * P for w in weights[:n - 1]]
+    shifted.append(weights[n - 1] + (Decimal("1") - P) * success_total)
+    return shifted
+
+
 def _complete(session: Session, process: Process, seed: str) -> list:
     """Credit outputs — rolling the outcome branch first if the recipe is
     stochastic — erect the built facility, credit facility fuel (stoking,
@@ -902,18 +1007,34 @@ def _complete(session: Session, process: Process, seed: str) -> list:
     created (technology-code order, already-held ones skipped)."""
     recipe = process.recipe
     outputs = recipe.outputs
+    # Productivity (docs/productivity.md §2): the conditions held while
+    # working supply P; read at completion (a fact of the completion),
+    # stamped on the row, and applied along the recipe's axis — yield
+    # multiplies the credit factor, success shifts the branch weights.
+    P = conditions.held_productivity(session, process.entity_id)
+    if recipe.effect_kind in ("yield", "success") and P != Decimal("1"):
+        process.productivity = P
     if recipe.branches:
         process.outcome_roll = rng.outcome_roll(seed, process.id)
-        process.outcome_branch = rng.weighted_index(
-            process.outcome_roll, [b.weight for b in recipe.branches]
-        )
+        weights = [b.weight for b in recipe.branches]
+        if recipe.effect_kind == "success":
+            weights = _shift_success_weights(weights, P)
+        process.outcome_branch = rng.weighted_index(process.outcome_roll, weights)
         outputs = recipe.branches[process.outcome_branch].outputs
     # the herd prices the harvest: scaled recipes credit each output once
-    # per unit held (floored at the cap) -- a fact of the completion, so
-    # it is stamped on the row the same tick it is applied
-    factor = _scale_factor(session, process)
-    if factor != 1:
-        process.scale_factor = factor
+    # per unit held (floored at the cap); the effort paid at start prices
+    # the work (docs/productivity.md §1); the conditions held while
+    # working price the conversion (docs/productivity.md §2, yield axis).
+    # All three are facts of the completion, stamped on the row the same
+    # tick they are applied, and credited as their product.
+    herd_factor = _scale_factor(session, process)
+    effort = (process.effort_factor
+              if process.effort_factor is not None else Decimal("1"))
+    if herd_factor != 1:
+        process.scale_factor = herd_factor
+    factor = (herd_factor * effort).quantize(_QUANTUM)
+    if recipe.effect_kind == "yield":
+        factor = (factor * P).quantize(_QUANTUM)
     for item in outputs:
         _credit_output(session, process.entity, item, f"mint {recipe.code}",
                        factor=factor)

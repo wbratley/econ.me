@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from econ.api import events
-from econ.api.routers import admin, auth, catalog, entities, epochs, goods, governance, intents, join, leaderboard, markets, mcp, needs, parcels, production, proposals, rounds, scripts, tech, ticks, transactions
+from econ.api.routers import admin, auth, catalog, entities, epochs, goods, governance, intents, join, leaderboard, markets, mcp, needs, parcels, production, proposals, rounds, scripts, tech, ticks, transactions, world
 from econ.api.routers.activity import router as activity_router
 
 log = logging.getLogger("econ.api.scheduler")
@@ -173,6 +173,7 @@ app.include_router(tech.router)
 app.include_router(intents.router)
 app.include_router(catalog.router)
 app.include_router(activity_router)
+app.include_router(world.router)
 
 
 @app.get("/healthz", tags=["health"])

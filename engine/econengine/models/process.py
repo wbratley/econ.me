@@ -48,6 +48,22 @@ class Process(Base):
     scale_factor: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
     )
+    # Effort (docs/productivity.md §1): the fraction of the recipe's
+    # declared LABOR input actually paid at start (NULL = full effort,
+    # reads as 1). A short ration is not a refusal — it is a weaker
+    # start; the factor is applied to credited outputs at completion.
+    effort_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
+    # Productivity (docs/productivity.md §2): the P actually applied at
+    # completion — the product of the productivity_factor of every
+    # condition good held (qty > 0) — stamped next to scale_factor /
+    # effort_factor. NULL = no tax (reads 1): an immune recipe, or a
+    # worker with no productivity-taxing condition. Audit story on one
+    # row: "why 1.4 berries?" → herd × effort × P.
+    productivity: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
     # Travel (docs/spatial.md S3): a hop in a TravelRoute. Ordinary
     # start_process machinery (inputs, requirements, gates) created it,
     # but the road sets its duration (completes_tick = start + edge

@@ -43,7 +43,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from .llm import (ScriptedModelEmpty, _lua_compiles,
+from .llm import (EmptyFinalContent, ScriptedModelEmpty, _lua_compiles,
                   extract_script_detailed, strip_fences, strip_think)
 
 
@@ -51,6 +51,13 @@ def _slug(name: str) -> str:
     """Seat name -> filename shard (mirrors nim_run.slug without the
     import cycle: nim_run imports this module)."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+_EMPTY_FINAL_NUDGE = (
+    "Your previous reply came back empty: it ended inside the thinking "
+    "channel and emitted no script. This reply has no thinking budget "
+    "at all — emit the complete behaviour script now, starting "
+    "immediately with the first line of the Lua source.")
 
 # ---------------------------------------------------------------------------
 # MCP client (transport-free: tests inject a TestClient adapter, run.py an
@@ -701,13 +708,23 @@ class AgentLoop:
                 fh.write(json.dumps(line) + "\n")
         except OSError:
             return
+        fin = trace.get("finish_reason")
+        # The forensics a post-mortem actually reads: length-exhausted
+        # burns, repetition breaks, and the run 54 r4 case — a think
+        # that ended in the thinking channel with an EMPTY final
+        # channel (finish stop, content_chars 0, all reasoning).
         if (trace.get("ok") is False
                 and trace.get("reasoning_text")
-                and (trace.get("finish_reason") == "length"
-                     or trace.get("breaker"))):
+                and (fin == "length" or trace.get("breaker")
+                     or (fin == "stop"
+                         and trace.get("content_chars") == 0))):
             rnd = self._trace_ctx.get("round") or "na"
-            kind = ("repetition-break" if trace.get("breaker")
-                    else "reasoning-burn")
+            if trace.get("breaker"):
+                kind = "repetition-break"
+            elif fin == "stop" and trace.get("content_chars") == 0:
+                kind = "empty-finish"
+            else:
+                kind = "reasoning-burn"
             burn = (Path(self.trace_dir) /
                     f"{kind}-{_slug(self.seat or 'seat')}."
                     f"round-{rnd}.{self._trace_ctx.get('kind', 'author')}.txt")
@@ -723,6 +740,53 @@ class AgentLoop:
                 burn.write_text(header + trace["reasoning_text"])
             except OSError:
                 pass
+
+    def _complete_author(self, sys_text: str, usr_text: str
+                         ) -> tuple[str, bool]:
+        """One authoring call — and its cheap recovery.
+
+        An empty finish (the model ended in its thinking channel: all
+        reasoning, no script) is not a failed attempt when the seat can
+        switch thinking off: the thinking is gone by the time the empty
+        reply lands, so a re-think is exactly what just burned the
+        window (run 54 r4: two ~20-min empty thinks, then the round was
+        over and the seat had never spoken). The recovery is one
+        follow-up call with thinking structurally off — same prompt, the
+        model reads it and EMITS. A failed recovery raises the combined
+        error: the attempt counts, and the next attempt re-thinks fresh
+        with the failure in its feedback."""
+        try:
+            return self.model.complete(sys_text, usr_text), False
+        except EmptyFinalContent as exc:
+            if not getattr(self.model, "no_thinking", False):
+                raise
+            nudge_usr = f"{usr_text}\n\n{_EMPTY_FINAL_NUDGE}"
+            self._persist_prompt("author-nudge", sys_text, nudge_usr)
+            try:
+                return (self.model.complete(
+                            sys_text, nudge_usr, thinking=False), True)
+            except Exception as nexc:  # noqa: BLE001
+                if isinstance(nexc, ScriptedModelEmpty):
+                    raise
+                raise EmptyFinalContent(
+                    f"empty final content (finish_reason="
+                    f"{exc.finish_reason}); no-thinking nudge failed: "
+                    f"{nexc}") from nexc
+
+    def _force_full_rewrite(self, libraries: dict,
+                            feedback: list[str]) -> str:
+        """The SEARCH-miss fallback: a patch whose block cannot match the
+        source verbatim gets the same patch sent again — the model
+        cannot see its own block's bytes (run 54 r4: the patch that
+        would have saved Lagertha was rejected for whitespace, and the
+        seat re-sent it). The edit vocabulary leaves the seat's system
+        prompt for the rest of the cycle and the feedback says so — the
+        next attempt is a full rewrite, the one answer a mismatched
+        patch cannot break."""
+        feedback.append("do not send edit blocks — send the complete "
+                        "script as a full rewrite")
+        return system_prompt(libraries, self.entity_id, edit_mode=False,
+                             manual=self.manual, catalog=self.catalog)
 
     # -- one cycle ---------------------------------------------------------
 
@@ -824,7 +888,13 @@ class AgentLoop:
         source, action, raw, extractor = "", "rewrite", "", None
         say_line, say_status = None, None   # the controller's voice, if
         # any reply this round opened with one (the last reply wins)
-        sys_text = system_prompt(libraries, eid, edit_mode=self.edit_mode,
+        # The edit mode the SEAT sees: the configured mode, until a
+        # SEARCH misses the source verbatim and flips it off for the
+        # rest of the cycle (run 54 r4 — see _force_full_rewrite).
+        edit_mode_eff = self.edit_mode
+        rewrite_forced = False
+        nudged = False
+        sys_text = system_prompt(libraries, eid, edit_mode=edit_mode_eff,
                                 manual=self.manual, catalog=self.catalog)
         transcript: list[dict] = []      # prompts + replies + platform
         # responses: the diary's ground truth, captured as it happens
@@ -832,9 +902,9 @@ class AgentLoop:
             attempts += 1
             try:
                 usr_text = user_prompt(obs, current, feedback,
-                                       edit_mode=self.edit_mode)
+                                       edit_mode=edit_mode_eff)
                 self._persist_prompt("author", sys_text, usr_text)
-                raw = self.model.complete(sys_text, usr_text)
+                raw, nudged = self._complete_author(sys_text, usr_text)
             except ScriptedModelEmpty:
                 raise                  # a missing fixture, not a provider hiccup
             except Exception as exc:  # provider/model failure: an attempt,
@@ -892,6 +962,10 @@ class AgentLoop:
                     transcript.append(
                         {"platform": "edit blocks refused: no previous "
                                     "behaviour to patch"})
+                    if not rewrite_forced:
+                        rewrite_forced = True
+                        sys_text = self._force_full_rewrite(
+                            libraries, feedback)
                     continue
                 patched, err = _apply_edits(current["source"], patches)
                 if err:
@@ -899,6 +973,10 @@ class AgentLoop:
                     feedback.append(f"patch did not apply: {err}")
                     transcript.append(
                         {"platform": f"patch did not apply: {err}"})
+                    if not rewrite_forced:
+                        rewrite_forced = True
+                        sys_text = self._force_full_rewrite(
+                            libraries, feedback)
                     continue
                 source, action = patched, "edit"
             else:                     # action 3: the full rewrite
@@ -1052,6 +1130,9 @@ class AgentLoop:
             "edit_mode": self.edit_mode,   # run-47 forensics: SEARCH-miss
                                             # rounds were inferred from
                                             # refusal strings; now a field
+            "nudge": nudged,              # the accepted attempt's call was
+                                           # the no-thinking nudge, not the
+                                           # thinking authoring
             "say": say_line,
             "say_status": say_status,   # spoken/queued, or refused: ...
             "refusal": last_error,

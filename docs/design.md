@@ -737,22 +737,22 @@ Consequences worth designing for from the start:
   an intent requires it. This keeps the engine deterministic, auditable,
   and reusable for the modelling product, which has no world layer at all.
 
-Build-vs-reuse: a from-scratch multiplayer 3D server is the biggest lift in
-the whole project. **Luanti** (formerly Minetest — open-source, C++,
-server-authoritative voxel engine with a Lua modding API) is a serious
-candidate for the world layer: chunked voxel terrain (cheap region copies),
-farming/building affordances out of the box, and its Lua-first modding
-model matches the sandboxed-Lua rule layer almost exactly. The alternative
-is a custom server with a Godot client. Decide by prototyping the farming
-loop on Luanti against the engine's API first — it's the cheapest possible
-test of the whole boundary design.
+Build-vs-reuse is a geometry-specific choice, not an engine-boundary
+choice. The first implementation is a **custom, server-authoritative 2D
+tile world** with a web reference client: a cosy pixel-art map, animated
+human and AI actors, real-time local movement, and pure spectators. This
+proves the boundary on phone, desktop, and web without taking on a
+from-scratch multiplayer 3D server. **Luanti** remains a candidate for a
+later voxel geometry (cheap chunk copies and Lua modding still fit);
+Godot remains a possible later client/runtime. The durable product scope,
+protocol rules, and W1–W4 build order live in `docs/world-layer.md`.
 
 The engine-side half of this boundary — places, topology,
 travel-as-process, presence gates, located markets and danger, up to the
-node↔voxel mapping plan — is now specified in `docs/spatial.md` (the
-spatial layer roadmap). Its doctrine is this section made mechanical: the
-engine's spatial vocabulary grows by exactly two opaque words (place,
-edge) and never a coordinate.
+geometry mapping plan — is specified in `docs/spatial.md` (the spatial
+layer roadmap). Its doctrine is this section made mechanical: the engine's
+spatial vocabulary grows by exactly two opaque words (place, edge) and
+never a coordinate.
 
 ### 4.4 Identity and the meta-layer
 
@@ -862,10 +862,12 @@ step-commit → PR → squash-merge workflow.
 8. **Conditions** — unmet-need consequences per § conditions: condition
    accrual, effective-quantity modifiers, incapacity and the estate rule.
    Makes demand inelastic before NPC behaviour gets tuned against it.
-9. **World-layer prototype** — the farming loop on Luanti (or a custom
-   server) against the engine's intent API: walk, claim a parcel, plant,
-   wait ticks, harvest, sell at a market hall. This is the go/no-go test
-   of the world/engine boundary and of Luanti itself.
+9. **World-layer prototype** — the living spectator first, then walk,
+   talk, and economic interaction in the custom 2D tile world
+   (`docs/world-layer.md` W1–W3). The farming loop against the engine's
+   intent API remains the go/no-go economic test: walk, claim a parcel,
+   plant, wait ticks, harvest, sell at a market hall. Luanti is a later
+   geometry option, not the gate.
 10. **Platform vertical slice** — one world, proposals + voting + enactment
    day over both parameter surfaces (engine + world physics); trials; then
    forking and the meta-layer.
@@ -896,10 +898,11 @@ step-commit → PR → squash-merge workflow.
   a world where conquest is cheaper than forking will get conquest.
   Whether declaration costs and fork thresholds need engine-imposed
   relative bounds, or data suffices, is unresolved.
-- **World layer engine** — Luanti vs. custom server + Godot client; decide
-  by prototyping the farming loop (§6 step 7). Related: voxel resolution,
-  parcel size/granularity, and whether parcels are grid-aligned claims
-  (Minecraft-style chunks) or free-form regions.
+- ~~**World layer engine**~~ — *resolved for the first implementation:
+  custom 2D world server + web reference client (`world-layer.md`).
+  Luanti/Godot remain later geometry/client choices. Voxel resolution,
+  parcel granularity, and whether parcels are grid-aligned claims or
+  free-form regions return only with the relevant geometry adapter.*
 - **Real-world maps** — "resources dotted on top of a real map" can mean
   procedurally generated terrain or actual Earth geodata (elevation, soil,
   mineral surveys) as genesis input. Real geodata is a compelling default

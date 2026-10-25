@@ -584,6 +584,32 @@ def test_the_starter_hafts_the_spear_rung(session):
     assert _events(session, "script_error") == []
 
 
+def test_the_starter_uses_the_bag_it_holds(session):
+    """The bag is the player's rung, not the floor's: the starter never
+    builds one (2b), but a bag already in hand doubles the gather -- a
+    bagged house gathers GATHER_BAG at the thicket, not bare-handed.
+    Everything else is held at the bars that would take the tick
+    (no stoke, no study, no errand): the gather run is the day."""
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 8)                 # hour 7: the day is young, open season
+    seat = _starter_seat(session, "Bagged")
+    _at(session, seat, "THICKET")        # the gather's country
+    _set(session, seat, "BAG", 1)        # the player's bag, already made
+    _set(session, seat, "BERRIES", 0)    # hungry: the gather is the day
+    _set(session, seat, "WOOD", 0)       # no stoke, no study: the woods
+    _set(session, seat, "SATIETY", 6)    # the belly is full, the back is not
+    session.commit()
+    _run(session, 1)
+    started = [e for e in _events(session, "start_process")
+              if e["entity_id"] == seat.id]
+    assert any(e.get("params", {}).get("recipe") == "GATHER_BAG"
+               for e in started)
+    assert not any(e.get("params", {}).get("recipe") == "GATHER"
+                   for e in started)      # the bag's table, not the bare one
+    assert _events(session, "script_error") == []
+
+
 def test_the_starter_hunts_the_deep_forest_with_the_spear(session):
     """Leg three: a speared house with a thin meat shelf walks the
     deep forest's table -- the floor hunts meat INTO the world, which
@@ -1195,6 +1221,11 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
     # the larder's seed stock (P5): two hens on the shelf at the ask
     assert by_sym[("sell", "CHICKEN")].limit_price == Decimal("3.90")
     assert by_sym[("sell", "CHICKEN")].quantity == Decimal("2")
+    # the cord shelf (the ladder bundle's bag room): the raw the floor
+    # rolls one in twenty at the thicket, sold from the seed stock at
+    # basis x 1.30 -- the bag's room is bought, not given
+    assert by_sym[("sell", "YARN")].limit_price == Decimal("1.95")
+    assert by_sym[("sell", "YARN")].quantity == Decimal("8")
     # bids on every raw good the larder allows, at half the genesis
     # basis -- never above 0.75 x basis, because paying near retail
     # for stock is how a shop dies (run 49's 5.00 egg bid, which
@@ -1496,7 +1527,7 @@ def test_the_genesis_basis_prices_the_opening_book(session):
     # stocked shelf (APPLES and EGGS start bare: an unstocked shelf
     # quotes nothing, and there is no restock but trade)
     for sym in ("JERKY", "BERRIES", "CHICKEN", "WATERSKIN", "TONIC",
-               "BEEHIVE"):
+               "BEEHIVE", "YARN"):
         assert by[("sell", sym)].limit_price \
             == (Decimal(expected[sym]) * Decimal("1.30")).quantize(
                 Decimal("0.01"))
@@ -3394,8 +3425,20 @@ def test_squalor_shrinks_the_daylight_ration(session):
     assert _hold(session, squalid.id, "LABOR") == Decimal("0.4250")
     assert _hold(session, clean.id, "LABOR") == Decimal("0.5000")
     _at(session, squalid, "THICKET")
-    # the starved ration cannot start whole-hour work...
-    with pytest.raises(Exception, match="LABOR"):
+    # the starved ration still STARTS the whole-hour work (the gate is
+    # gone, docs/productivity.md §1) -- at the fraction worked: the
+    # branch lands at 0.425 of its declared output
+    process = production.start_process(session, squalid, "GATHER")
+    assert process.effort_factor == Decimal("0.4250")
+    _run(session, 2)  # the gather runs and completes at the ration's effort
+    gather = production.get_recipe(session, "GATHER")
+    out = gather.branches[process.outcome_branch].outputs[0]
+    expected = str((out.quantity * Decimal("0.4250")).quantize(Decimal("0.0001")))
+    assert production.credited_outputs(process) == {out.symbol: expected}
+    # true exhaustion still refuses: below the floor there are no hours
+    # left to start with...
+    _set(session, squalid, "LABOR", Decimal("0.2"))
+    with pytest.raises(Exception, match="exhausted"):
         production.start_process(session, squalid, "GATHER")
     # ...but matter is matter: a banked hour spends at face value
     _set(session, squalid, "LABOR", 1)
@@ -3597,6 +3640,7 @@ def test_ibex_want_the_ridge_and_a_weapon(session):
     _no_wolves(session)
     house = _seat(session, "Climber")
     _at(session, house, "RIDGE_PASS")
+    _set(session, house, "SATIETY", Decimal("12"))
     while clock.is_night(production.next_tick_number(session)):
         run_tick(session); session.commit()
     with pytest.raises(Exception, match="SPEAR"):
@@ -3629,10 +3673,13 @@ def test_ibex_want_the_ridge_and_a_weapon(session):
         while clock.is_night(production.next_tick_number(session)):
             _run(session, 1)
         # the ridge has no fire and no water: keep the hunter alive
-        # (the test's subject is the hunt, not the thermostat)
+        # (the test's subject is the hunt, not the thermostat). The meal
+        # is a SATIETY top-up, not a BERRIES stash: no EAT recipe runs
+        # in this test, so a stash would only rot in the pack while
+        # HUNGER walks the kill line (15) on the miss-heavy rolls
         _set(session, house, "WARMTH", Decimal("4"))
         _set(session, house, "WATER", Decimal("4"))
-        _set(session, house, "BERRIES", Decimal("6"))
+        _set(session, house, "SATIETY", Decimal("12"))
         if _act_day(session, house, "HUNT_IBEX"):
             _run(session, 3)   # the window's tick + the hunt's two
             landed = _hold(session, house.id, "IBEX_PELT") > 0
@@ -3640,8 +3687,13 @@ def test_ibex_want_the_ridge_and_a_weapon(session):
                 break
         _run(session, 1)       # the hour turns; the herd re-forms
     assert landed
-    # and the ground is the ridge's: refused from home
+    # and the ground is the ridge's: refused from home. A landed pelt can
+    # land the loop in the evening (hunts repeat across the day), and the
+    # daylight guard fires before the place one -- so the refusal must be
+    # observed at dawn, like the loop's own hunts
     _at(session, house, "HEARTH")
+    while clock.is_night(production.next_tick_number(session)):
+        _run(session, 1)
     with pytest.raises(ValueError, match="must be at a RIDGE"):
         production.start_process(session, house, "HUNT_IBEX")
 

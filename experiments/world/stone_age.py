@@ -214,6 +214,12 @@ COIN_WEIGHT = Decimal("5")
 #: generated catalog -- tables derive, meaning stays authored.
 MANUAL_KEY = "world.manual"
 
+# W1 world-layer geometry (docs/world-layer.md): the pack authors opaque
+# tile2d anchors on its places and a deterministic terrain seed. The engine
+# stores these refs but never interprets their coordinates.
+WORLD_SCENE_KEY = "world_layer.tile2d"
+WORLD_SCENE = {"seed": "stone-age-valley-v1"}
+
 # --- Genesis buffers --------------------------------------------------------
 # What a seat starts with: a few days of food and one cold evening's
 # warmth (the WARMTH cap is 6 -- two dark hours' grace, no more). Not a
@@ -825,7 +831,14 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # The second flock's storefront: hives bought like hens
              # (the CHICKEN rung). Two on the shelf, and the APIARY
              # study is what makes the comb yours to keep.
-             "BEEHIVE": Decimal("2")}
+             "BEEHIVE": Decimal("2"),
+             # The cord shelf (the ladder bundle's bag room): the raw the
+             # floor rolls one in twenty at the thicket, now sold like
+             # the salt -- eight strands, three bags' haft and two spare
+             # (MAKE_BAG wants two). No free cord: the coin pays for it,
+             # and the post's own YARN bid (the larder's twelve) restocks
+             # the shelf from whatever the houses gather up.
+             "YARN": Decimal("8")}
 
 # RUN 52 -- THE BACKDOOR IS OFF: the wholesale ladder is deleted
 # (recipes and Lua table both), and the post prices off ITS OWN BOOKS:
@@ -946,6 +959,7 @@ def create_content(session: Session, verify: bool = True) -> None:
                              value={"enabled": True}))
     # The legible manual (below): tech tree, conditions, effects.
     session.add(WorldSetting(key=MANUAL_KEY, value={"text": MANUAL}))
+    session.add(WorldSetting(key=WORLD_SCENE_KEY, value=dict(WORLD_SCENE)))
     # The join path is a seat, not a corpse: join.config carries exactly
     # what make_house gives a dynasty -- same constants, same order -- as
     # data. A player who joins and writes nothing lands a house that
@@ -998,36 +1012,37 @@ def _create_map(session: Session) -> None:
     scarcities: the far side has salt and grass and no stone, the
     home side stone and wood and no salt. Nobody walks six hours
     for what they already own."""
-    for key, kind, name, region, description in (
+    for key, kind, name, region, description, x, y in (
         ("HEARTH", "HEARTH", "Hearth clearing", "home-valley",
          "The fire-ground where every seat wakes: sheltered, warm-stoned, "
-         "safe to sleep. Fires are made and tended here."),
+         "safe to sleep. Fires are made and tended here.", 38, 52),
         ("THICKET", "THICKET", "Berry thicket", "home-valley",
-         "An hour out: berries, wood, yarn -- the subsistence walk."),
+         "An hour out: berries, wood, yarn -- the subsistence walk.", 28, 36),
         ("RIVER", "RIVER", "The river", "home-valley",
-         "An hour out: fish from the bank, meat without wolves."),
+         "An hour out: fish from the bank, meat without wolves.", 22, 60),
         ("FLINT", "FLINT", "Flint scrape", "home-valley",
          "Two hours out: the ground gives certain flint to anyone who "
-         "digs -- and the ridge road climbs from here."),
+         "digs -- and the ridge road climbs from here.", 50, 36),
         ("FOREST", "FOREST", "Deep forest", "home-valley",
          "The spear game and the wolves' range: two hours by the valley "
          "road (through the post), three by the deep wood. Be firelit "
-         "by dark, or be meat."),
+         "by dark, or be meat.", 58, 54),
         ("POST", "POST", "Trading post", "home-valley",
          "An hour down the valley: every market trades here, and only "
-         "here -- the man keeps a good shelf and a short walk for it."),
+         "here -- the man keeps a good shelf and a short walk for it.", 46, 70),
         ("RIDGE_PASS", "RIDGE", "The ridge pass", "far-valley",
          "Cold, exposed, the high ground -- the door to the far valley. "
-         "Ibex ground: the quarry of the winter coat."),
+         "Ibex ground: the quarry of the winter coat.", 70, 30),
         ("SALT_LICK", "SALT", "The salt lick", "far-valley",
          "Two hours past the ridge: the ground gives certain salt to "
-         "anyone who digs, and the far book trades pelts here."),
+         "anyone who digs, and the far book trades pelts here.", 92, 22),
         ("VALE", "PASTURE", "The vale", "far-valley",
          "Open grass an hour from the lick: no thicket, no forest, no "
-         "stone -- and hens in the tufts."),
+         "stone -- and hens in the tufts.", 88, 48),
     ):
-        places.create_place(session, key, kind=kind, name=name,
-                            region_id=region, description=description)
+        places.create_place(
+            session, key, kind=kind, name=name, region_id=region,
+            description=description, extent_ref=f"tile2d:v1:{x},{y}")
     # The storm line (run 54 P4): the ridge is high ground, and the
     # high ground storms. A BLIZZARD ambient finds anyone standing on
     # the pass -- or mid-hop on a road that starts there -- during the
@@ -1488,6 +1503,7 @@ def _create_goods(session: Session) -> None:
         description="The memory of cold nights.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("18"),
+        productivity_factor=Decimal("0.75"),
         carry_exempt=True,  # a register, not cargo (S5a)
     )
     goods.create_good(
@@ -1496,6 +1512,7 @@ def _create_goods(session: Session) -> None:
                     "at this threshold.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("2.5"),
+        productivity_factor=Decimal("0.8"),
         carry_exempt=True,  # a register, not cargo (S5a)
     )
     # THIRST (P3): the dry-larder killer. Meals part-hydrate (berries
@@ -1528,6 +1545,7 @@ def _create_goods(session: Session) -> None:
                     "bed -- and let the register fade.",
         decay_per_tick=Decimal("0.05"),
         incapacitates_at=Decimal("7.5"),
+        productivity_factor=Decimal("0.9"),
         carry_exempt=True,  # a register, not cargo (S5a)
     )
     # COMFORT + SQUALOR (run 54 P2): comfort, not status. COMFORT is a
@@ -1945,6 +1963,7 @@ def _create_recipes(session: Session) -> None:
     # scarcity first, then the supply grows with tools.
     production.create_recipe(
         session, "GATHER", name="Gather",
+        effect_kind="yield",
         description="One loot-table roll of a single resource: you find what "
                     "you find. Bare-handed subsistence. Daylight only, at "
                     "the berry thicket, in the open seasons -- the white "
@@ -1970,6 +1989,7 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "GATHER_BAG", name="Gather with a Bag",
+        effect_kind="yield",
         description="The doubled table -- and a small chance the ground itself "
                     "has minted a coin. Daylight only, at the berry thicket, "
                     "in the open seasons -- the white season locks the "
@@ -2038,6 +2058,7 @@ def _create_recipes(session: Session) -> None:
     # the supply chain: wood+yarn per hunt).
     production.create_recipe(
         session, "HUNT", name="Hunt",
+        effect_kind="success",
         description="Slow, and bare-handed: mostly nothing, sometimes "
                     "dinner. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
@@ -2050,6 +2071,7 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "HUNT_SPEAR", name="Hunt with a Spear",
+        effect_kind="success",
         description="A held spear (never consumed) turns a desperate hunt "
                     "into a living. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1")}, outputs={}, duration_ticks=2,
@@ -2063,6 +2085,7 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "HUNT_TRAPS", name="Hunt with Traps",
+        effect_kind="success",
         description="The best odds craft can buy, at the price of a consumed "
                     "trap per hunt. Daylight only, in the deep forest.",
         inputs={"LABOR": D("1"), "TRAP": D("1")},
@@ -2081,6 +2104,7 @@ def _create_recipes(session: Session) -> None:
     # quarry but demands the night; the bow keeps a daylight living.
     production.create_recipe(
         session, "HUNT_BOW", name="Hunt with a Bow",
+        effect_kind="success",
         description="Ranged hunting: the best odds a lone crafter can buy, "
                     "with nothing hunting you back. Held bow, never "
                     "consumed -- but the shot costs its arrow now "
@@ -2103,6 +2127,7 @@ def _create_recipes(session: Session) -> None:
     # pantry, just a second kitchen.
     production.create_recipe(
         session, "FISH", name="Fish",
+        effect_kind="success",
         description="Two hours' certain-ish meat from the bank: slower than "
                     "a bad hunt, far more certain, and nothing here hunts "
                     "YOU. Daylight only, at the river, in the open seasons "
@@ -2794,6 +2819,7 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "HUNT_IBEX", name="Hunt Ibex",
+        effect_kind="success",
         description="The ridge's own quarry, taken with a held spear "
                     "(never consumed): a rich pelt and the meat that "
                     "rides it. Daylight only, on the ridge.",
@@ -2814,6 +2840,7 @@ def _create_recipes(session: Session) -> None:
     )
     production.create_recipe(
         session, "HUNT_IBEX_BOW", name="Hunt Ibex with a Bow",
+        effect_kind="success",
         description="The high shot: the bow's steadier table on the "
                     "ridge's quarry. Held bow, never consumed -- but the "
                     "shot costs its arrow now (Bundle B), same as the "

@@ -1,0 +1,19 @@
+{
+  "name": "econ-world-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:browser": "npm run build && node test/browser-smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "puppeteer-core": "^25.14.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "ws": "^8.22.0"
+  }
+}

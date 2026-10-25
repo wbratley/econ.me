@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#263d35" />
+    <title>Living world · econ.me</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <h1>Living world</h1>
+          <p>econ.me · tile2d.v1</p>
+        </div>
+        <span id="session-badge" class="badge">Spectator · read only</span>
+        <div class="camera-controls" aria-label="Camera controls">
+          <button id="zoom-out" type="button" title="Zoom out">−</button>
+          <button id="zoom-in" type="button" title="Zoom in">+</button>
+          <button id="fit-world" type="button">Whole world</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="viewport" aria-label="Navigable world map">
+          <canvas id="world" role="img" aria-label="Animated map of the economy"></canvas>
+          <div id="map-status" class="map-status">Connect to look into the world.</div>
+          <div class="map-help">Drag to roam · wheel/pinch buttons to zoom · select an actor to follow · WASD/arrows to walk</div>
+        </section>
+
+        <aside>
+          <section class="panel connect-panel">
+            <form id="connect-form">
+              <label for="token">Player access token</label>
+              <div class="token-row">
+                <input id="token" name="token" type="password" autocomplete="off" placeholder="Bearer token" required />
+                <button id="connect" type="submit">Watch</button>
+              </div>
+            </form>
+            <p class="fine-print">Any account may spectate. Joining creates a founder for this account; possessing it enables local walking and speech.</p>
+            <p id="connection-status" class="status" aria-live="polite">Not connected</p>
+          </section>
+
+          <section id="play-panel" class="panel play-panel" hidden>
+            <div class="section-heading">
+              <h2>Walk & talk</h2>
+              <button id="release-entity" type="button" class="text-button" hidden>Release</button>
+            </div>
+            <label id="player-entity-label" for="player-entity">Your entity</label>
+            <button id="join-world" type="button" hidden>Join the world</button>
+            <div id="possess-row" class="token-row">
+              <select id="player-entity"></select>
+              <button id="possess-entity" type="button">Possess</button>
+            </div>
+            <div id="dpad" class="dpad" aria-label="Movement pad" hidden>
+              <button type="button" data-direction="up" aria-label="Walk north">▲</button>
+              <button type="button" data-direction="left" aria-label="Walk west">◀</button>
+              <button type="button" data-direction="right" aria-label="Walk east">▶</button>
+              <button type="button" data-direction="down" aria-label="Walk south">▼</button>
+            </div>
+            <form id="say-form" class="say-form" hidden>
+              <input id="say-text" type="text" maxlength="256" autocomplete="off" placeholder="Say something in the world…" />
+              <button type="submit">Say</button>
+            </form>
+            <p id="play-status" class="status" aria-live="polite">Spectating.</p>
+            <p class="fine-print">Walking is local presence. Travel, work, speech, and every economic effect still resolve through the engine; an engine process takes control back.</p>
+          </section>
+
+          <section class="panel world-panel">
+            <h2>The valley</h2>
+            <p id="clock">Tick 0</p>
+            <p id="scene-stats" class="fine-print">Nothing in view yet.</p>
+          </section>
+
+          <section class="panel actors-panel">
+            <div class="section-heading">
+              <h2>People & creatures</h2>
+              <button id="stop-following" type="button" class="text-button" hidden>Free camera</button>
+            </div>
+            <div id="actors" class="actor-list"><p class="empty">No actors loaded.</p></div>
+          </section>
+
+          <section class="panel speech-panel">
+            <h2>Overheard</h2>
+            <div id="speech" class="speech-list"><p class="empty">The world is quiet.</p></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

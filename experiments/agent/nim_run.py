@@ -292,6 +292,39 @@ def bootstrap(out: Path, names: list[str], dynasties: list[Dynasty]):
     return admin_token
 
 
+def create_browser_user(db_path: Path, name: str) -> tuple[str, str]:
+    """Create/reuse a local browser account outside the dynasty seats.
+
+    The token is printed by the CLI, never written into the served out dir;
+    whoever holds it controls the account, including any founder it joins.
+    """
+    user_slug = slug(name)
+    if not user_slug:
+        raise ValueError("browser user name must contain a letter or digit")
+    user_id = f"u-browser-{user_slug}"
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from econengine.models import Base, User
+    from econ.api.auth import create_token
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            user = session.get(User, user_id)
+            if user is None:
+                user = User(
+                    id=user_id, email=f"{user_id}@run", name=name,
+                    provider="test", provider_id=user_id, is_admin=False,
+                )
+                session.add(user)
+                session.commit()
+            return user_id, create_token(user_id, user.email, False)
+    finally:
+        engine.dispose()
+
+
 def spawn_server(port: int, log_path: Path) -> subprocess.Popen:
     """uvicorn on the run's DB. Env rides the command (the footgun the
     readiness demo taught: a server without its DATABASE_URL is pointing
@@ -364,6 +397,82 @@ def clock_waiter(base: str, admin_token: str,
     return wait
 
 
+def _liveness_gate(seats, budget_s: float | None = None,
+                   first_backoff_s: float = 15.0) -> None:
+    """Probe every remote seat's model before the world exists.
+
+    Run 54's Harald rode moonshotai/kimi-k3's HTTP 410 for three rounds
+    without a word from the seat — the journal said "model failure" and
+    the house ran the scenario starter, so the later death read as a
+    strategy. The gate makes that visible at launch, where it is cheap
+    to fix: a 4xx that is not a rate limit refuses the start outright
+    (a gone or misspelled slug will not come back — re-run with a live
+    slug); a 5xx, a 429, or a timeout is a busy endpoint, retried with
+    doubling backoff until the budget runs out (ECON_MODEL_PROBE_BUDGET_S,
+    default 30 min). Seats without a probe (scripted, live-file) are
+    skipped — they have no endpoint to be dead."""
+    if budget_s is None:
+        raw = os.environ.get("ECON_MODEL_PROBE_BUDGET_S", "").strip()
+        try:
+            budget_s = float(raw) if raw else 1800.0
+        except ValueError:
+            budget_s = 1800.0
+    deadline = time.monotonic() + budget_s
+    backoff = first_backoff_s
+    for name, model, slug in seats:
+        if not hasattr(model, "probe"):
+            continue
+        while True:
+            ok, detail, status = model.probe()
+            if ok:
+                print(f"seat {name!r}: {slug} is live", flush=True)
+                break
+            if status is not None and 400 <= status < 500 \
+                    and status != 429:
+                # a 4xx that is not a rate limit is a configuration fact:
+                # the slug is gone (410) or misspelled (404)
+                raise SystemExit(
+                    f"REFUSING TO START: seat {name!r} model {slug} is "
+                    f"unavailable (HTTP {status}). A 4xx slug is gone or "
+                    f"misspelled and will not come back — pick a live slug "
+                    f"and re-run; a dead model would silently run the "
+                    f"scenario starter all run.")
+            if time.monotonic() >= deadline:
+                raise SystemExit(
+                    f"REFUSING TO START: seat {name!r} model {slug} still "
+                    f"unavailable after {budget_s:.0f}s ({detail}). Re-run "
+                    f"when the endpoint is back — a seat that cannot reach "
+                    f"its model runs the scenario starter.")
+            print(f"seat {name!r}: {slug} unavailable ({detail}); "
+                  f"retrying in {backoff:.0f}s", flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 120.0)
+
+
+def _parse_epoch_spec(spec: str) -> tuple[str, dict]:
+    """``--epoch CODE:VALUE`` -> the ``(code, params)`` start_epoch takes.
+
+    The value rides the code's own param key (game.md §7): ``innovate``
+    names a technology, the rest name a threshold / tick count. Parsing
+    is a string split; ``normalise_condition`` (inside start_epoch) does
+    the real validation -- a bad code, a bad number, or a technology the
+    pack never built is an EpochError at start, before any tick resolves.
+    """
+    code, sep, value = spec.partition(":")
+    code, value = code.strip().lower(), value.strip()
+    if not sep or not code or not value:
+        raise ValueError(
+            f"--epoch wants CODE:VALUE (e.g. innovate:FIRE_HARDENING, "
+            f"accumulate:50, endure:500, grow:2), got {spec!r}")
+    param_key = {"innovate": "technology", "accumulate": "threshold",
+                 "endure": "ticks", "grow": "threshold"}
+    if code not in param_key:
+        raise ValueError(
+            f"--epoch code {code!r} is off the victory menu "
+            f"(innovate/accumulate/endure/grow)")
+    return code, {param_key[code]: value}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--models", nargs="+", metavar="SLUG",
@@ -377,6 +486,17 @@ def main(argv=None) -> int:
     ap.add_argument("--scenario", default="frontier",
                     choices=["frontier", "stone_age"],
                     help="content pack to build the world from")
+    ap.add_argument("--epoch", default=None, metavar="CODE:VALUE",
+                    help="start the FRESH world under a victory epoch "
+                         "(game.md §7): the per-tick observer stamps the "
+                         "first dynasty to cross the condition and ends "
+                         "the epoch; the seats see the condition in their "
+                         "observation (no prompt change). innovate names a "
+                         "technology (innovate:FIRE_HARDENING); accumulate "
+                         "a coin threshold, endure a tick count, grow an "
+                         "active-entity count (accumulate:50, endure:500, "
+                         "grow:2). A resume run never starts one: the "
+                         "epoch is the world's, not the runner's")
     ap.add_argument("--max-attempts", type=int, default=3)
     ap.add_argument("--edit-mode", action="store_true",
                     help="models may answer with SEARCH/REPLACE edit blocks "
@@ -443,10 +563,25 @@ def main(argv=None) -> int:
                          "than a round returns to a world that moved "
                          "(0 = off: readiness resolves in-request as "
                          "before)")
+    ap.add_argument("--browser-user", default=None, metavar="NAME",
+                    help="create/reuse a local browser account with no "
+                         "starting entity and print its bearer token; "
+                         "the web client can spectate, POST /join, and "
+                         "possess the founder. For mid-run joins, arm "
+                         "--world-tick-seconds so the new account's "
+                         "readiness cannot hold the round open")
     args = ap.parse_args(argv)
 
     if not args.models and not args.scripted:
         ap.error("need --models (NIM) or --scripted (offline rehearsal)")
+
+    # The epoch spec is parsed (and format-checked) up front: a typo'd
+    # --epoch must die before the DB is written or a model probed, not
+    # mid-world-build. start_epoch itself (fresh world only, below)
+    # validates the technology/threshold against the pack and lands the
+    # epoch.state row; started_tick is 0 on a fresh world, so no crossing
+    # is retroactive.
+    epoch_spec = _parse_epoch_spec(args.epoch) if args.epoch else None
 
     if args.round_deadline_s and args.round_deadline_s > 0:
         # Rides the environment into the spawned server (the always-on
@@ -525,6 +660,13 @@ def main(argv=None) -> int:
         ap.error(f"{len(model_names)} models but {len(names)} names — "
                  "one name per dynasty")
 
+    # A dead model must never inherit the scenario starter silently:
+    # run 54's Harald rode a 410'd slug for three rounds while his
+    # journal just said "model failure". Probe every remote model
+    # before the world exists: a non-rate-limit 4xx refuses the start
+    # outright, a busy endpoint backs off until the budget runs out.
+    _liveness_gate(zip(names, models, model_names))
+
     dynasties = [
         Dynasty(user_id=f"u-{slug(name)}", name=name,
                 model_name=mn, token="")
@@ -539,6 +681,12 @@ def main(argv=None) -> int:
             "or point --out at a fresh directory")
     started = _dt.datetime.now(_dt.timezone.utc)
     admin_token = bootstrap(out, args.names, dynasties)
+    browser_seat = (create_browser_user(out / "world.db", args.browser_user)
+                    if args.browser_user else None)
+    if browser_seat and not (args.world_tick_seconds and args.world_tick_seconds > 0):
+        print("browser player: WARNING — joining a readiness-gated world "
+              "without --world-tick-seconds makes the new account eligible "
+              "for consent and can hold the round open")
 
     # The world, in-process against the run DB (content pack + owned seats
     # + readiness gate), before the server ever starts.
@@ -576,6 +724,16 @@ def main(argv=None) -> int:
                 seeds=({n: seed_source for n in names
                         if n != args.live_seat}
                        if seed_source else None))
+            if epoch_spec is not None:
+                # The motive lever (game.md §7): the world boots under a
+                # declared condition the per-tick observer judges from
+                # tick zero. build_agent_world committed the world;
+                # start_epoch flushes the epoch.state row -- this commit
+                # lands it.
+                from econ.api.epochs import start_epoch
+                epoch = start_epoch(s, *epoch_spec)
+                s.commit()
+                print(f"epoch {epoch['number']} under {epoch['condition']}")
     manual = (world_meta or {}).get("manual")
     catalog = (world_meta or {}).get("catalog")
     world = {d.name: {"user_id": d.user_id,
@@ -592,6 +750,11 @@ def main(argv=None) -> int:
     base = f"http://127.0.0.1:{args.port}"
     print(f"world up: {len(dynasties)} dynasties, gate=readiness, "
           f"K={args.ticks_per_round} ticks/round, {args.rounds} rounds")
+    if browser_seat:
+        browser_user_id, browser_token = browser_seat
+        print(f"browser player: {args.browser_user} = {browser_user_id}")
+        print("browser token (full control of this account; do not share): "
+              f"{browser_token}")
 
     if args.serve:
         # A placeholder so the URL answers from second zero — round 1's

@@ -51,6 +51,15 @@ class Good(Base):
     incapacitates_at: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=18, scale=4), nullable=True
     )  # holding >= threshold deactivates the entity and applies the estate rule
+    # Productivity factor (docs/productivity.md §2): while any of this
+    # condition is held, the holder's work converts at this fraction —
+    # credited outputs and success-branch odds are multiplied by it at
+    # completion. NULL = no productivity tax (reads 1). Condition goods
+    # only: create_good refuses it on a non-condition (a held berry must
+    # not tax work).
+    productivity_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=5, scale=4), nullable=True
+    )
     # the banking cap (P1, the fire rework): a holding may never be credited
     # above this -- positive deltas clip at the credit choke points (adjust
     # _holding, estate transfer). NULL = uncapped, all of history's behavior.

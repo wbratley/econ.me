@@ -99,6 +99,29 @@ def effective_quantity(quantity: Decimal, factor: Decimal) -> Decimal:
     return (quantity * factor).quantize(_QUANTUM, rounding=ROUND_DOWN)
 
 
+def held_productivity(session: Session, entity_id: str) -> Decimal:
+    """Product of the productivity_factor of every condition good the entity
+    holds any positive quantity of, symbol-ascending; 1 when none apply.
+    The conversion axis of docs/productivity.md §2: how well this worker's
+    held conditions convert energy into output (a feverish gatherer finds
+    less). Read at completion — a fact of the completion, like the effort
+    and the herd."""
+    factor = Decimal("1")
+    rows = session.execute(
+        select(Good.productivity_factor)
+        .join(Holding, Holding.symbol == Good.symbol)
+        .where(
+            Good.productivity_factor.is_not(None),
+            Holding.entity_id == entity_id,
+            Holding.quantity > 0,
+        )
+        .order_by(Good.symbol)
+    ).scalars().all()
+    for each in rows:
+        factor *= Decimal(each)
+    return factor
+
+
 # ---------------------------------------------------------------------------
 # Estate rule (votable data in world_settings)
 

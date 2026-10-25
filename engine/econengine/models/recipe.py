@@ -108,6 +108,14 @@ class Recipe(Base):
         Numeric(precision=18, scale=4), nullable=True
     )
     scales_with: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Productivity axis (docs/productivity.md §2): how the worker's held
+    # conditions P price this recipe's completion. "yield" — credited
+    # outputs are multiplied by P (the work converts less); "success" —
+    # completion-branch weight shifts from the success branches toward the
+    # last (failure) branch (the work misses more); NULL/"none" — immune
+    # (comfort acts, travel). The condition supplies the magnitude, the
+    # recipe the axis.
+    effect_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
