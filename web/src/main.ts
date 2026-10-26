@@ -18,6 +18,10 @@ const context = maybeContext;
 const connectForm = element<HTMLFormElement>("connect-form");
 const connectButton = element<HTMLButtonElement>("connect");
 const tokenInput = element<HTMLInputElement>("token");
+const magicForm = element<HTMLFormElement>("magic-form");
+const magicEmail = element<HTMLInputElement>("magic-email");
+const magicSend = element<HTMLButtonElement>("magic-send");
+const magicStatus = element<HTMLParagraphElement>("magic-status");
 const connectionStatus = element<HTMLParagraphElement>("connection-status");
 const mapStatus = element<HTMLDivElement>("map-status");
 const clockLabel = element<HTMLParagraphElement>("clock");
@@ -942,6 +946,41 @@ connectForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void connect();
 });
+
+function setMagicStatus(text: string): void {
+  magicStatus.textContent = text;
+}
+
+magicForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const email = magicEmail.value.trim();
+  if (!email) return;
+  magicSend.disabled = true;
+  setMagicStatus("Sending a sign-in link…");
+  post<{ detail: string }>("/auth/magic/request", { email })
+    .then((result) => setMagicStatus(result.detail + " Check your inbox — or the server console in dev."))
+    .catch((error) => setMagicStatus(error instanceof Error ? error.message : "Could not send the link"))
+    .finally(() => { magicSend.disabled = false; });
+});
+
+// Magic-link landing: /?code=... — swap the one-shot code for the access
+// token (token never rides the URL), then connect straight away.
+async function redeemLoginCode(): Promise<boolean> {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  if (!code) return false;
+  window.history.replaceState(null, "", window.location.pathname);
+  setStatus("Signing in…");
+  try {
+    const result = await post<{ access_token: string }>("/auth/magic/exchange", { code });
+    tokenInput.value = result.access_token;
+    await connect();
+    return true;
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Sign-in failed");
+    return true;
+  }
+}
 element<HTMLButtonElement>("zoom-in").addEventListener("click", () => zoomAt(1.25));
 element<HTMLButtonElement>("zoom-out").addEventListener("click", () => zoomAt(1 / 1.25));
 element<HTMLButtonElement>("fit-world").addEventListener("click", fitWorld);
@@ -1066,9 +1105,12 @@ for (const button of dpad.querySelectorAll<HTMLButtonElement>("button[data-direc
 
 window.addEventListener("beforeunload", closeLiveChannels);
 
-const savedToken = sessionStorage.getItem("econ.world.token");
-if (savedToken) {
-  tokenInput.value = savedToken;
-  void connect();
-}
+void redeemLoginCode().then((hadCode) => {
+  if (hadCode) return;
+  const savedToken = sessionStorage.getItem("econ.world.token");
+  if (savedToken) {
+    tokenInput.value = savedToken;
+    void connect();
+  }
+});
 requestAnimationFrame(draw);

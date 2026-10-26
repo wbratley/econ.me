@@ -133,6 +133,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class MagicLinkRequest(BaseModel):
+    email: str
+
+
+class MagicExchangeRequest(BaseModel):
+    code: str
+
+
 class ScriptCreate(BaseModel):
     name: str
     description: str = ""

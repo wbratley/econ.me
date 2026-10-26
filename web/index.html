@@ -30,6 +30,14 @@
 
         <aside>
           <section class="panel connect-panel">
+            <form id="magic-form">
+              <label for="magic-email">Sign in with email</label>
+              <div class="token-row">
+                <input id="magic-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+                <button id="magic-send" type="submit">Send link</button>
+              </div>
+            </form>
+            <p id="magic-status" class="status" aria-live="polite"></p>
             <form id="connect-form">
               <label for="token">Player access token</label>
               <div class="token-row">

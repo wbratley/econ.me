@@ -344,6 +344,13 @@ or projected from a grid/voxels is a pack-authoring fact.
   `python -m experiments.lifecycle.run`; see `experiments/<name>/` for its
   proving world + tests.
 
+## Git workflow
+
+- `main` is protected: changes go through a PR. Commit to a branch, push the
+  branch, open the PR — never `git push origin main` directly (the remote
+  allows it through with a violation warning, which is exactly the thing
+  to avoid).
+
 ## Docs index (read for depth, in this order)
 
 1. `docs/design.md` — vision + mechanism/data/policy + what's built.
