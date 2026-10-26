@@ -45,3 +45,51 @@ def decode_token(token: str) -> dict | None:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+
+
+# --- Magic-link login -------------------------------------------------------
+# Sign-in by email rides two purpose-scoped tokens, both signed with the same
+# SECRET_KEY: the emailed magic link (minutes-scale TTL) and the one-shot
+# exchange code the verify redirect hands to the web client (so the access
+# token itself never appears in a URL). The `purpose` claim is what keeps
+# these from moonlighting as bearer tokens — decode_access_token rejects them.
+
+MAGIC_LINK_EXPIRE_MINUTES = int(os.environ.get("ECON_MAGIC_LINK_EXPIRE_MINUTES", "15"))
+EXCHANGE_CODE_EXPIRE_MINUTES = 2
+
+
+def _purpose_token(purpose: str, user_id: str, minutes: int) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    payload = {"sub": user_id, "purpose": purpose, "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _decode_purpose_token(token: str, purpose: str) -> dict | None:
+    payload = decode_token(token)
+    if payload is None or payload.get("purpose") != purpose:
+        return None
+    return payload
+
+
+def create_magic_token(user_id: str) -> str:
+    return _purpose_token("magic", user_id, MAGIC_LINK_EXPIRE_MINUTES)
+
+
+def decode_magic_token(token: str) -> dict | None:
+    return _decode_purpose_token(token, "magic")
+
+
+def create_exchange_code(user_id: str) -> str:
+    return _purpose_token("magic_exchange", user_id, EXCHANGE_CODE_EXPIRE_MINUTES)
+
+
+def decode_exchange_code(code: str) -> dict | None:
+    return _decode_purpose_token(code, "magic_exchange")
+
+
+def decode_access_token(token: str) -> dict | None:
+    """Bearer-token check: a plain access token, never a magic/exchange one."""
+    payload = decode_token(token)
+    if payload is None or payload.get("purpose") not in (None, "access"):
+        return None
+    return payload

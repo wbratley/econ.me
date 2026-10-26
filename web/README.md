@@ -40,7 +40,21 @@ The Vite server binds the LAN by default, so a phone can open
 `http://<this-host>:5173` while the proxy keeps the API server address
 server-side. Treat pasted bearer tokens as account credentials.
 
-Paste an account bearer token into the client. A token identifies the
+Sign in with email from the connect panel: the client calls
+`POST /auth/magic/request`, the server emails a short-lived link (with no
+SMTP configured it logs the link to the server console instead — the dev
+loop), and clicking it lands back on the client with a one-shot exchange
+code (`/?code=…`) that the page redeems via `POST /auth/magic/exchange`
+for the access token — the token itself never rides a URL. Identity is
+the email address: a magic sign-in lands on the same account an OAuth
+login with that address created. Delivery is configured with
+`ECON_SMTP_HOST`/`ECON_SMTP_PORT`/`ECON_SMTP_USER`/`ECON_SMTP_PASSWORD`/
+`ECON_SMTP_FROM`/`ECON_SMTP_STARTTLS`, the link TTL with
+`ECON_MAGIC_LINK_EXPIRE_MINUTES` (default 15), and the post-verify
+redirect target with `ECON_WEB_CLIENT_URL` (default
+<http://localhost:5173>).
+
+Pasting an account bearer token into the client still works. A token identifies the
 spectator and does **not** require an entity. If that account owns a placed
 ACTIVE non-fixed individual, the Walk & talk panel offers possession; if
 not, it offers **Join the world**. Joining calls the ordinary `POST /join`

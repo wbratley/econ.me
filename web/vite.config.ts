@@ -14,6 +14,7 @@ export default defineConfig({
       },
       "/rounds": apiTarget,
       "/join": apiTarget,
+      "/auth": apiTarget,
     },
   },
   build: {

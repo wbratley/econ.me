@@ -760,6 +760,17 @@ never a coordinate.
   worlds; property (accounts, holdings, land) is **world-scoped**.
 - Worlds form a visible family tree — a phylogeny of games — browsable by
   ancestry, popularity, and rule drift.
+- Sign-in is account-by-email: OAuth (Google/GitHub) and email **magic
+  links** (`POST /auth/magic/request` → `/auth/magic/verify` →
+  `/auth/magic/exchange`) land on the same `User` row. Purpose-scoped JWTs
+  keep sign-in tokens from moonlighting as bearer tokens
+  (`decode_access_token`), and the exchange-code detour keeps access tokens
+  out of URLs. *Status: shipped, dev-grade.* **Before production:** the
+  magic link and exchange code are stateless JWTs — replayable until expiry
+  and not revocable. Replace with DB-stored one-time codes (random,
+  single-use, used-marked, expiring) so a leaked link dies on first use and
+  an operator can invalidate outstanding links; add per-address request
+  rate limiting at the same time.
 
 ### 4.5 What this demands of the engine
 

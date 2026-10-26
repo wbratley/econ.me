@@ -18,7 +18,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from econ.api import events
-from econ.api.auth import decode_token
+from econ.api.auth import decode_access_token
 from econ.api.deps import get_current_user, get_session
 from econ.api.intents import submit_intent
 from econ.api.rounds import world_tick_seconds
@@ -96,7 +96,7 @@ def _engine_for(websocket: WebSocket):
 
 
 def _bootstrap_for_token(engine, token: str) -> dict | None:
-    payload = decode_token(token)
+    payload = decode_access_token(token)
     user_id = payload.get("sub") if payload else None
     if not isinstance(user_id, str):
         return None
