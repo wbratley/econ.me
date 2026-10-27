@@ -257,6 +257,10 @@ def catalog_state(session: Session) -> dict:
                 "incapacitates_at": (str(g.incapacitates_at)
                                      if g.incapacitates_at is not None
                                      else None),
+                # Rot as a number, not prose: the agent loop's runway
+                # math (the vitals block) reads it directly.
+                "decay_per_tick": (_num(g.decay_per_tick)
+                                   if g.decay_per_tick is not None else None),
                 "effect": good_effect(g, needs_by_condition),
             }
             for g in goods
@@ -270,6 +274,13 @@ def catalog_state(session: Session) -> dict:
                 # Draw-order wording: the need is PAID from holdings,
                 # satisfier by satisfier in the order the consumption
                 # pass tries them -- not a menu of equivalent sources.
+                # The same numbers structured (the loop's runway math
+                # reads them; the prose above is for humans and models).
+                "per_tick": _num(n.quantity_per_tick),
+                "night_per_tick": (
+                    _num(n.night_quantity_per_tick)
+                    if n.night_quantity_per_tick is not None else None),
+                "satisfier_symbols": [s.symbol for s in n.satisfiers],
                 "draws": (
                     f"draws {_num(n.quantity_per_tick)}/tick from holdings, "
                     f"eating {_satisfier_chain(n, good_by_symbol)}"
@@ -297,6 +308,16 @@ def catalog_state(session: Session) -> dict:
                 "pack": r.pack_id,      # 15.4 provenance; None = platform
                 "line": recipe_line(r),
                 "effects": recipe_effects(r),
+                # Structured I/O (the loop prices a larder by them --
+                # 'how many satiety-hours are these berries if eaten').
+                "inputs": {i.symbol: _num(i.quantity) for i in r.inputs},
+                "outputs": {o.symbol: _num(o.quantity) for o in r.outputs},
+                "branches": [
+                    {"label": b.label, "weight": _num(b.weight),
+                     "outputs": {o.symbol: _num(o.quantity)
+                                 for o in b.outputs}}
+                    for b in r.branches
+                ],
             }
             for r in recipes
         ],

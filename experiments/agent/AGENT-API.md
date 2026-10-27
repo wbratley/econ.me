@@ -100,8 +100,14 @@ prompt) — this is *everything the model learns about the world*:
 ```json
 { "round":   <round_state>,
   "entity":  <entity_state incl. condition telemetry>,
-  "events":  <entity_events, last_ticks window>,
-  "prices":  <market_prices>,
+  "events":  <entity_events, one FULL round (ticks_per_round, ≤50),
+               routing ids/hashes stripped — facts only>,
+  "vitals":  <trajectory facts derived from own state + public catalog
+               (run 65: the models never compute these — the platform
+               does the arithmetic): daylight left, food runway hours
+               (stomach + larder), per-condition time-to-kill-line /
+               recovery half-life, the window's food balance>,
+  "prices":  <market_prices, live books only — empty-book rows dropped>,
   "leaderboard": <rows with money POPPED — holdings privacy>,
   "epoch":   <epoch_state>,
   "seen":    [{"tick", "who", "what"}]  // witnessed speech, names resolved
