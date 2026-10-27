@@ -132,8 +132,8 @@ round; only the *arguments* (entity ids, sources) vary:
 4. `round_state`, `entity_state`, `entity_events`, `market_prices`, `epoch_state`
 5. `world_catalog` — **once per run**, cached (goods are static)
 6. `get_script_libraries`, `get_behaviour`
-7. ⟵ model call(s) — up to `max_attempts` (3), each attempt re-prompted with accumulated findings
-8. `set_behaviour` — on accept, done; on lint refusal → finding → back to 7. (KEEP submits nothing; SAY replies add `perform_action(say)` after the decision)
+7. ⟵ model call(s) — up to `max_attempts` (3). Each attempt: **local parse gate first** (lupa's own error + hint, zero platform calls), then the inert gate, then `dry_run_behaviour` (the bit-identical submit gate, nothing installed). Attempts 2+ re-prompt with accumulated findings and a **trimmed observation** (the round is frozen mid-cycle: events/prices/leaderboard/seen are byte-identical to attempt 1's and are dropped; round/entity/vitals/epoch stay)
+8. `set_behaviour` — exactly once, for the candidate the dry-run accepted. (KEEP submits nothing; SAY replies add `perform_action(say)` after the decision)
 9. `set_ready` — consent, never blocking on the world (clock mode)
 10. diary model call (separate short prompt, `--diary` runs)
 
@@ -184,7 +184,7 @@ journals, 11 round snapshots.
 | `seat-<house>.round-N.diary.prompt.md` | the diary call, full transcript included | "what was she told after?" |
 | `calls.log` | JSONL per model attempt: model, attempt, ok, elapsed_s, finish_reason, content/reasoning chars & deltas, max_tokens, full token usage, seat, round | "how long did the ladder think?" |
 | `mcp-calls.jsonl` | JSONL per MCP round trip (all seats, one file): ts, seat, method, tool, abbreviated args (huge sources → head+sha, joinable to `source_sha`), ok/error, elapsed_s, result_chars | "which tool calls did the seat make, and what did each cost?" |
-| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), outcome (keep/rewrite/edit-exact/edit-fuzzy/edit-miss/lint-refusal/smoke-crash/inert/protocol-slip/model-failure), edit_rung (exact/fuzzy), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
+| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), outcome (keep/rewrite/edit-exact/edit-fuzzy/edit-miss/lint-refusal/compile-refusal/smoke-crash/inert/protocol-slip/platform-failure/model-failure), edit_rung (exact/fuzzy), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
 | `round-NN.json` | world snapshot: ticks, events_by_type, per-dynasty view (behaviour sha + entry), leaderboard | "what did the world do?" |
 | `dashboard.html` / `index.html` | the browsable standings/round table/sha trails | "what happened at a glance?" |
 | `world.db` | the engine's own DB (`ticks(number, events JSON)`, entities, holdings) | "ground truth, tick by tick" |
