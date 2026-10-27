@@ -152,7 +152,7 @@ Three prompt shapes, all persisted per round (§6). System prompt
 | `ctx.action.*` | start_process, cancel_process, travel, place_order, cancel_order, transfer, transfer_parcel, attack, say — with arity/validation rules |
 | `ctx.query.*` | balance, market_price, best_bid/ask, holding, holders, route, fiscal_policy, constitution, proposals… — "strings or nil" |
 | Shape laws | place keys are strings, decimal strings everywhere, bare books return nil, rejected intents land in `ctx.events` |
-| Reply grammar | edit-mode: edit blocks (preferred) / full rewrite / KEEP — plus the optional opening `SAY:` line |
+| Reply grammar | edit-mode: edit blocks (preferred) / full rewrite / KEEP — plus the optional opening `SAY:` line. Edit blocks apply on a ladder: exact, then whitespace-normalized, then a unique near-match (≥0.85 char ratio, ≥0.10 clear of the runner-up) — transcription drift applies with a canonical-bytes note; ambiguity refuses |
 | `std.*` | engine stdlib **source, verbatim** |
 | `world.*` | this world's library **source, verbatim** |
 | `pack.*` | content pack's play opinions **verbatim** |
@@ -184,7 +184,7 @@ journals, 11 round snapshots.
 | `seat-<house>.round-N.diary.prompt.md` | the diary call, full transcript included | "what was she told after?" |
 | `calls.log` | JSONL per model attempt: model, attempt, ok, elapsed_s, finish_reason, content/reasoning chars & deltas, max_tokens, full token usage, seat, round | "how long did the ladder think?" |
 | `mcp-calls.jsonl` | JSONL per MCP round trip (all seats, one file): ts, seat, method, tool, abbreviated args (huge sources → head+sha, joinable to `source_sha`), ok/error, elapsed_s, result_chars | "which tool calls did the seat make, and what did each cost?" |
-| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
+| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), outcome (keep/rewrite/edit-exact/edit-fuzzy/edit-miss/lint-refusal/smoke-crash/inert/protocol-slip/model-failure), edit_rung (exact/fuzzy), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
 | `round-NN.json` | world snapshot: ticks, events_by_type, per-dynasty view (behaviour sha + entry), leaderboard | "what did the world do?" |
 | `dashboard.html` / `index.html` | the browsable standings/round table/sha trails | "what happened at a glance?" |
 | `world.db` | the engine's own DB (`ticks(number, events JSON)`, entities, holdings) | "ground truth, tick by tick" |
