@@ -357,15 +357,21 @@ def strip_think(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
-def _lua_compiles(source: str) -> bool:
-    """Syntax-only arbitration: lupa's compile runs nothing, it parses.
-    The check is the extractor's ground truth for 'this is the script'."""
+def _lua_syntax_error(source: str) -> str | None:
+    """The lupa parse error text (line number included), or None when
+    the source compiles. Syntax-only: compile runs nothing, it parses."""
     try:
         from lupa import LuaRuntime
         LuaRuntime().compile(source)
-        return True
-    except Exception:
-        return False
+        return None
+    except Exception as exc:  # noqa: BLE001 — lupa's LuaSyntaxError
+        return str(exc)
+
+
+def _lua_compiles(source: str) -> bool:
+    """Syntax-only arbitration: lupa's compile runs nothing, it parses.
+    The check is the extractor's ground truth for 'this is the script'."""
+    return _lua_syntax_error(source) is None
 
 
 def _last_fence(text: str) -> str | None:
