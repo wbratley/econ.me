@@ -31,7 +31,7 @@ from experiments.agent.llm import (
 )
 from experiments.agent.loop import (
     AgentLoop, McpClient, McpError, _apply_edits, _closest_region,
-    _parse_patches, _peel_say, system_prompt,
+    _parse_patches, _peel_say, _slim_event, _vitals, system_prompt,
     user_prompt,
 )
 from experiments.agent.run import run_cycles
@@ -1591,3 +1591,96 @@ def test_model_trace_writes_repetition_break_dump(tmp_path):
     assert not list(tmp_path.glob("reasoning-burn-*"))
     rec = json.loads((tmp_path / "calls.log").read_text().splitlines()[0])
     assert rec["breaker"] is True and rec["breaker_channel"] == "reasoning"
+
+
+# ===========================================================================
+# The vitals block (run 65's post-mortem: state is not trajectory)
+# ===========================================================================
+
+_VITALS_ENTITY = {
+    "holdings": [
+        {"symbol": "SATIETY", "quantity": "2.2254"},
+        {"symbol": "HUNGER", "quantity": "3.9631"},
+        {"symbol": "BERRIES", "quantity": "6.0000"},
+    ],
+    "needs": [{"need": "FOOD", "satisfaction": "0.0000"}],
+    "clock": {"hour": 0, "is_day": False, "is_night": True,
+              "daylight_hours": "06:00-19:00"},
+}
+_VITALS_CATALOG = {
+    "goods": [
+        {"symbol": "SATIETY", "condition": False, "decay_per_tick": "0.1",
+         "incapacitates_at": None},
+        {"symbol": "HUNGER", "condition": True, "decay_per_tick": "0.05",
+         "incapacitates_at": "15"},
+    ],
+    "needs": [
+        {"code": "FOOD", "per_tick": "0.5", "night_per_tick": None,
+         "satisfier_symbols": ["SATIETY"],
+         "condition": {"symbol": "HUNGER", "quantity": "1"}},
+    ],
+    "recipes": [
+        {"code": "EAT_BERRIES", "inputs": {"BERRIES": "1.5"},
+         "outputs": {"SATIETY": "2", "WATER": "0.6"}, "branches": []},
+    ],
+}
+_VITALS_TICKS = [
+    {"tick": 1, "events": [
+        {"type": "need_satisfied", "need": "FOOD", "consumed": "0.5000"}]},
+    {"tick": 2, "events": [
+        {"type": "need_unmet", "need": "FOOD", "consumed": "0",
+         "required": "0.5000"},
+        {"type": "process_completed", "recipe": "EAT_BERRIES",
+         "outputs": {"SATIETY": "2.0000"}}]},
+]
+
+
+def test_vitals_states_runways_and_clocks():
+    """The numbers the run-65 seats never computed: the stomach's hours,
+    the larder's hours, the condition's time-to-line, the window balance."""
+    v = _vitals(_VITALS_ENTITY, _VITALS_CATALOG, _VITALS_TICKS)
+    # stomach: ln(1 + 0.1*2.2254/0.5)/0.1 ≈ 3.7h; larder: 6 berries eat
+    # at 2/1.5 = 8 satiety → ln(1+0.1*8/0.5)/0.1 ≈ 9.6h
+    assert "stomach empties in ~3.7h" in v["food_runway_hours"]
+    assert "adds ~9.6h" in v["food_runway_hours"]
+    # HUNGER: grant 1/decay 0.05 → eq 20 > line 15; FOOD unmet now →
+    # t = ln((20-3.9631)/(20-15))/0.05 ≈ 23.3h
+    assert any("HUNGER" in c and "the line in ~23.3h" in c
+               for c in v["condition_clocks"])
+    assert v["food_window"] == ("last 2h: food unmet 1 of 2 ticks; "
+                                "ate 2.0 satiety against 0.5 burned")
+    assert v["daylight"] == "night: daylight resumes in ~6h"
+
+
+def test_vitals_omits_what_the_world_does_not_declare():
+    assert _vitals({"holdings": []}, {}, []) == {}
+    # a met need's condition reports recovery, not a death clock
+    met = dict(_VITALS_ENTITY,
+               needs=[{"need": "FOOD", "satisfaction": "1.0000"}])
+    v = _vitals(met, _VITALS_CATALOG, [])
+    assert any("HUNGER" in c and "met now -- halves every ~13.9h" in c
+               for c in v["condition_clocks"])
+
+
+def test_slim_event_strips_ids_keeps_facts():
+    ev = {"type": "start_process", "status": "rejected",
+          "reason": "too dark", "entity_id": "e-1", "process_id": "p-1",
+          "idempotency_key": "i-1", "roll": "ab" * 32,
+          "params": {"recipe": "GATHER", "process_id": "p-1"}}
+    assert _slim_event(ev) == {"type": "start_process", "status": "rejected",
+                               "reason": "too dark",
+                               "params": {"recipe": "GATHER"}}
+
+
+def test_observe_carries_vitals_and_a_slimmed_full_round_tail(client, monkeypatch):
+    """The observation gains the vitals block; its events tail follows the
+    round's own length and no longer leaks routing ids to the prompt."""
+    monkeypatch.setenv("ECON_TICKS_PER_ROUND", "2")
+    lp, _ = loop(client, [CLEAN])
+    lp.ensure_entity()
+    obs = lp.observe()
+    assert "vitals" in obs                      # empty world → empty block
+    assert obs["events"]["ticks"] == []         # no ticks yet, but the key
+    for t in obs["events"]["ticks"]:
+        for ev in t["events"]:
+            assert "entity_id" not in ev and "process_id" not in ev

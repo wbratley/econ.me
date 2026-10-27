@@ -498,6 +498,194 @@ def _condition_feedback(entity_state: dict, catalog: dict) -> list[str]:
     return lines
 
 
+# ---------------------------------------------------------------------------
+# The vitals block (run 65's post-mortem): state converted to trajectory.
+# A level is not a clock -- Harald's emergency branch fired at HUNGER 10,
+# five hours from the line, mid-errand, because nothing in the observation
+# says how LONG the body has. Every number below derives from the entity's
+# own holdings and the public catalog (parity: the script could compute the
+# same); the platform does the arithmetic because the models demonstrably
+# do not. Plain facts, no advice -- the condition telemetry's doctrine.
+# ---------------------------------------------------------------------------
+
+def _dec(value) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _hr(hours: Decimal) -> str:
+    return f"{hours:.1f}"
+
+
+def _qty(value: Decimal) -> str:
+    """A level as compact prose: 3.9631 -> '3.9631', 15.0000 -> '15'."""
+    return format(value.normalize(), "f")
+
+
+def _runway_hours(stock: Decimal, burn: Decimal, decay: Decimal) -> Decimal:
+    """Hours until a stock hits zero under a constant draw plus its own
+    proportional rot: dS/dt = -(burn + decay*S)."""
+    if stock <= 0:
+        return Decimal(0)
+    if decay <= 0:
+        return stock / burn
+    return (Decimal(1) + decay * stock / burn).ln() / decay
+
+
+def _vitals(entity: dict, catalog: dict, ticks: list[dict]) -> dict:
+    """The trajectory facts: daylight, food runway, condition clocks, and
+    the window's food balance. Omits whatever the world doesn't declare
+    (no clock, no FOOD need, no conditions -> no line)."""
+    out: dict[str, object] = {}
+    holds: dict[str, Decimal] = {}
+    for h in entity.get("holdings", []):
+        q = _dec(h.get("quantity"))
+        if q is not None:
+            holds[str(h.get("symbol"))] = q
+    goods = {g.get("symbol"): g for g in (catalog or {}).get("goods", [])}
+    needs = {n.get("code"): n for n in (catalog or {}).get("needs", [])}
+
+    clock = entity.get("clock") or {}
+    hour = clock.get("hour")
+    dl = clock.get("daylight_hours")
+    if isinstance(dl, str) and hour is not None:
+        m = re.match(r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})", dl)
+        if m:
+            try:
+                hour = int(hour)
+                start, end = int(m.group(1)), int(m.group(3))
+                if clock.get("is_day"):
+                    out["daylight"] = (f"daylight left: ~{max(0, end - hour)}h "
+                                       f"(dark at {end:02d}:00)")
+                else:
+                    out["daylight"] = (f"night: daylight resumes in "
+                                       f"~{(start - hour) % 24}h")
+            except (TypeError, ValueError):
+                pass
+
+    food = needs.get("FOOD") or {}
+    sat = (food.get("satisfier_symbols") or [None])[0]
+    q = _dec(food.get("per_tick"))
+    if sat and q and q > 0:
+        d = _dec((goods.get(sat) or {}).get("decay_per_tick")) or Decimal(0)
+        stomach = _runway_hours(holds.get(sat, Decimal(0)), q, d)
+        # The larder: held goods an EAT recipe turns into the satisfier,
+        # valued at their best satiety ratio.
+        ratios: dict[str, Decimal] = {}
+        for r in (catalog or {}).get("recipes", []):
+            sat_out = _dec((r.get("outputs") or {}).get(sat))
+            if not sat_out:
+                continue
+            for sym, qty in (r.get("inputs") or {}).items():
+                qin = _dec(qty)
+                if qin and qin > 0:
+                    ratio = sat_out / qin
+                    if ratio > ratios.get(sym, Decimal(0)):
+                        ratios[sym] = ratio
+        larder = sum(holds.get(sym, Decimal(0)) * ratio
+                     for sym, ratio in ratios.items())
+        larder_h = _runway_hours(larder, q, d)
+        out["food_runway_hours"] = (
+            f"stomach empties in ~{_hr(stomach)}h; food in hand adds "
+            f"~{_hr(larder_h)}h (burn {q}/h plus the stomach's own spill)")
+
+        # The window's food balance: what the body paid vs what it ate.
+        n = len(ticks)
+        if n:
+            burned = Decimal(0)
+            eaten = Decimal(0)
+            unmet_ticks = 0
+            for t in ticks:
+                for ev in t.get("events", []):
+                    ty = ev.get("type")
+                    if ty == "need_satisfied" and ev.get("need") == "FOOD":
+                        burned += _dec(ev.get("consumed")) or Decimal(0)
+                    elif ty == "need_unmet" and ev.get("need") == "FOOD":
+                        unmet_ticks += 1
+                    elif ty == "process_completed":
+                        gained = _dec((ev.get("outputs") or {}).get(sat))
+                        if gained:
+                            eaten += gained
+            out["food_window"] = (
+                f"last {n}h: food unmet {unmet_ticks} of {n} ticks; "
+                f"ate {_hr(eaten)} satiety against {_hr(burned)} burned")
+
+    # Condition clocks: level, line, and the time the trajectory implies.
+    satisfaction = {n.get("need"): _dec(n.get("satisfaction"))
+                    for n in entity.get("needs", [])}
+    clocks: list[str] = []
+    for sym, g in sorted(goods.items()):
+        line = _dec(g.get("incapacitates_at"))
+        if not g.get("condition") or line is None:
+            continue
+        level = holds.get(sym)
+        if not level or level <= 0:
+            continue
+        d = _dec(g.get("decay_per_tick")) or Decimal(0)
+        grant = Decimal(0)
+        src_need = None
+        for need in needs.values():
+            cond = need.get("condition") or {}
+            if cond.get("symbol") == sym:
+                src_need = need.get("code")
+                cq = _dec(cond.get("quantity"))
+                if cq:
+                    grant = max(grant, cq)
+        frag = f"{sym} {_qty(level)}/{_qty(line)}"
+        sat_now = satisfaction.get(src_need) if src_need else None
+        # Decimal(0) is falsy -- an EXPLICIT None check, or a fully-unmet
+        # need reads as met and the death clock reports recovery instead.
+        unmet = sat_now is not None and sat_now < 1
+        if unmet and grant > 0 and d > 0:
+            eq = grant / d
+            if eq > line and level < line:
+                t_line = ((eq - level) / (eq - line)).ln() / d
+                clocks.append(f"{frag}: {src_need} unmet now -- the line "
+                              f"in ~{_hr(t_line)}h on this trajectory")
+            elif eq > line:
+                clocks.append(f"{frag}: at/over the line")
+            else:
+                clocks.append(f"{frag}: {src_need} unmet now -- settles "
+                              f"~{_hr(eq)}, below the line")
+        elif sat_now is not None and d > 0:
+            clocks.append(f"{frag}: met now -- halves every "
+                          f"~{_hr(Decimal(2).ln() / d)}h")
+        else:
+            clocks.append(frag)
+    if clocks:
+        out["condition_clocks"] = clocks
+    return out
+
+
+# Event envelopes carry routing metadata the engine needs and the author
+# never reads (run-65 audit: 37% of the events payload was UUIDs and
+# commit-reveal hashes). The observation strips those keys; every fact
+# (type, status, reason, outputs, need, amounts) survives.
+_EVENT_NOISE_KEYS = frozenset({
+    "idempotency_key", "process_id", "route_id", "entity_id", "roll",
+    "parcel_id",
+})
+
+
+def _slim_event(event: dict) -> dict:
+    slim = {k: v for k, v in event.items() if k not in _EVENT_NOISE_KEYS}
+    params = slim.get("params")
+    if isinstance(params, dict):
+        slim["params"] = {k: v for k, v in params.items()
+                          if k not in _EVENT_NOISE_KEYS}
+    return slim
+
+
+def _price_rows(prices) -> list[dict]:
+    """market_prices as a row list (the tool returns the bare list; older
+    canned transports wrap it as {'markets': [...]})."""
+    if isinstance(prices, dict):
+        prices = prices.get("markets", [])
+    return [p for p in (prices or []) if isinstance(p, dict)]
+
+
 def _refusal_hint(error: str) -> str | None:
     """One actionable sentence per refusal class; None = no known class."""
     if "<eof> expected" in error or "expected near 'end'" in error:
@@ -792,7 +980,11 @@ class AgentLoop:
 
     def observe(self) -> dict:
         """The parity set: everything the script itself could see, plus the
-        public facts (prices, standings, round clock) any player reads."""
+        public facts (prices, standings, round clock) any player reads —
+        and `vitals`, the same facts converted to trajectories (runways,
+        kill-line clocks) by arithmetic the models demonstrably skip
+        (run 65). Events reach the prompt slimmed of routing ids; every
+        fact survives."""
         eid = self.entity_id
         # Rival privacy: the standings keep every PUBLIC fact (status,
         # entities, unlocks, wins) but drop `money` -- a fortune is not a
@@ -819,12 +1011,38 @@ class AgentLoop:
              "what": r["text"]}
             for r in seen.get("activity", []) if r.get("witnessed")
         ]
+        # The event tail covers the whole round, not its last hours:
+        # run 65's seats rewrote from an 8-tick window that showed the
+        # idle evening and hid the working day -- the day's SHAPE (one
+        # gather per excursion, the fire all night) is the thing a
+        # rewrite must see. entity_events caps at 50.
+        round_state = self.mcp.call("round_state")
+        try:
+            window = int(round_state.get("ticks_per_round")
+                         or self.last_ticks)
+        except (TypeError, ValueError):
+            window = self.last_ticks
+        window = max(1, min(50, window))
+        events = self.mcp.call(
+            "entity_events", {"entity_id": eid, "last_ticks": window})
+        raw_ticks = events.get("ticks", [])
+        entity_state = self.mcp.call("entity_state", {"entity_id": eid})
+        catalog = self._kill_lines_catalog()
         obs = {
-            "round": self.mcp.call("round_state"),
-            "entity": self.mcp.call("entity_state", {"entity_id": eid}),
-            "events": self.mcp.call(
-                "entity_events", {"entity_id": eid, "last_ticks": self.last_ticks}),
-            "prices": self.mcp.call("market_prices"),
+            "round": round_state,
+            "entity": entity_state,
+            "events": {**events,
+                       "ticks": [{**t, "events": [_slim_event(e)
+                                                  for e in t.get("events", [])]}
+                                 for t in raw_ticks]},
+            "vitals": _vitals(entity_state, catalog, raw_ticks),
+            # Live books only: at genesis most symbols have no market
+            # activity, and a wall of nulls is noise (run-65 audit: the
+            # prices block was 5KB, ~80% empty books).
+            "prices": [p for p in _price_rows(self.mcp.call("market_prices"))
+                       if any(p.get(k) not in (None, "0.0000", "0")
+                              for k in ("best_bid", "best_ask",
+                                        "last_price", "claimed", "shelf"))],
             "leaderboard": board,
             "epoch": self.mcp.call("epoch_state"),
             "seen": heard,
@@ -834,11 +1052,11 @@ class AgentLoop:
         # failures). Feed them forward like warnings — deduped and
         # translated (a raw Lua error is a riddle; the run-6 "fix" was
         # byte-identical to the crasher).
-        self._feedback.extend(_crash_feedback(obs["events"].get("ticks", [])))
+        self._feedback.extend(_crash_feedback(raw_ticks))
         # Rejections ride the same path (run 30: 16 travel bounces with
         # the reasons in hand, unread for a day). Read-only aggregation.
         self._feedback.extend(_rejection_feedback(
-            obs["events"].get("ticks", []),
+            raw_ticks,
             status=(obs["entity"].get("entity") or {}).get("status")))
         # The condition telemetry (run 48, lever 3; run 52 softened to
         # plain facts): conditions riding toward their kill lines are
@@ -847,7 +1065,7 @@ class AgentLoop:
         # the platform's to announce; what to do about it stays the
         # author's.
         self._feedback.extend(_condition_feedback(
-            obs["entity"], self._kill_lines_catalog()))
+            obs["entity"], catalog))
         return obs
 
     def _kill_lines_catalog(self) -> dict:
