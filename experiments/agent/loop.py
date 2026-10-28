@@ -298,7 +298,12 @@ def diary_prompt(system_text: str, transcript: list[dict],
 # ---------------------------------------------------------------------------
 # Edit blocks (SEARCH/REPLACE): patch the current behaviour instead of
 # rewriting it whole. Aider's format — the one LLMs transcribe most
-# faithfully; strict exact match, because the retry loop is the fuzzing.
+# faithfully. The APPLY is a ladder, not a wall (run 66's post-mortem:
+# every SEARCH miss was transcription drift — whitespace, a misremembered
+# number, a dropped comment — not a stale prompt; the current source was
+# in front of the model all along). The old design made the retry loop
+# the fuzzer — a full re-prompt and regeneration per fuzz iteration;
+# patch(1) has done this in-process for forty years.
 # ---------------------------------------------------------------------------
 
 _PATCH_RE = re.compile(
@@ -757,26 +762,168 @@ def _closest_region(source: str, search: str,
     return "\n".join(src_lines[start:start + size])
 
 
+# The ladder's rungs 2-3 (rung 1 is byte-exact, first occurrence — the
+# legacy semantics short SEARCHes rely on). Normalization only LOCATES;
+# what is removed and inserted are the source's and the block's own
+# bytes, so a fuzzed match can never invent content. Scoring is
+# character-level over the joined normalized lines: line-atomic ratios
+# score run 46's one-char drift (`1` vs `1.5`) at 0.80 and miss the
+# exact class this exists to catch.
+_FUZZ_APPLY = 0.85    # a near-match window applies at or above this ratio
+_FUZZ_MARGIN = 0.10   # ...and only when no other window comes this close
+
+
+def _norm_line(line: str) -> str:
+    return " ".join(line.split())
+
+
+def _normalized(lines: list[str]) -> tuple[list[str], list[int]]:
+    """Non-blank lines, whitespace-collapsed, mapped to real indices."""
+    norm, real = [], []
+    for i, ln in enumerate(lines):
+        n = _norm_line(ln)
+        if n:
+            norm.append(n)
+            real.append(i)
+    return norm, real
+
+
+def _norm_hits(norm: list[str], needle: list[str]) -> list[int]:
+    k = len(needle)
+    return [i for i in range(len(norm) - k + 1)
+            if norm[i:i + k] == needle]
+
+
+def _nearest_windows(norm: list[str], needle: list[str]
+                     ) -> tuple[float, int, float, int]:
+    """(best ratio, best start, runner-up ratio, runner-up start) over
+    needle-sized windows of the normalized source, scored char-level."""
+    k = len(needle)
+    target = "\n".join(needle)
+    best_r, best_i, second_r, second_i = 0.0, -1, 0.0, -1
+    for i in range(len(norm) - k + 1):
+        sm = difflib.SequenceMatcher(None, target, "\n".join(norm[i:i + k]))
+        # real_quick_ratio is an O(n) upper bound: skip the full ratio
+        # for windows that cannot reach the bar (no false negatives).
+        if sm.real_quick_ratio() < _FUZZ_APPLY:
+            continue
+        r = sm.ratio()
+        if r > best_r:
+            best_r, best_i, second_r, second_i = r, i, best_r, best_i
+        elif r > second_r:
+            second_r, second_i = r, i
+    return best_r, best_i, second_r, second_i
+
+
+def _region(lines: list[str], a: int, b: int, cap: int = 12) -> str:
+    """Real lines a..b inclusive (0-based), capped — the canonical bytes."""
+    span = lines[a:b + 1]
+    if len(span) > cap:
+        span = span[:cap] + ["…"]
+    return "\n".join(span)
+
+
+def _ambiguous_error(i: int, lines: list[str],
+                     spans: list[tuple[int, int]]) -> str:
+    """Ambiguity is a refusal, never a coin flip: both candidates shown,
+    and the fix named (a longer SEARCH) — the one refusal class that
+    must NOT flip the seat to full-rewrite mode."""
+    parts = [f"block {i}: SEARCH is ambiguous — it matches "
+             f"{len(spans)} regions; refusing to guess. Candidates read:"]
+    for a, b in spans[:3]:
+        parts.append(f"--- lines {a + 1}-{b + 1} ---")
+        parts.append(_region(lines, a, b, cap=8))
+    parts.append("quote MORE surrounding lines so the SEARCH names "
+                 "exactly one region")
+    return "\n".join(parts)
+
+
 def _apply_edits(source: str,
-                 patches: list[tuple[str, str]]) -> tuple[str | None, str | None]:
-    """Apply blocks in order, first occurrence each. Returns the patched
-    source, or (None, why) — `why` is feedback the model can act on:
-    on a miss it echoes the current behaviour's closest region, the
-    text to quote verbatim next try."""
+                 patches: list[tuple[str, str]]
+                 ) -> tuple[str | None, str | None, list[str]]:
+    """Apply blocks in order. Returns (patched, err, notes): err is
+    feedback the model can act on (on a miss it echoes the current
+    behaviour's closest region, the text to quote verbatim next try);
+    notes narrate any DRIFTED applications — which lines the SEARCH
+    actually landed on and what the canonical bytes were, so the next
+    block (and the next round) anchors on truth. A block's ladder:
+    exact, whitespace-normalized (unique), near-match (≥ _FUZZ_APPLY
+    and _FUZZ_MARGIN clear of the runner-up). Ambiguity refuses."""
+    notes: list[str] = []
     for i, (search, replace) in enumerate(patches, 1):
         if not search.strip():
-            return None, f"block {i}: SEARCH is empty"
-        if search not in source:
-            head = " ".join(search.split())[:60]
-            region = _closest_region(source, search)
-            return None, (
-                f"block {i}: SEARCH not found in the current "
-                f"behaviour: {head!r}\n"
-                "the current behaviour's closest region reads "
-                "(copy THESE lines verbatim into SEARCH, whitespace "
-                "included):\n" + region)
-        source = source.replace(search, replace, 1)
-    return source, None
+            return None, f"block {i}: SEARCH is empty", []
+        if search in source:
+            source = source.replace(search, replace, 1)
+            continue
+        trailing_nl = source.endswith("\n")
+        lines = source.splitlines()
+        norm, real = _normalized(lines)
+        needle = [n for n in (_norm_line(ln) for ln in search.splitlines())
+                  if n]
+        if not needle:
+            return None, f"block {i}: SEARCH is empty", []
+        k = len(needle)
+        span: tuple[int, int] | None = None
+        hits = _norm_hits(norm, needle)
+        if len(hits) > 1:
+            return None, _ambiguous_error(
+                i, lines, [(real[h], real[h + k - 1]) for h in hits]), []
+        if hits:
+            span = (real[hits[0]], real[hits[0] + k - 1])
+        else:
+            best_r, best_i, second_r, second_i = _nearest_windows(
+                norm, needle)
+            if best_i < 0 or best_r < _FUZZ_APPLY:
+                head = " ".join(search.split())[:60]
+                region = _closest_region(source, search)
+                return None, (
+                    f"block {i}: SEARCH not found in the current "
+                    f"behaviour: {head!r}\n"
+                    "the current behaviour's closest region reads "
+                    "(copy THESE lines verbatim into SEARCH, whitespace "
+                    "included):\n" + region), []
+            if second_i >= 0 and best_r - second_r < _FUZZ_MARGIN:
+                return None, _ambiguous_error(
+                    i, lines, [(real[best_i], real[best_i + k - 1]),
+                               (real[second_i], real[second_i + k - 1])]), []
+            span = (real[best_i], real[best_i + k - 1])
+        a, b = span
+        old = _region(lines, a, b)
+        new_lines = replace.splitlines()
+        lines[a:b + 1] = new_lines
+        source = "\n".join(lines) + ("\n" if trailing_nl else "")
+        now = (_region(source.splitlines(), a, a + len(new_lines) - 1)
+               if new_lines else "(nothing — the lines were removed)")
+        notes.append(
+            f"block {i}: SEARCH matched with drift at lines {a + 1}-{b + 1} "
+            "(your block was not byte-for-byte). The behaviour's lines "
+            f"were:\n{old}\nThey now read:\n{now}")
+    return source, None, notes
+
+
+def _classify_outcome(accepted: bool, action: str, edit_rung: str | None,
+                      last_error: str | None) -> str:
+    """The one-word verdict a post-mortem sorts by. Run 66's 44/108
+    could not be decomposed after the fact (which failures were
+    SEARCH-miss, which lint, which the provider?); this field is the
+    decomposition, written as it happens."""
+    if accepted:
+        if action == "edit":
+            return "edit-fuzzy" if edit_rung == "fuzzy" else "edit-exact"
+        return action                     # keep | rewrite
+    err = last_error or ""
+    if err.startswith("model failure"):
+        return "model-failure"
+    if "never acts" in err:
+        return "inert"
+    if err.startswith("smoke-run crash"):
+        return "smoke-crash"
+    if err.startswith(("KEEP refused", "patch refused")):
+        return "protocol-slip"
+    if "SEARCH" in err:
+        return "edit-miss"
+    return "lint-refusal"
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1251,7 @@ class AgentLoop:
 
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action, raw, extractor = "", "rewrite", "", None
+        edit_rung = None              # exact | fuzzy, when action == edit
         say_line, say_status = None, None   # the controller's voice, if
         # any reply this round opened with one (the last reply wins)
         # The edit mode the SEAT sees: the configured mode, until a
@@ -1185,18 +1333,29 @@ class AgentLoop:
                         sys_text = self._force_full_rewrite(
                             libraries, feedback)
                     continue
-                patched, err = _apply_edits(current["source"], patches)
+                patched, err, notes = _apply_edits(current["source"],
+                                                   patches)
                 if err:
                     last_error = err
                     feedback.append(f"patch did not apply: {err}")
                     transcript.append(
                         {"platform": f"patch did not apply: {err}"})
-                    if not rewrite_forced:
+                    # Ambiguity keeps the edit grammar (the fix is a
+                    # LONGER search, and the feedback says so); a true
+                    # miss flips the cycle to full rewrite (run 54 r4).
+                    if "ambiguous" not in err and not rewrite_forced:
                         rewrite_forced = True
                         sys_text = self._force_full_rewrite(
                             libraries, feedback)
                     continue
                 source, action = patched, "edit"
+                edit_rung = "fuzzy" if notes else "exact"
+                # A drifted application reports the canonical bytes it
+                # landed on — if a LATER gate refuses this attempt, the
+                # retry sees the truth to quote, not the drift.
+                for note in notes:
+                    feedback.append(note)
+                    transcript.append({"platform": note})
             else:                     # action 3: the full rewrite
                 # `current` rides along: a compiling candidate that is
                 # the running script re-indented is a quote, not intent
@@ -1345,6 +1504,10 @@ class AgentLoop:
             "accepted": accepted,
             "kept_old": not accepted,
             "action": action,
+            "edit_rung": edit_rung,   # exact | fuzzy | None: which ladder
+                                       # rung carried the patch (run 66)
+            "outcome": _classify_outcome(accepted, action, edit_rung,
+                                          last_error),
             "edit_mode": self.edit_mode,   # run-47 forensics: SEARCH-miss
                                             # rounds were inferred from
                                             # refusal strings; now a field

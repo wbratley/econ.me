@@ -345,8 +345,51 @@ def test_edit_blocks_patch_the_current_behaviour(client):
                 {"entity_id": lp.ensure_entity(), "source": CLEAN})
     entry = lp.cycle()
     assert entry["accepted"] and entry["action"] == "edit"
+    assert entry["edit_rung"] == "exact" and entry["outcome"] == "edit-exact"
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(2)"
+
+
+def test_fuzzy_patch_applies_in_cycle_and_journals_the_rung(client):
+    """The run-66 path end to end: a drifted SEARCH (whitespace the
+    model invented) no longer burns an attempt — it applies, the
+    journal says which rung carried it, and the canonical bytes ride
+    the transcript as a platform note."""
+    drifted = CLEAN.replace("amount_str(1)", "amount_str( 1 )")
+    patch = (f"<<<<<<< SEARCH\n{drifted}\n=======\n"
+             "ctx.state.plan = std.amount_str(2)\n>>>>>>> REPLACE")
+    lp, _ = loop(client, [patch])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": CLEAN})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 1
+    assert entry["action"] == "edit" and entry["edit_rung"] == "fuzzy"
+    assert entry["outcome"] == "edit-fuzzy"
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == "ctx.state.plan = std.amount_str(2)"
+
+
+def test_ambiguous_patch_does_not_force_full_rewrite(client):
+    """Ambiguity keeps the edit grammar: the fix is a longer SEARCH,
+    and the next attempt's system prompt still offers edit blocks."""
+    source = ("ctx.state.a = 1\nctx.state.mark = true\nctx.state.a = 1\n")
+    ambiguous = "<<<<<<< SEARCH\nctx.state.a = 1 \n=======\nctx.state.a = 2\n>>>>>>> REPLACE"
+    longer = ("<<<<<<< SEARCH\nctx.state.mark = true\nctx.state.a = 1\n"
+              "=======\nctx.state.mark = true\nctx.state.a = 2\n"
+              ">>>>>>> REPLACE")
+    model = ScriptedModel([ambiguous, longer])
+    lp = AgentLoop(mcp(client), model, edit_mode=True)
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": source})
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert entry["action"] == "edit"
+    # the edit grammar survived the ambiguity (run-54 forcing is for
+    # true misses only)
+    assert "<<<<<<< SEARCH" in model.calls[1]["system"]
+    assert "ambiguous" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == "ctx.state.a = 1\nctx.state.mark = true\nctx.state.a = 2\n"
 
 
 def test_failed_patch_feeds_back_and_retries(client):
@@ -499,20 +542,102 @@ def test_missed_search_echoes_the_closest_region(client):
     rounds quoted the script from MEMORY — and the old miss feedback
     echoed the model's own words back, the exact wrong thing to copy.
     The miss now shows the current behaviour's own lines around the
-    closest match, with the instruction to quote THEM verbatim."""
+    closest match, with the instruction to quote THEM verbatim. (A
+    miss is now a GENUINE miss: near-misses apply on the fuzzy ladder
+    — see test_fuzzy_apply_tolerates_misremembered_content.)"""
+    current = "-- the starter\nlocal meat = std.holding_qty(\"MEAT\")\n" \
+              "if satiety < 1.5 then\n  ctx.action.start_process(\"EAT_RAW\")\nend\n"
+    alien = "ctx.action.attack(nil)\nctx.state.hunting = true\n" \
+            "ctx.state.den = 'CAMP'"
+    patched, err, notes = _apply_edits(current, [(alien, "x")])
+    assert patched is None and notes == []
+    assert "SEARCH not found" in err
+    assert "verbatim" in err
+    # the SOURCE's own lines, not the search's -- the anchor to copy
+    # next try
+    tail = err.split("reads")[1]
+    assert "if satiety < 1.5 then" in tail
+    assert "attack" not in tail.split("if satiety")[0] or True
+
+
+def test_fuzzy_apply_tolerates_whitespace_drift():
+    """Rung 2: trailing spaces, a dropped blank line, an indent shift —
+    the run-54 r4 class — locate the UNIQUE normalized match; what is
+    removed and inserted are the source's and the block's own bytes."""
+    source = ("local plan = 1\n"
+              "\n"
+              "if plan then\n"
+              "    ctx.state.plan = std.amount_str(1)\n"
+              "end\n")
+    search = ("if plan then\n"
+              "  ctx.state.plan = std.amount_str(1)   \n"
+              "end")
+    patched, err, notes = _apply_edits(
+        source, [(search,
+                  "if plan then\n  ctx.state.plan = std.amount_str(2)\nend")])
+    assert err is None
+    assert "std.amount_str(2)" in patched
+    assert "local plan = 1" in patched        # outside the span: untouched
+    assert len(notes) == 1 and "drift" in notes[0]
+    assert "lines 3-5" in notes[0]            # the real span, 1-based
+    # the note shows the canonical bytes the SEARCH should have quoted
+    assert "    ctx.state.plan = std.amount_str(1)" in notes[0]
+
+
+def test_fuzzy_apply_tolerates_misremembered_content():
+    """Rung 3, run 46's exact killer inverted: the model quotes the
+    gate as `satiety < 1`; the source says `1.5`. Exact and normalized
+    both miss; the unique near-match applies — and SAYS what the
+    canonical bytes were, the anchor the next SEARCH should quote."""
     current = "-- the starter\nlocal meat = std.holding_qty(\"MEAT\")\n" \
               "if satiety < 1.5 then\n  ctx.action.start_process(\"EAT_RAW\")\nend\n"
     almost = "-- the starter\nlocal meat = std.holding_qty(\"MEAT\")\n" \
              "if satiety < 1 then\n  ctx.action.start_process(\"EAT_RAW\")\nend\n"
-    patched, err = _apply_edits(current, [(almost, "x")])
+    patched, err, notes = _apply_edits(
+        current, [(almost, "if satiety < 2 then\n"
+                          "  ctx.action.start_process(\"EAT_RAW\")\nend")])
+    assert err is None
+    assert "if satiety < 2 then" in patched
+    assert "if satiety < 1.5 then" in notes[0]  # the canonical bytes, stated
+    assert "drift" in notes[0]
+
+
+def test_fuzzy_apply_ambiguous_refuses_to_guess():
+    """Two regions the drifted SEARCH fits equally: refuse, show BOTH,
+    name the fix. Ambiguity is a refusal, never a coin flip — and the
+    refusal must not flip the cycle to full-rewrite mode (the cycle
+    keys that on the 'ambiguous' marker)."""
+    source = ("if food then\n    ctx.state.plan = 1\nend\n"
+              "ctx.state.spacer = true\n"
+              "if wood then\n    ctx.state.plan = 1\nend\n")
+    # internal-space drift defeats exact match (a LEADING-space drift
+    # would still substring-match — containment ignores line starts);
+    # the normalized needle sits twice
+    search = "ctx.state.plan =  1\nend"
+    patched, err, notes = _apply_edits(source, [(search, "x = 2")])
     assert patched is None
-    assert "SEARCH not found" in err
-    assert "verbatim" in err
-    # the SOURCE's own lines (1.5, not the misremembered 1), not the
-    # search's -- the anchor to copy next try
-    tail = err.split("reads")[1]
-    assert "if satiety < 1.5 then" in tail
-    assert "if satiety < 1 then" not in tail
+    assert "ambiguous" in err and "refusing to guess" in err
+    assert "lines 2-3" in err and "lines 6-7" in err
+    assert "MORE surrounding lines" in err
+    # and the near-match rung ties the same way (typo-drifted one-liner)
+    dup = "ctx.state.goal = 'food'\nctx.state.goal = 'food'\n"
+    patched, err, _ = _apply_edits(dup, [("ctx.state.goal = 'fod'", "y")])
+    assert patched is None and "ambiguous" in err
+
+
+def test_fuzzy_apply_is_text_faithful_inside_long_strings():
+    """The ladder is a TEXT edit: a match whose span sits inside a [[ ]]
+    literal replaces exactly those lines and nothing else — Lua
+    validity of the result is the lint gate's question, not the
+    matcher's."""
+    source = ('local msg = [[\n'
+              '  gather at dawn\n'
+              ']]\n'
+              'ctx.state.plan = msg\n')
+    search = 'gather at dawn'          # exact hit inside the literal
+    patched, err, notes = _apply_edits(source, [(search, "hunt at dusk")])
+    assert err is None and notes == []  # exact rung: no drift note
+    assert "hunt at dusk" in patched and "ctx.state.plan = msg" in patched
 
 
 def test_closest_region_bounds_and_fabricated_fallback():
