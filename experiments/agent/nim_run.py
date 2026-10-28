@@ -331,8 +331,11 @@ def spawn_server(port: int, log_path: Path) -> subprocess.Popen:
     at some other world)."""
     env = dict(os.environ)          # carries DATABASE_URL, ECON_TICKS_PER_ROUND
     log = open(log_path, "w")
+    # sys.executable, not a CWD-relative .venv path: the run must work
+    # from a worktree (A/B arms) where ./.venv may not exist — the
+    # interpreter that launched nim_run is by definition the right one.
     proc = subprocess.Popen(
-        [".venv/bin/python", "-m", "uvicorn", "econ.api.main:app",
+        [sys.executable, "-m", "uvicorn", "econ.api.main:app",
          "--host", "0.0.0.0", "--port", str(port)],
         env=env, stdout=log, stderr=subprocess.STDOUT, cwd=os.getcwd())
     import httpx
