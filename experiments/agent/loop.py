@@ -917,6 +917,12 @@ def _classify_outcome(accepted: bool, action: str, edit_rung: str | None,
     could not be decomposed after the fact (which failures were
     SEARCH-miss, which lint, which the provider?); this field is the
     decomposition, written as it happens."""
+    # KEEP first: it is a CHOICE, not a refusal — accepted stays False
+    # and last_error may even hold an earlier attempt's refusal (run 67:
+    # ambiguous patch, then the seat KEEPed), so the accepted/err
+    # branches below would misclassify it.
+    if action == "keep":
+        return "keep"
     if accepted:
         if action == "edit":
             return "edit-fuzzy" if edit_rung == "fuzzy" else "edit-exact"

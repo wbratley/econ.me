@@ -393,6 +393,9 @@ def test_keep_carries_the_behaviour_forward_verbatim(client):
     assert entry["action"] == "keep" and entry["attempts"] == 1
     assert not entry["accepted"] and entry["kept_old"]
     assert entry["refusal"] is None              # a choice, not a failure
+    # run 67: KEEP must journal outcome "keep" — accepted is False and
+    # last_error may be None, which once fell through to "lint-refusal"
+    assert entry["outcome"] == "keep"
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["id"] == good["id"] and got["source"] == "-- healthy"
 
@@ -432,6 +435,25 @@ def test_fuzzy_patch_applies_in_cycle_and_journals_the_rung(client):
     assert entry["outcome"] == "edit-fuzzy"
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(2)"
+
+
+def test_ambiguous_patch_then_keep_journals_keep(client):
+    """Run 67's sequence: an ambiguous SEARCH refused, then the seat
+    KEEPs — the right answer to a refused guess. The round is a keep,
+    and the outcome field says so even though last_error still holds
+    the ambiguity refusal."""
+    source = ("ctx.state.a = 1\nctx.state.mark = true\nctx.state.a = 1\n")
+    ambiguous = ("<<<<<<< SEARCH\nctx.state.a =  1\n=======\n"
+                 "ctx.state.a = 2\n>>>>>>> REPLACE")
+    lp, _ = loop(client, [ambiguous, "KEEP"])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": source})
+    entry = lp.cycle()
+    assert entry["action"] == "keep" and entry["attempts"] == 2
+    assert entry["outcome"] == "keep"
+    assert "ambiguous" in (entry["refusal"] or "")  # the round's story, kept
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == source                 # untouched
 
 
 def test_ambiguous_patch_does_not_force_full_rewrite(client):
