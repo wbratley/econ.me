@@ -263,3 +263,59 @@ script can catch it and lighten up the same tick. Recipes with
 the studier's `ctx.events` next tick, and the dashboard renders one
 chip per rank per house.
 
+
+## 10. The run-66/67 edit-loop arc (phases A+B shipped; phase C: no-go)
+
+Run 66's post-mortem: every SEARCH-miss was **transcription drift**
+(whitespace, a misremembered number), never a stale prompt — the
+current behaviour was in the prompt all along. The old design made the
+retry loop the fuzzer: each fuzz iteration cost a full re-prompt plus
+a 2–4 minute regeneration. The fix was split into phases; A and B are
+shipped (PRs #244, #245), C was evaluated against the A/B data and
+rejected.
+
+**Phase A — the fuzzy apply ladder** (`_apply_edits`): exact →
+whitespace-normalized (unique) → unique near-match (char-level ratio
+≥ 0.85, ≥ 0.10 clear of the runner-up; `real_quick_ratio` as the O(n)
+pre-filter). Ambiguity refuses with both candidates shown and does NOT
+flip the cycle to forced rewrite. Drifted applications report the
+canonical bytes they landed on. The journal gained `outcome` +
+`edit_rung` — the decomposition run 66's 44/108 could not produce
+after the fact.
+
+**Phase B — cheap iteration**: local lupa parse gate (the loader's own
+error + hint, zero platform round-trips); iteration via
+`dry_run_behaviour` (bit-identical gate, nothing installed) with
+`set_behaviour` called once, on the clean candidate — run 29's
+smoke-crash rollback deleted with the need for it; retry prompts drop
+the frozen observation (`round`/`entity`/`vitals`/`epoch` stay).
+
+**Run 67 A/B** (3 arms; `~/econ-runs/stone-run67-AB.md`, scripts
+`ab-metrics.py` / `ab-reconcile66.py`):
+
+| | run-66 (recorded) | control | treatment (A+B) |
+|---|---|---|---|
+| survived | 7 rounds | 8 | **10** |
+| round acceptance | 58.8% | 75.0% | **73.9%** |
+| edit-miss | 17.6% | 0% | **4.3%** (the 1 = ambiguity guard, correct) |
+| compile refusals | 1 paid | 0 | 1 **free/local, 0 platform calls** |
+| retry prompt (median) | 53.7KB | 60.9KB | **32.8KB (−46%)** |
+
+44/108 reconciliation: that figure was **call-level** (44 ok / 108 LLM
+calls); round-level run-66 acceptance was 10/17 = 58.8%. The fuzzy
+ladder fired 6× in the wild (4 accepted edits, 2 caught by downstream
+gates — no bypass). Per-run variance is large (control 75% vs run-66's
+58.8% on identical code), so survival deltas are suggestive only; the
+mechanics metrics are the evidence.
+
+**Phase C (session ops: READ/EDIT, numbered behaviour, multi-call
+authoring) — NO-GO, recorded so it isn't re-litigated.** The
+treatment's residual refusals decompose into provider reliability
+(NIM timeout, repetition breaker) and model compliance with explicit
+findings (undeclared global with the hint in hand, a `>>` markdown
+artifact re-emitted 3×, a nil-compare smoke crash). Session tools
+address neither class and add a protocol-slip failure class in
+exchange. The evidence-backed levers, if this is revisited: provider
+retry/timeout robustness; `max_attempts` as a config experiment
+(retries are ~half price now, at round wall-clock cost); and survival
+claims need replicates, not tooling.
