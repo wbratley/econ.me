@@ -316,9 +316,74 @@ def test_exhausted_attempts_keep_the_working_behaviour(client):
     assert got["id"] == good["id"] and got["source"] == "-- healthy"
 
 
-# ===========================================================================
-# KEEP and edit blocks: three ways to answer
-# ===========================================================================
+def test_syntax_refusal_is_local_and_free(client):
+    """Phase B: a reply that does not parse is refused by the SEAT —
+    the loader's own error plus its hint, with zero platform
+    round-trips (no dry-run, no set_behaviour). Run 66's retries each
+    paid a full submission to hear what lupa says for free."""
+    prose = "I think we should gather more berries this round, friends."
+    unclosed = "if std.is_day() then\n  ctx.state.plan = std.amount_str(1)\n"
+    lp, model = loop(client, [prose, unclosed, prose], max_attempts=3)
+    calls: list[str] = []
+    orig = lp.mcp.call
+    def spy(tool, args=None):
+        calls.append(tool)
+        return orig(tool, args)
+    lp.mcp.call = spy
+    entry = lp.cycle()
+    assert not entry["accepted"] and entry["attempts"] == 3
+    assert entry["outcome"] == "compile-refusal"
+    # no candidate ever reached a platform gate
+    assert "set_behaviour" not in calls
+    assert "dry_run_behaviour" not in calls
+    # attempt 2: the prose class carries its translation
+    assert "code alone" in model.calls[1]["user"]
+    # attempt 3: the missing-end class names the opener (the hint the
+    # older patterns never matched — lupa says 'end' expected, not
+    # <eof> expected)
+    assert "'end' expected" in model.calls[2]["user"]
+    assert "missing its `end`" in model.calls[2]["user"]
+
+
+def test_lint_refusal_uses_the_dry_run_gate_and_installs_once(client):
+    """The iteration path end to end: a lint-refused candidate pays
+    for a dry-run only; set_behaviour fires exactly once, for the
+    clean candidate — and the refusal text is the platform's own."""
+    trap_ctx = TRAP + "\nctx.state.plan = std.amount_str(1)"
+    lp, model = loop(client, [trap_ctx, CLEAN])
+    calls: list[str] = []
+    orig = lp.mcp.call
+    def spy(tool, args=None):
+        calls.append(tool)
+        return orig(tool, args)
+    lp.mcp.call = spy
+    entry = lp.cycle()
+    assert entry["accepted"] and entry["attempts"] == 2
+    assert calls.count("dry_run_behaviour") == 2     # one per candidate
+    assert calls.count("set_behaviour") == 1         # the clean one only
+    assert "submission refused by lint" in model.calls[1]["user"]
+    assert "settle_last_orders" in model.calls[1]["user"]
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN
+
+
+def test_retry_prompt_drops_the_frozen_observation(client):
+    """Attempts 2+ re-send the finding and the state, not the world:
+    the round is frozen mid-cycle, so events/books/standings are
+    byte-identical to attempt 1's — ~30K of frozen JSON per retry was
+    run 66's invisible tax."""
+    trap_ctx = TRAP + "\nctx.state.plan = std.amount_str(1)"
+    lp, model = loop(client, [trap_ctx, CLEAN])
+    lp.cycle()
+    first, retry = model.calls[0]["user"], model.calls[1]["user"]
+    assert '"events"' in first and '"leaderboard"' in first
+    assert '"prices"' in first
+    assert '"events"' not in retry and '"leaderboard"' not in retry
+    assert '"prices"' not in retry and '"seen"' not in retry
+    # …while the body's state and the clock still ground the fix
+    assert '"entity"' in retry and '"vitals"' in retry
+    assert '"round"' in retry and '"epoch"' in retry
+    assert "FINDINGS" in retry
 
 def test_keep_carries_the_behaviour_forward_verbatim(client):
     lp, _ = loop(client, ["KEEP"])
@@ -328,6 +393,9 @@ def test_keep_carries_the_behaviour_forward_verbatim(client):
     assert entry["action"] == "keep" and entry["attempts"] == 1
     assert not entry["accepted"] and entry["kept_old"]
     assert entry["refusal"] is None              # a choice, not a failure
+    # run 67: KEEP must journal outcome "keep" — accepted is False and
+    # last_error may be None, which once fell through to "lint-refusal"
+    assert entry["outcome"] == "keep"
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["id"] == good["id"] and got["source"] == "-- healthy"
 
@@ -367,6 +435,25 @@ def test_fuzzy_patch_applies_in_cycle_and_journals_the_rung(client):
     assert entry["outcome"] == "edit-fuzzy"
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == "ctx.state.plan = std.amount_str(2)"
+
+
+def test_ambiguous_patch_then_keep_journals_keep(client):
+    """Run 67's sequence: an ambiguous SEARCH refused, then the seat
+    KEEPs — the right answer to a refused guess. The round is a keep,
+    and the outcome field says so even though last_error still holds
+    the ambiguity refusal."""
+    source = ("ctx.state.a = 1\nctx.state.mark = true\nctx.state.a = 1\n")
+    ambiguous = ("<<<<<<< SEARCH\nctx.state.a =  1\n=======\n"
+                 "ctx.state.a = 2\n>>>>>>> REPLACE")
+    lp, _ = loop(client, [ambiguous, "KEEP"])
+    lp.mcp.call("set_behaviour",
+                {"entity_id": lp.ensure_entity(), "source": source})
+    entry = lp.cycle()
+    assert entry["action"] == "keep" and entry["attempts"] == 2
+    assert entry["outcome"] == "keep"
+    assert "ambiguous" in (entry["refusal"] or "")  # the round's story, kept
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == source                 # untouched
 
 
 def test_ambiguous_patch_does_not_force_full_rewrite(client):
@@ -905,27 +992,28 @@ def test_lint_warnings_ride_into_the_next_prompt(client):
 def test_smoke_crash_rolls_back_and_retries(client):
     """Run 29 (Lagertha, d3h09): a rewrite that crashed the smoke run
     was accepted-with-warning and paralysed the house for its last
-    rounds. With a working behaviour in place, a smoke crash is now a
-    soft refusal: the running behaviour is restored, the fault fed
-    back, and the model fixes it within the same round."""
+    rounds. With a working behaviour in place, a smoke crash is a soft
+    refusal. Since the dry-run gate (phase B), the iteration never
+    installs: there is no rollback because there is nothing to roll
+    back — the crashy candidate never touches the entity."""
     lp, model = loop(client, [STATEDEP, CLEAN])
     good = lp.mcp.call("set_behaviour",
                        {"entity_id": lp.ensure_entity(), "source": "-- healthy"})
     entry = lp.cycle()
     assert entry["accepted"] and entry["attempts"] == 2
     assert "smoke-run crash:" in entry["refusal"] or entry["refusal"] is None
-    # the crash reached the model as feedback, with the rollback named
+    # the crash reached the model as feedback, with the non-install named
     assert "crashed the smoke run" in model.calls[1]["user"]
-    assert "running behaviour was kept" in model.calls[1]["user"]
+    assert "installed nothing" in model.calls[1]["user"]
     # and the fix is live: the entity now runs the clean source
     got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
     assert got["source"] == CLEAN
 
 
 def test_smoke_crash_exhaustion_keeps_the_working_behaviour(client):
-    """Every attempt crashes the smoke run: the harness keeps restoring
-    the working behaviour between attempts, and the journal records a
-    kept-old round -- the crasher never runs."""
+    """Every attempt crashes the smoke run: the dry-run gate installs
+    nothing, so the working behaviour is simply never touched — the
+    crasher never runs, and the journal records a kept-old round."""
     lp, _ = loop(client, [STATEDEP, STATEDEP, STATEDEP], max_attempts=3)
     good = lp.mcp.call("set_behaviour",
                        {"entity_id": lp.ensure_entity(), "source": "-- healthy"})

@@ -132,8 +132,8 @@ round; only the *arguments* (entity ids, sources) vary:
 4. `round_state`, `entity_state`, `entity_events`, `market_prices`, `epoch_state`
 5. `world_catalog` — **once per run**, cached (goods are static)
 6. `get_script_libraries`, `get_behaviour`
-7. ⟵ model call(s) — up to `max_attempts` (3), each attempt re-prompted with accumulated findings
-8. `set_behaviour` — on accept, done; on lint refusal → finding → back to 7. (KEEP submits nothing; SAY replies add `perform_action(say)` after the decision)
+7. ⟵ model call(s) — up to `max_attempts` (3). Each attempt: **local parse gate first** (lupa's own error + hint, zero platform calls), then the inert gate, then `dry_run_behaviour` (the bit-identical submit gate, nothing installed). Attempts 2+ re-prompt with accumulated findings and a **trimmed observation** (the round is frozen mid-cycle: events/prices/leaderboard/seen are byte-identical to attempt 1's and are dropped; round/entity/vitals/epoch stay)
+8. `set_behaviour` — exactly once, for the candidate the dry-run accepted. (KEEP submits nothing; SAY replies add `perform_action(say)` after the decision)
 9. `set_ready` — consent, never blocking on the world (clock mode)
 10. diary model call (separate short prompt, `--diary` runs)
 
@@ -184,7 +184,7 @@ journals, 11 round snapshots.
 | `seat-<house>.round-N.diary.prompt.md` | the diary call, full transcript included | "what was she told after?" |
 | `calls.log` | JSONL per model attempt: model, attempt, ok, elapsed_s, finish_reason, content/reasoning chars & deltas, max_tokens, full token usage, seat, round | "how long did the ladder think?" |
 | `mcp-calls.jsonl` | JSONL per MCP round trip (all seats, one file): ts, seat, method, tool, abbreviated args (huge sources → head+sha, joinable to `source_sha`), ok/error, elapsed_s, result_chars | "which tool calls did the seat make, and what did each cost?" |
-| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), outcome (keep/rewrite/edit-exact/edit-fuzzy/edit-miss/lint-refusal/smoke-crash/inert/protocol-slip/model-failure), edit_rung (exact/fuzzy), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
+| `journal-<house>.jsonl` | per round: action (keep/edit/rewrite/extinct/missed_window), outcome (keep/rewrite/edit-exact/edit-fuzzy/edit-miss/lint-refusal/compile-refusal/smoke-crash/inert/protocol-slip/platform-failure/model-failure), edit_rung (exact/fuzzy), accepted, kept_old, refusal, warnings, source_sha, reply_head, **thoughts (the diary)**, say+status | "why did she keep?" |
 | `round-NN.json` | world snapshot: ticks, events_by_type, per-dynasty view (behaviour sha + entry), leaderboard | "what did the world do?" |
 | `dashboard.html` / `index.html` | the browsable standings/round table/sha trails | "what happened at a glance?" |
 | `world.db` | the engine's own DB (`ticks(number, events JSON)`, entities, holdings) | "ground truth, tick by tick" |
@@ -263,3 +263,59 @@ script can catch it and lighten up the same tick. Recipes with
 the studier's `ctx.events` next tick, and the dashboard renders one
 chip per rank per house.
 
+
+## 10. The run-66/67 edit-loop arc (phases A+B shipped; phase C: no-go)
+
+Run 66's post-mortem: every SEARCH-miss was **transcription drift**
+(whitespace, a misremembered number), never a stale prompt — the
+current behaviour was in the prompt all along. The old design made the
+retry loop the fuzzer: each fuzz iteration cost a full re-prompt plus
+a 2–4 minute regeneration. The fix was split into phases; A and B are
+shipped (PRs #244, #245), C was evaluated against the A/B data and
+rejected.
+
+**Phase A — the fuzzy apply ladder** (`_apply_edits`): exact →
+whitespace-normalized (unique) → unique near-match (char-level ratio
+≥ 0.85, ≥ 0.10 clear of the runner-up; `real_quick_ratio` as the O(n)
+pre-filter). Ambiguity refuses with both candidates shown and does NOT
+flip the cycle to forced rewrite. Drifted applications report the
+canonical bytes they landed on. The journal gained `outcome` +
+`edit_rung` — the decomposition run 66's 44/108 could not produce
+after the fact.
+
+**Phase B — cheap iteration**: local lupa parse gate (the loader's own
+error + hint, zero platform round-trips); iteration via
+`dry_run_behaviour` (bit-identical gate, nothing installed) with
+`set_behaviour` called once, on the clean candidate — run 29's
+smoke-crash rollback deleted with the need for it; retry prompts drop
+the frozen observation (`round`/`entity`/`vitals`/`epoch` stay).
+
+**Run 67 A/B** (3 arms; `~/econ-runs/stone-run67-AB.md`, scripts
+`ab-metrics.py` / `ab-reconcile66.py`):
+
+| | run-66 (recorded) | control | treatment (A+B) |
+|---|---|---|---|
+| survived | 7 rounds | 8 | **10** |
+| round acceptance | 58.8% | 75.0% | **73.9%** |
+| edit-miss | 17.6% | 0% | **4.3%** (the 1 = ambiguity guard, correct) |
+| compile refusals | 1 paid | 0 | 1 **free/local, 0 platform calls** |
+| retry prompt (median) | 53.7KB | 60.9KB | **32.8KB (−46%)** |
+
+44/108 reconciliation: that figure was **call-level** (44 ok / 108 LLM
+calls); round-level run-66 acceptance was 10/17 = 58.8%. The fuzzy
+ladder fired 6× in the wild (4 accepted edits, 2 caught by downstream
+gates — no bypass). Per-run variance is large (control 75% vs run-66's
+58.8% on identical code), so survival deltas are suggestive only; the
+mechanics metrics are the evidence.
+
+**Phase C (session ops: READ/EDIT, numbered behaviour, multi-call
+authoring) — NO-GO, recorded so it isn't re-litigated.** The
+treatment's residual refusals decompose into provider reliability
+(NIM timeout, repetition breaker) and model compliance with explicit
+findings (undeclared global with the hint in hand, a `>>` markdown
+artifact re-emitted 3×, a nil-compare smoke crash). Session tools
+address neither class and add a protocol-slip failure class in
+exchange. The evidence-backed levers, if this is revisited: provider
+retry/timeout robustness; `max_attempts` as a config experiment
+(retries are ~half price now, at round wall-clock cost); and survival
+claims need replicates, not tooling.

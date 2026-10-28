@@ -44,7 +44,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .llm import (EmptyFinalContent, ScriptedModelEmpty, _lua_compiles,
-                  extract_script_detailed, strip_fences, strip_think)
+                  _lua_syntax_error, extract_script_detailed, strip_fences,
+                  strip_think)
 
 
 def _slug(name: str) -> str:
@@ -325,6 +326,9 @@ _EOF_HINT = ("Your script has more `end`s than block openers — or "
              "commentary merged into the code. Every function/if/for/"
              "while/do needs exactly one matching `end`; count them, and "
              "resend the code alone.")
+_UNCLOSED_HINT = ("a block is missing its `end` — the parser names the "
+                  "opener ('to close ... at line N'); every "
+                  "function/if/for/while/do needs exactly one `end`.")
 
 # Runtime-crash translations. A raw Lua error string is a riddle to a
 # model that just wrote the line (stone-run6: `attempt to index a nil
@@ -693,6 +697,11 @@ def _price_rows(prices) -> list[dict]:
 
 def _refusal_hint(error: str) -> str | None:
     """One actionable sentence per refusal class; None = no known class."""
+    # lupa's missing-end phrasing ("'end' expected (to close 'if' at line
+    # 3) near <eof>") — the commonest syntax class, and the older
+    # patterns below never matched it
+    if "'end' expected" in error or "near <eof>" in error:
+        return _UNCLOSED_HINT
     if "<eof> expected" in error or "expected near 'end'" in error:
         return _EOF_HINT
     if "syntax error near" in error or "unexpected symbol" in error:
@@ -908,6 +917,12 @@ def _classify_outcome(accepted: bool, action: str, edit_rung: str | None,
     could not be decomposed after the fact (which failures were
     SEARCH-miss, which lint, which the provider?); this field is the
     decomposition, written as it happens."""
+    # KEEP first: it is a CHOICE, not a refusal — accepted stays False
+    # and last_error may even hold an earlier attempt's refusal (run 67:
+    # ambiguous patch, then the seat KEEPed), so the accepted/err
+    # branches below would misclassify it.
+    if action == "keep":
+        return "keep"
     if accepted:
         if action == "edit":
             return "edit-fuzzy" if edit_rung == "fuzzy" else "edit-exact"
@@ -915,6 +930,10 @@ def _classify_outcome(accepted: bool, action: str, edit_rung: str | None,
     err = last_error or ""
     if err.startswith("model failure"):
         return "model-failure"
+    if err.startswith("submission refused (syntax)"):
+        return "compile-refusal"
+    if err.startswith("dry-run check failed"):
+        return "platform-failure"
     if "never acts" in err:
         return "inert"
     if err.startswith("smoke-run crash"):
@@ -1252,6 +1271,14 @@ class AgentLoop:
         attempts, accepted, warnings, last_error = 0, False, [], None
         source, action, raw, extractor = "", "rewrite", "", None
         edit_rung = None              # exact | fuzzy, when action == edit
+        # Attempts 2+: the round is frozen mid-cycle, so the observation
+        # is byte-identical to attempt 1's — re-sending ~30K of frozen
+        # state per retry was run 66's invisible tax. A fix needs the
+        # finding, the source, and the body's state, not the event tail,
+        # books, and standings a second time.
+        obs_retry = {k: obs[k]
+                     for k in ("round", "entity", "vitals", "epoch")
+                     if k in obs}
         say_line, say_status = None, None   # the controller's voice, if
         # any reply this round opened with one (the last reply wins)
         # The edit mode the SEAT sees: the configured mode, until a
@@ -1267,8 +1294,9 @@ class AgentLoop:
         while attempts < self.max_attempts:
             attempts += 1
             try:
-                usr_text = user_prompt(obs, current, feedback,
-                                       edit_mode=edit_mode_eff)
+                usr_text = user_prompt(
+                    obs if attempts == 1 else obs_retry,
+                    current, feedback, edit_mode=edit_mode_eff)
                 self._persist_prompt("author", sys_text, usr_text)
                 raw, nudged = self._complete_author(sys_text, usr_text)
             except ScriptedModelEmpty:
@@ -1364,6 +1392,22 @@ class AgentLoop:
                     raw, current["source"] if has_current else None)
                 action = "rewrite"
 
+            # The local parse gate: a candidate that does not compile is
+            # refused HERE, with the loader's own error and its hint —
+            # no platform round-trip to learn "unexpected symbol near
+            # '>>'". Run 66's retries each paid for a full submission to
+            # hear what lupa says for free.
+            syntax_err = _lua_syntax_error(source)
+            if syntax_err is not None:
+                hint = _refusal_hint(syntax_err)
+                msg = f"submission refused (syntax): {syntax_err}"
+                if hint:
+                    msg += f". {hint}"
+                last_error = msg
+                feedback.append(msg)
+                transcript.append({"platform": msg})
+                continue
+
             # The inert gate: a script that can never act is never intent.
             # Run 43 (Lagertha, d5h17): a degenerate rewrite -- the
             # starter's `holding_qty` line, alone, twice -- compiled,
@@ -1397,40 +1441,60 @@ class AgentLoop:
                                 "-- send a behaviour that acts"})
                 continue
 
+            # The dry-run gate: the EXACT submit lint + smoke matrix,
+            # nothing installed (mcp dry_run_behaviour — a bit-identical
+            # verdict). Iteration pays for a check, not an install; the
+            # one set_behaviour call happens when the candidate is
+            # clean. Run 29's rollback disappears with the need for it:
+            # nothing was installed, so there is nothing to restore.
+            try:
+                dry = self.mcp.call("dry_run_behaviour",
+                                    {"entity_id": eid, "source": source})
+            except McpError as exc:
+                last_error = f"dry-run check failed: {exc}"
+                feedback.append(f"the dry-run check failed: {exc}")
+                transcript.append(
+                    {"platform": f"the dry-run check failed: {exc}"})
+                continue
+            problems = dry.get("problems") or []
+            warnings = dry.get("warnings") or []
+            if problems:
+                # the same "; "-joined problems the set_behaviour refusal
+                # carried — the feedback text is unchanged
+                last_error = "; ".join(problems)
+                hint = _refusal_hint(last_error)
+                msg = f"submission refused by lint: {last_error}"
+                if hint:
+                    msg += f". {hint}"
+                feedback.append(msg)
+                transcript.append({"platform": msg})
+                continue
+            if warnings and has_current:
+                # Run 29 (Lagertha, d3h09): rewrites that crashed the
+                # smoke run were accepted-with-warning, and she spent her
+                # last rounds paralysed by her own broken code. The
+                # platform accepts state-dependent smoke errors (the
+                # synthetic ctx has no world state); the harness holds a
+                # higher bar while a working behaviour exists. First-round
+                # submissions (nothing to fall back on) still
+                # accept-with-warning.
+                last_error = f"smoke-run crash: {warnings[0]}"
+                feedback.append(
+                    f"submission crashed the smoke run: {warnings[0]} "
+                    "-- the dry-run installed nothing, the running "
+                    "behaviour is untouched; fix the fault and send the "
+                    "complete script again")
+                transcript.append(
+                    {"platform": f"submission crashed the smoke run: "
+                                 f"{warnings[0]} -- nothing installed, "
+                                 "fix and resubmit"})
+                continue
             try:
                 result = self.mcp.call(
                     "set_behaviour",
                     {"entity_id": eid, "source": source,
                      "description": f"agent cycle ({self.model.name})"})
-                warnings = result.get("lint_warnings", [])
-                if warnings and has_current:
-                    # Run 29 (Lagertha, d3h09): rewrites that crashed the
-                    # smoke run were accepted-with-warning, and she spent
-                    # her last rounds paralysed by her own broken code.
-                    # The platform accepts state-dependent smoke errors
-                    # (the synthetic ctx has no world state); the harness
-                    # holds a higher bar while a working behaviour exists:
-                    # roll back to it and make the model fix the crash
-                    # THIS round. First-round submissions (nothing to fall
-                    # back on) still accept-with-warning.
-                    try:
-                        self.mcp.call("set_behaviour",
-                                      {"entity_id": eid,
-                                       "source": current["source"],
-                                       "description": "agent cycle "
-                                                      "(smoke-crash rollback)"})
-                    except McpError:   # best effort: the crashy script runs
-                        pass           # either way, and the round continues
-                    last_error = f"smoke-run crash: {warnings[0]}"
-                    feedback.append(
-                        f"submission crashed the smoke run: {warnings[0]} "
-                        "-- the running behaviour was kept; fix the fault "
-                        "and send the complete script again")
-                    transcript.append(
-                        {"platform": f"submission crashed the smoke run: "
-                                     f"{warnings[0]} -- rolled back, "
-                                     "fix and resubmit"})
-                    continue
+                warnings = result.get("lint_warnings", warnings)
                 accepted = True
                 transcript.append({"platform": "submission accepted"
                                    + (f" (warnings: {warnings})" if warnings
@@ -1439,16 +1503,15 @@ class AgentLoop:
                     self._feedback += [f"lint warning: {w}" for w in warnings]
                 break
             except McpError as exc:
+                # bit-identical gates make this a formality; keep the
+                # refusal legible if the world moved under the dry-run
                 last_error = str(exc)
                 hint = _refusal_hint(last_error)
+                msg = f"submission refused by lint: {last_error}"
                 if hint:
-                    feedback.append(f"submission refused by lint: {last_error}. {hint}")
-                    transcript.append(
-                        {"platform": f"submission refused by lint: {last_error}. {hint}"})
-                else:
-                    feedback.append(f"submission refused by lint: {last_error}")
-                    transcript.append(
-                        {"platform": f"submission refused by lint: {last_error}"})
+                    msg += f". {hint}"
+                feedback.append(msg)
+                transcript.append({"platform": msg})
 
         # The voice is submitted after the action settles, BEFORE the
         # diary: the words were said this round whatever happened to the
