@@ -86,9 +86,10 @@ from . import clock, conditions, parcels, rng, tech
 from .markets import InsufficientHoldingsError, adjust_holding, get_holding, reserved_quantity
 from .scripting import OperationVetoedError
 from .models import (
-    Entity, EntityStatus, Parcel, Process, ProcessStatus, Recipe, RecipeBranch,
-    RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement, RecipeInput,
-    RecipeOutput, RecipePerTickInput, RecipeRequirement, RecipeUnlock, Tick,
+    Entity, EntityStatus, Parcel, Process, ProcessProgress, ProcessStatus,
+    Recipe, RecipeBranch, RecipeBranchOutput, RecipeDepositInput,
+    RecipeGoodRequirement, RecipeInput, RecipeOutput, RecipePerTickInput,
+    RecipeRequirement, RecipeUnlock, Tick,
 )
 
 _QUANTUM = Decimal("0.0001")
@@ -99,6 +100,59 @@ _QUANTUM = Decimal("0.0001")
 # the declared effort is the honest "too tired to start" line; with zero
 # hours nothing starts at all.
 EFFORT_FLOOR = Decimal("0.25")
+
+
+# --- The resume ledger (run-69 one-rung trap) ---------------------------
+# A process that dies for want of a per-tick input (or is cancelled)
+# used to forfeit everything: lump inputs and every tick already paid,
+# so the one failed attempt was also the last. Work already paid is
+# banked per (entity, recipe) instead, and re-starting the same recipe
+# resumes it. The credit is time, never goods — everything consumed
+# stays consumed; conservation is untouched.
+
+def get_progress(session: Session, entity_id: str, recipe_id: str) -> ProcessProgress | None:
+    """The banked ticks an entity already paid into a recipe, if any."""
+    return session.execute(
+        select(ProcessProgress).where(
+            ProcessProgress.entity_id == entity_id,
+            ProcessProgress.recipe_id == recipe_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _bank_progress(session: Session, process: Process, paid_this_run: int) -> int:
+    """Add `paid_this_run` ticks to the entity's bank for this recipe,
+    capped at the recipe's duration, remembering the weakest effort any
+    banked run started at. Returns the banked total. A first failure of
+    a duration-2 study after one paid tick banks 1; the restart then
+    runs the remaining 1 tick. Zero paid (died on the very first draw)
+    banks nothing — nothing was kept. Travel hops never bank: the road,
+    not the ledger, prices a journey."""
+    if process.is_travel:
+        return 0
+    run_effort = process.effort_factor
+    row = get_progress(session, process.entity_id, process.recipe_id)
+    if paid_this_run <= 0:
+        return row.ticks_paid if row is not None else 0
+    if row is None:
+        row = ProcessProgress(
+            entity_id=process.entity_id, recipe_id=process.recipe_id,
+            ticks_paid=0)
+        session.add(row)
+    row.ticks_paid = min(process.recipe.duration_ticks,
+                         row.ticks_paid + paid_this_run)
+    if run_effort is not None:
+        row.effort = run_effort if row.effort is None else min(row.effort, run_effort)
+    session.flush()
+    return row.ticks_paid
+
+
+def _clear_progress(session: Session, process: Process) -> None:
+    """The job is done — the banked time was spent finishing it."""
+    row = get_progress(session, process.entity_id, process.recipe_id)
+    if row is not None:
+        session.delete(row)
+        session.flush()
 
 
 def next_tick_number(session: Session) -> int:
@@ -614,7 +668,16 @@ def start_process(
                 f"recipe {recipe.code} requires {req.quantity}"
             )
 
-    if recipe.currency_cost is not None:
+    # The resume ledger (run-69 one-rung trap): ticks already paid into
+    # a failed or cancelled run of this recipe are banked per (entity,
+    # recipe); a restart resumes the work — no second lump draw, no
+    # second currency leg or deposit pull, only the remaining ticks to
+    # run (and the effort the banked runs started at). Every gate above
+    # still fired: the state that gates a start gates a restart.
+    progress_row = get_progress(session, entity.id, recipe.id)
+    banked = progress_row.ticks_paid if progress_row is not None else 0
+
+    if not banked and recipe.currency_cost is not None:
         # The COIN leg: checked and debited BEFORE any goods burn, so a
         # short purse refuses with the holdings intact (the caller's
         # savepoint would roll them back anyway -- this way a bare call
@@ -638,8 +701,10 @@ def start_process(
     # Effort (docs/productivity.md §1): the LABOR input is energy, not
     # material — paid at the fraction held, stamped on the process,
     # applied to credited outputs at completion. Only exhaustion refuses.
+    # A resume skips the draw entirely (the banked run paid it); the
+    # resumed process carries the effort that run started at.
     effort_factor = Decimal("1")
-    for item in recipe.inputs:
+    for item in (recipe.inputs if not banked else ()):
         # WOOD pull-first (docs/camp-storage.md): the hearth's shared
         # WOODPILE is the camp's first fuel, drawn BEFORE the entity's own
         # holdings — a house never starves its fire for lack of a carrying
@@ -714,21 +779,26 @@ def start_process(
             parcels.draw_woodpile(session, entity, "WOOD", from_pool)
         if from_holdings > 0:
             adjust_holding(session, entity, symbol, -from_holdings)
-    for item in recipe.deposit_inputs:
+    for item in (recipe.deposit_inputs if not banked else ()):  # a resume paid them
         parcels.draw_deposit(session, parcel, item.symbol, item.quantity)
 
     tick = next_tick_number(session)
+    if banked and progress_row.effort is not None:
+        effort_factor = progress_row.effort
+    remaining = max(0, recipe.duration_ticks - banked)
     process = Process(
         recipe=recipe,
         entity=entity,
         parcel=parcel,
         started_tick=tick,
-        completes_tick=tick + recipe.duration_ticks,
+        completes_tick=tick + remaining,
         effort_factor=None if effort_factor == 1 else effort_factor,
     )
     session.add(process)
     session.flush()  # assigns process.id, which seeds a duration-0 outcome roll
-    if recipe.duration_ticks == 0:
+    if remaining == 0:
+        # a duration-0 recipe, or a resume whose banked time already
+        # covers the whole run — the work is done the moment it starts
         _complete(session, process, prev_events_hash(session))
         session.flush()
     return process
@@ -746,7 +816,14 @@ def cancel_process(session: Session, process_id: str, entity_id: str) -> Process
         # the seed of the completing tick's outcome rolls is already
         # committed (commit-reveal, see rng.py) — no post-seed cancellation
         raise ValueError("process completes next tick; the cancellation window has closed")
-    process.status = ProcessStatus.CANCELLED  # inputs are forfeit
+    process.status = ProcessStatus.CANCELLED
+    # The resume ledger (run-69 one-rung trap): cancelling is a pause,
+    # not a forfeiture — ticks this run already paid are banked, so a
+    # restart picks up where the work stopped (no second lump draw).
+    # The lump inputs stay consumed: they were burned by the work that
+    # happened, and the banked time is what they bought.
+    paid = next_tick_number(session) - process.started_tick
+    kept = _bank_progress(session, process, paid)
     session.flush()
     return process
 
@@ -839,12 +916,13 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
     0.5/tick decay on the labour goods, no lump ever accumulates).
 
     A process whose entity cannot meet a per-tick input on a given tick is
-    abandoned: status FAILED, no outputs and no unlocks credited, everything
-    already paid forfeit -- the same consequence as a cancellation, but
-    engine-initiated for want of an input rather than owner-initiated. The
-    engine never partially draws a per-tick input: a process is all-or-nothing
-    per tick, so a recipe's declared transform is always whole. Deterministic
-    by created_at/id, like every process pass."""
+    abandoned: status FAILED, no outputs and no unlocks credited — but the
+    ticks it already paid are BANKED (the resume ledger): a restart of the
+    same recipe resumes where the work stopped, so the failure is a pause
+    to finish, not a forfeiture (run-69: the one failed study was also the
+    last). The engine never partially draws a per-tick input: a process is
+    all-or-nothing per tick, so a recipe's declared transform is always
+    whole. Deterministic by created_at/id, like every process pass."""
     running = session.execute(
         select(Process)
         .where(Process.status == ProcessStatus.RUNNING)
@@ -866,6 +944,14 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
                 break
         if short is not None:
             process.status = ProcessStatus.FAILED
+            # The resume ledger (run-69 one-rung trap): the ticks this run
+            # already paid are banked, not burned — a restart of the same
+            # recipe resumes where the work stopped. The event says how
+            # much was kept, so the failure reads as a pause to finish,
+            # not a wall: the one failed attempt was also the last only
+            # when the ledger did not exist.
+            paid = tick_number - process.started_tick
+            kept = _bank_progress(session, process, paid)
             events.append({
                 "type": "process_failed",
                 "entity_id": entity.id,
@@ -873,6 +959,8 @@ def consume_per_tick_inputs(session: Session, tick_number: int) -> list[dict]:
                 "recipe": recipe.code,
                 "reason": f"per-tick input {short} short",
                 "symbol": short,
+                "kept": kept,
+                "of": recipe.duration_ticks,
             })
             continue
         for item in recipe.per_tick_inputs:
@@ -1084,4 +1172,9 @@ def _complete(session: Session, process: Process, seed: str) -> list:
         if unlock is not None:
             granted.append(unlock)
     process.status = ProcessStatus.COMPLETED
+    # The job is done — the banked time (if any restart got here) was
+    # spent finishing it, and the ledger must not survive to discount a
+    # second run (a study is idempotent, a restart after completion is a
+    # fresh job that pays in full).
+    _clear_progress(session, process)
     return granted

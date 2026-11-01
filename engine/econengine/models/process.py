@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, Numeric, Enum as SAEnum
+from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, Numeric, Enum as SAEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -13,8 +13,9 @@ class ProcessStatus(enum.Enum):
     CANCELLED = "cancelled"
     # a RUNNING process that could not meet a per-tick input demand (see
     # production.consume_per_tick_inputs): abandoned mid-run, outputs and
-    # unlocks forfeited, like a cancellation but engine-initiated for want of
-    # an input rather than owner-initiated
+    # unlocks not credited — but the ticks already paid are banked in the
+    # resume ledger (ProcessProgress below), so restarting the same recipe
+    # resumes where the work stopped instead of forfeiting it
     FAILED = "failed"
 
 
@@ -84,3 +85,40 @@ class Process(Base):
 
     def __repr__(self) -> str:
         return f"<Process recipe={self.recipe_id} entity={self.entity_id} [{self.status.value}] completes={self.completes_tick}>"
+
+
+class ProcessProgress(Base):
+    """Work already paid into a recipe by an entity — the resume ledger
+    (the run-69 one-rung trap). When a RUNNING process dies for want of a
+    per-tick input (or is cancelled), the ticks it already paid are banked
+    here instead of vanishing; starting the same recipe again resumes
+    where the work stopped (no second lump draw, `completes_tick` set to
+    the remaining ticks). One row per (entity, recipe); cleared when a
+    process of that recipe completes — the credit is time, and it is
+    spent by finishing the job."""
+
+    __tablename__ = "process_progress"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "recipe_id", name="uq_process_progress"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_id: Mapped[str] = mapped_column(String(36), ForeignKey("entities.id"), nullable=False, index=True)
+    recipe_id: Mapped[str] = mapped_column(String(36), ForeignKey("recipes.id"), nullable=False)
+    ticks_paid: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The weakest effort any banked run started at (NULL = full): a
+    # restart re-prices the completion at the effort already paid, so a
+    # short-ration start cannot be laundered into a full one by failing.
+    effort: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=18, scale=4), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    entity: Mapped["Entity"] = relationship("Entity")
+    recipe: Mapped["Recipe"] = relationship("Recipe")
+
+    def __repr__(self) -> str:
+        return (f"<ProcessProgress entity={self.entity_id} "
+                f"recipe={self.recipe_id} ticks_paid={self.ticks_paid}>")

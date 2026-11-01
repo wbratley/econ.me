@@ -326,7 +326,7 @@ you). Common types and their payload keys:
 |---|---|---|
 | `start_process` | `params.recipe`, `status`, `reason` | status `rejected` carries why (no labor, night, wrong place…) |
 | `process_completed` | `recipe`, outputs | instant recipes (meals) complete before your next run |
-| `process_failed` | `recipe`, `reason` | |
+| `process_failed` | `recipe`, `reason`, `kept`, `of` | a starved per-tick draw: `kept` of `of` ticks are banked — restarting the same recipe resumes where the work stopped (no second lump charge) |
 | `need_satisfied` | `need`, `consumed`, `required`, `satisfaction` | satisfaction `"1.0000"` = fully met; `required` is YOUR draw (profile + body scale it, run 56) |
 | `place_order` / `order_cancelled` | `params`, `order_id`, `status`, `reason` | |
 | `trade` | `market`, `side`, `price`, `quantity`, `cost`, `order_id`, `trade_id` | ONE event per side — a match prints twice |

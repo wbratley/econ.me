@@ -144,6 +144,21 @@ def test_run9_event_shapes_render():
         "quantity": "15.0279", "threshold": "15.0000",
         "recipient_id": "heir",
     }) == "incapacitated: HUNGER reached 15.0279 (threshold 15); estate applied"
+    # the run-69 teaching sentence: a failed per-tick process carries its
+    # banked ticks, and the renderer says what a restart does — the failure
+    # must read as a pause to finish, not a wall
+    assert render_event({
+        "type": "process_failed", "entity_id": "x", "process_id": "p",
+        "recipe": "STUDY_KNAPPING", "reason": "per-tick input LABOR short",
+        "symbol": "LABOR", "kept": 1, "of": 2,
+    }) == ("study knapping failed: per-tick input LABOR short — "
+           "1 of 2 ticks kept; restart it to finish the job")
+    # without banked ticks (a non-resumable shape) the old sentence stands
+    assert render_event({
+        "type": "process_failed", "entity_id": "x", "process_id": "p",
+        "recipe": "BAKE_BREAD", "reason": "per-tick input FUEL short",
+        "symbol": "FUEL",
+    }) == "bake bread failed: per-tick input FUEL short"
 
 
 # --- The reads: /activity, /entities/{id}/activity, MCP entity_activity ----

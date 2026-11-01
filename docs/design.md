@@ -121,7 +121,11 @@ channel: coin over the hills, stock back; overstock out, coin back).
 reservation (Step 12, § parcels): good requirements reserve against the
 entity's running processes and are unavailable to settlement, facility
 requirements reserve per parcel; currency_cost (the merchant rework,
-run 50).*
+run 50); per-tick inputs with the resume ledger (run 69): a process that
+dies for want of a per-tick input — or is cancelled — banks its paid
+ticks per (entity, recipe), and restarting the same recipe resumes the
+remaining ticks without re-charging the lump inputs. The credit is time,
+never goods: everything consumed stays consumed.*
 
 **Machinery, wear, and reservation.** A good-type requirement means "hold
 ≥ N of SYMBOL while this runs" — checked at start, never consumed.

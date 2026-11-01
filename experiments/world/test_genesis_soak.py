@@ -231,7 +231,7 @@ def test_the_genesis_soak_pins_run_55_closed():
     # IS the count of seats whose ladder opened -- the batch bar.
     studies = sum(len(w["studies"]) for w in worlds)
     unlocks = sum(w["knapping_unlocks"] for w in worlds)
-    assert unlocks >= 3, (
+    assert unlocks >= 4, (
         f"only {unlocks}/15 seats hold KNAPPING at day {DAYS} "
         f"({studies} study starts) -- the certain rung is not being "
         f"taken; run 55's signature was zero")
@@ -244,13 +244,24 @@ def test_the_genesis_soak_pins_run_55_closed():
     # run-55 line well above zero at the new rates (~8% batch flake,
     # the soak's historical rate). The census (run
     # A) is the tuning pass the doc names)
-    assert alive >= 4, (
+    #
+    # The resume ledger re-baseline (a4e82ee, measured: 15 worlds + 4
+    # gated batches of 5): 30/45 seats alive (67%, batch min 7 of 5
+    # worlds), 27/45 seats holding KNAPPING (60%, batch min 5), 17/20
+    # worlds kept a living house (85%, batch min 4/5) -- and studies
+    # equal unlocks exactly, because a started one-tick rung always
+    # finishes. The starter's ladder day no longer burns itself waiting
+    # on a per-tick draw its own survival loop eats. Bars sit one step
+    # under the observed batch minima (6/4/3): a drift back to the
+    # bundle-A floor (~3.7 alive, ~2.1 unlocks per 5-world batch) now
+    # FAILS instead of passing silently, without flaking on the tail.
+    assert alive >= 6, (
         f"only {alive}/15 houses alive at day {DAYS} across {WORLDS} "
         f"worlds -- the starter's survival margin collapsed "
         f"(deaths: {[w['deaths'] for w in worlds]})")
 
     # The dynasty's capital line: most worlds keep a living house.
     worlds_with_a_house = sum(1 for w in worlds if w["houses_alive"] >= 1)
-    assert worlds_with_a_house >= 2, (
+    assert worlds_with_a_house >= 3, (
         f"only {worlds_with_a_house}/{WORLDS} worlds kept a living house -- "
         f"the survival margin collapsed")

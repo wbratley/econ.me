@@ -3144,15 +3144,16 @@ def test_the_craft_aisle_is_refused_without_the_rank(session):
 
 
 def test_study_grants_the_rank_and_re_study_is_idempotent(session):
-    """STUDY_KNAPPING at the scrape: 2 flint and 2 hours, and the
-    unlock event lands. A second study runs, eats its flint, and
-    grants nothing -- knowledge kept is not knowledge re-earned."""
+    """STUDY_KNAPPING at the scrape: 2 flint and a quiet hour (one tick,
+    loop-safe by shape — run 69), and the unlock event lands. A second
+    study runs, eats its flint, and grants nothing -- knowledge kept is
+    not knowledge re-earned."""
     create_content(session)
     house = _seat(session, "Student")
     markets.adjust_holding(session, house, "FLINT", Decimal("4"))
     _at(session, house, "FLINT")
     assert _act_day(session, house, "STUDY_KNAPPING")
-    _run(session, 3)  # the 2-tick study + the completion tick
+    _run(session, 2)  # the 1-tick study + the completion tick
     assert _has(session, house.id, "KNAPPING")
     unlocks = [e for e in _events(session, "unlocked")
                if e["entity_id"] == house.id]
@@ -3168,13 +3169,101 @@ def test_study_grants_the_rank_and_re_study_is_idempotent(session):
     markets.adjust_holding(session, house, "FLINT", Decimal("2"))
     _at(session, house, "FLINT")
     assert _act_day(session, house, "STUDY_KNAPPING")
-    _run(session, 3)
+    _run(session, 2)
     assert _hold(session, house.id, "FLINT") == Decimal("1")  # it still ate
     assert [e for e in _events(session, "unlocked")
             if e["entity_id"] == house.id
             and e["technology"] == "KNAPPING"]  # still exactly one
     assert len([e for e in _events(session, "unlocked")
                 if e["entity_id"] == house.id]) == 1
+
+
+def test_rung_one_is_loop_safe_by_shape(session):
+    """Run 69's trap, closed at the root: STUDY_KNAPPING is ONE tick and
+    pays its ration at the gate like any craft's material. Deep at night
+    the ration is long decayed and nothing issues -- the study refuses
+    BEFORE the flint burns (the honest exhaustion), so a survival loop
+    that fights its own study can lose nothing but the attempt."""
+    from econengine import clock
+    create_content(session)
+    house = _seat(session, "Nightowl")
+    markets.adjust_holding(session, house, "FLINT", Decimal("2"))
+    _at(session, house, "FLINT")
+    # run into deep night so the ration decays under the effort floor
+    while not clock.is_night(production.next_tick_number(session)):
+        run_tick(session); session.commit()
+    _run(session, 3)
+    # fresh stones at deep night (flint perishes too) — the refusal
+    # must leave exactly these in hand. Inputs draw symbol-ascending
+    # (FLINT before LABOR), so the whole-refusal promise is the
+    # caller's savepoint — the same one resolve_intent wraps every
+    # intent in; a short ration never burns the stones through it.
+    from econengine.markets import InsufficientHoldingsError
+    _set(session, house, "FLINT", 2)
+    with pytest.raises(InsufficientHoldingsError, match="exhausted"):
+        with session.begin_nested():
+            production.start_process(session, house, "STUDY_KNAPPING")
+    session.commit()
+    assert _hold(session, house.id, "FLINT") == Decimal("2")
+    # and the same study at daylight is one tick: start, one tick, unlock
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 2)
+    assert _has(session, house.id, "KNAPPING")
+
+
+def test_a_starved_rung_two_study_is_a_pause_not_a_wall(session):
+    """The rungs above keep the two-tick shape, but their paid hours bank
+    (the resume ledger): a STUDY_FIRE that starts at the last daylight
+    hour draws once, starves in the dark, and FAILS with kept/of in the
+    event -- the renderer turns it into the teaching sentence, and the
+    restart finishes the job without re-charging the lump inputs."""
+    from econengine import clock
+    from econengine import describe
+    create_content(session)
+    house = _seat(session, "Scholar")
+    markets.adjust_holding(session, house, "FLINT", Decimal("4"))
+    markets.adjust_holding(session, house, "WOOD", Decimal("2"))
+    # a fed, watered, rested scholar: this test is about the study, not
+    # the survival floor -- seed the need stocks so the night wait
+    # cannot kill the subject before the restart lands
+    for sym, qty in (("SATIETY", 10), ("WARMTH", 6), ("WATER", 4),
+                     ("REST", 8), ("COMFORT", 2)):
+        _set(session, house, sym, qty)
+    _at(session, house, "FLINT")
+    assert _act_day(session, house, "STUDY_KNAPPING")
+    _run(session, 2)  # rung one in hand
+    assert _has(session, house.id, "KNAPPING")
+
+    # rung two starts at the last daylight hour: hour 19 draws its
+    # ration, hour 20 is night -- no top-up, the starved tick fails
+    _at(session, house, "HEARTH")
+    while clock.hour_of(production.next_tick_number(session)) != 19:
+        run_tick(session); session.commit()
+    assert _act(session, house, "STUDY_FIRE")  # lump WOOD 1 + FLINT 1 burned
+    assert _hold(session, house.id, "WOOD") == Decimal("1")
+    _run(session, 1)  # hour 19: the first per-tick draw succeeds
+    _run(session, 1)  # hour 20: dark, ration gone -> FAILED, 1 of 2 kept
+    failed = [e for e in _events(session, "process_failed")
+              if e["entity_id"] == house.id][-1]
+    assert failed["recipe"] == "STUDY_FIRE"
+    assert failed["kept"] == 1 and failed["of"] == 2
+    sentence = describe.render_event(failed)
+    assert "1 of 2 ticks kept" in sentence
+    assert "restart" in sentence
+
+    # the restart at dawn resumes: no second WOOD or FLINT charge (none
+    # is spare for one -- WOOD 1 remains, FLINT 0), one hour to finish
+    for sym, qty in (("SATIETY", 6), ("WARMTH", 6), ("WATER", 2),
+                     ("REST", 4), ("COMFORT", 2)):
+        _set(session, house, sym, qty)
+    assert _act_day(session, house, "STUDY_FIRE")
+    _run(session, 2)
+    assert _has(session, house.id, "FIRE_HARDENING")
+    assert _hold(session, house.id, "WOOD") == Decimal("1")  # charged once
+    # and the ledger is spent
+    from econengine.production import get_progress
+    assert get_progress(session, house.id,
+                        production.get_recipe(session, "STUDY_FIRE").id) is None
 
 
 def test_the_ladder_has_a_prerequisite_chain(session):
@@ -3200,7 +3289,7 @@ def test_the_ladder_has_a_prerequisite_chain(session):
     # climb the rungs: knapping, then fire (accepted), then pottery
     _at(session, house, "FLINT")
     assert _act_day(session, house, "STUDY_KNAPPING")
-    _run(session, 3)
+    _run(session, 2)
     _at(session, house, "HEARTH")
     assert _act_day(session, house, "STUDY_FIRE")
     _run(session, 3)
@@ -3256,12 +3345,12 @@ def test_the_day_one_ladder_reaches_the_spear(session):
         select(Place.key).where(Place.id == house.location_place_id)
     ).scalar_one()
     assert at == "FLINT"
-    # dig (1h) -> 2 flint; study (2h) -> KNAPPING in hand
+    # dig (1h) -> 2 flint; study (1h) -> KNAPPING in hand
     assert _act_day(session, house, "DIG_FLINT")
     _run(session, 2)
     assert _hold(session, house.id, "FLINT") == Decimal("2")
     assert _act_day(session, house, "STUDY_KNAPPING")
-    _run(session, 3)
+    _run(session, 2)
     assert _has(session, house.id, "KNAPPING")
     # still inside day 1, and the spear starts the moment the whetstone
     # work has materials (wood and yarn gathered on any walk)

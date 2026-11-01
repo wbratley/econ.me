@@ -179,8 +179,16 @@ def _process_completed(e, names):
 
 @_renders("process_failed")
 def _process_failed(e, names):
-    return (f"{str(e.get('recipe', '?')).lower().replace('_', ' ')} failed: "
-            f"{e.get('reason', '?')}")
+    recipe = str(e.get("recipe", "?")).lower().replace("_", " ")
+    kept, of = e.get("kept"), e.get("of")
+    if kept is not None and of:
+        # the teaching sentence (run-69): a failed per-tick process is a
+        # pause, not a wall — the paid ticks are banked, so say what is
+        # kept and what a restart does, in the same breath as the reason
+        return (f"{recipe} failed: {e.get('reason', '?')} — "
+                f"{kept} of {of} ticks kept; "
+                f"restart it to finish the job")
+    return f"{recipe} failed: {e.get('reason', '?')}"
 
 
 @_renders("unlocked")

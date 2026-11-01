@@ -15,7 +15,7 @@ from .recipe import (
     Recipe, RecipeBranch, RecipeBranchOutput, RecipeDepositInput, RecipeGoodRequirement,
     RecipeInput, RecipeOutput, RecipePerTickInput, RecipeRequirement, RecipeUnlock,
 )
-from .process import Process, ProcessStatus
+from .process import Process, ProcessProgress, ProcessStatus
 from .intent import PendingIntent
 from .parcel import Parcel, Facility, Deposit
 from .facility_holding import FacilityHolding
@@ -63,6 +63,7 @@ __all__ = [
     "Process",
     "PendingIntent",
     "ProcessStatus",
+    "ProcessProgress",
     "Parcel",
     "Facility",
     "Deposit",

@@ -2883,21 +2883,30 @@ def _create_recipes(session: Session) -> None:
     )
 
     # --- The crafts ladder: study is honest work (run 54 P1) ---------
-    # Research is a recipe whose output is an unlock: 2 ticks at an
-    # honest place, the table's inputs consumed at start, one LABOR per
+    # Research is a recipe whose output is an unlock: an honest place,
+    # the table's inputs consumed at start, one LABOR per
     # tick while it runs (the ration feeds the study; night labor fades
     # and so does night study -- no daylight gate needed, the ration IS
     # the gate). Unlocks never transfer: only a STUDY grants, and every
     # craft below it is refused with the rank named. Idempotent: a
     # second study runs, eats, and grants nothing -- knowledge kept is
     # not knowledge re-earned.
+    #
+    # Rung one is loop-safe by shape (run 69: both houses tried
+    # STUDY_KNAPPING exactly once, failed it on a starved per-tick draw
+    # with everything forfeit, and never tried again): ONE tick, the
+    # ration paid at the gate like any craft's material. It either
+    # starts and finishes in the same tick or refuses cleanly with the
+    # balance named -- there is no mid-run state to lose. The rungs
+    # above keep the two-tick shape: their per-tick draw can still come
+    # up short, but the engine banks paid ticks (the resume ledger), so
+    # a failed study is a pause -- restart it and it finishes.
     production.create_recipe(
         session, "STUDY_KNAPPING", name="Study Knapping",
-        description="An afternoon at the scrape striking flint to an edge: "
-                    "the first craft. Two stones and two hours, and the "
-                    "spear and axe are yours to make.",
-        inputs={"FLINT": D("2")}, outputs={}, duration_ticks=2,
-        per_tick_inputs={"LABOR": D("1")},
+        description="A quiet hour at the scrape striking flint to an edge: "
+                    "the first craft. Two stones and a spare hour of "
+                    "work, and the spear and axe are yours to make.",
+        inputs={"FLINT": D("2"), "LABOR": D("1")}, outputs={}, duration_ticks=1,
         requires_place_kind="FLINT", unlocks=["KNAPPING"],
     )
     production.create_recipe(
