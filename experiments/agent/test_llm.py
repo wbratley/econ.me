@@ -731,6 +731,59 @@ def test_nim_drain_cap_resolution(monkeypatch):
     assert NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 600.0
 
 
+def test_minimax_family_gets_the_reasoning_budget(monkeypatch):
+    # run 70's Harald (minimax-m3.1-flash): 18 of 20 author calls
+    # burned the whole 8192 plain-instruct default on the reasoning
+    # channel (finish_reason=length, 0 content chars) — the gpt-oss
+    # cure at gpt-oss's verified budget. A cap, not a target.
+    import experiments.agent.llm as llm
+    assert llm._default_max_tokens(
+        "minimaxai/minimax-m3.1-flash") == 65536
+    # case-insensitive: local-style ids carry capitals
+    assert llm._default_max_tokens("MiniMax-M3.1-Flash") == 65536
+    # an explicit budget still wins over the family default
+    assert llm.NimModel("k", "minimaxai/minimax-m3.1-flash",
+                        max_tokens=12000)._max_tokens == 12000
+    # THE LIVE-SMOKE FINDING (2026-11-03): a 65536-budget minimax
+    # author call streamed 45,146 reasoning chars in 600s with 0
+    # content and the REMOTE drain cap aborted it — the token budget
+    # alone does not thaw the seat. The family takes the 3600s wall
+    # too (runaway hygiene, not pace governance); env and explicit
+    # args still win.
+    m = llm.NimModel("k", "minimaxai/minimax-m3.1-flash")
+    assert m._drain_cap_s == 3600.0
+    # explicit arg beats the family wall (a lab probe can tighten it)
+    assert llm.NimModel("k", "minimaxai/minimax-m3.1-flash",
+                        drain_cap_s=120)._drain_cap_s == 120.0
+    # and the env still overrides the family wall
+    monkeypatch.setenv("ECON_AGENT_DRAIN_CAP_S", "600")
+    assert llm.NimModel(
+        "k", "minimaxai/minimax-m3.1-flash")._drain_cap_s == 600.0
+
+
+def test_llama_drain_cap_moves_the_local_wall_to_one_hour():
+    # run 70's Lagertha: ~40-minute qwen thinks aborted at the 600s
+    # remote guard — the local box has no shared rate budget, so its
+    # wall moves to 3600s (runaway hygiene only). Env still overrides
+    # (including disarming), an explicit arg wins over everything, and
+    # the remote seats keep their own 600s guard.
+    import experiments.agent.llm as llm
+    assert llm.llama_model("m", env={})._drain_cap_s == 3600.0
+    assert llm.llama_model(
+        "m", env={"ECON_AGENT_DRAIN_CAP_S": "600"})._drain_cap_s == 600.0
+    assert llm.llama_model(
+        "m", env={"ECON_AGENT_DRAIN_CAP_S": "0"})._drain_cap_s == 0.0
+    # a typo falls back to the LOCAL default, never to off
+    assert llm.llama_model(
+        "m", env={"ECON_AGENT_DRAIN_CAP_S": "junk"})._drain_cap_s == 3600.0
+    assert llm.llama_model(
+        "m", env={}, drain_cap_s=900)._drain_cap_s == 900.0
+    assert llm.llama_model(
+        "m", env={}, drain_cap_s=0)._drain_cap_s == 0.0
+    # the remote guard keeps its 600s default
+    assert llm.NimModel("k", "openai/gpt-oss-20b")._drain_cap_s == 600.0
+
+
 # ===========================================================================
 # ApprovalModel — the assisted-autonomy dial stop (M2b seat kit)
 # ===========================================================================

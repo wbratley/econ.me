@@ -598,6 +598,14 @@ _REASONING_TOKEN_DEFAULTS: dict[str, int] = {
     # trivial ask — observed 11 reasoning tokens for "say ok").
     "deepseek-reasoner": 32768,
     "deepseek-v4": 32768,
+    # run 70's Harald (nim:minimaxai/minimax-m3.1-flash): 18 of 20
+    # author calls burned the whole 8192 plain-instruct default on
+    # the reasoning channel and returned finish_reason=length with 0
+    # content chars — the typed ReasoningBurn, the same film as
+    # gpt-oss pre-fix. Same cure, same verified budget: 65536 (a cap,
+    # not a target — unspent headroom is free); if the deployment
+    # rejects it, step to 32768.
+    "minimax": 65536,
     # The local llama.cpp qwen seat (run 42): Qwen3.8-27B is a thinking
     # model, ~32 tok/s on this box. Run-54's smoke sized it at 65536 and
     # round 2's hard rewrite consumed the WHOLE 65536 on reasoning and
@@ -660,7 +668,8 @@ LLAMA_DEFAULT_BASE = "http://127.0.0.1:8080"
 
 def llama_model(model: str,
                 on_trace: Callable[[dict], None] | None = None,
-                env: dict[str, str] | None = None) -> NimModel:
+                env: dict[str, str] | None = None,
+                drain_cap_s: float | None = None) -> NimModel:
     """A local llama.cpp seat: the NIM client pointed at localhost.
 
     model is the server's own model id (what /v1/models reports —
@@ -675,6 +684,12 @@ def llama_model(model: str,
     ctx wall, so a verbose think COMPLETES rather than dying at the
     budget — and if it does outgrow the cap it dies at the budget (a
     readable retry), never at the ctx (a server-side truncation).
+    The drain cap defaults to 3600s here (not the 600s remote guard):
+    run 70 aborted ~40-minute qwen thinks at 600s and froze the seat
+    for the run's whole back half — the local box has no shared rate
+    budget, so the wall only guards runaway hygiene. ECON_AGENT_DRAIN_CAP_S
+    still overrides, drain_cap_s=0 disarms, and the remote default is
+    untouched.
     """
     e = dict(env if env is not None else os.environ)
     extra: dict | None = None
@@ -690,7 +705,11 @@ def llama_model(model: str,
         base_url=e.get("ECON_LLAMA_BASE", LLAMA_DEFAULT_BASE),
         limiter_factory=None,
         extra_body=extra,
-        on_trace=on_trace)
+        on_trace=on_trace,
+        drain_cap_s=(drain_cap_s if drain_cap_s is not None
+                     else _drain_cap_s(None,
+                                       default=_LOCAL_DRAIN_CAP_DEFAULT_S,
+                                       env=e)))
     m.name = f"llama:{model}"
     # The empty-finish nudge (run 54 r4): when a think ends with an empty
     # final channel, the loop re-asks the same prompt with thinking
@@ -772,27 +791,61 @@ class _DrainCapExceeded(RuntimeError):
 
 
 _DRAIN_CAP_DEFAULT_S = 600.0
+# The LOCAL llama.cpp seat's wall: run 70's Lagertha aborted ~40-minute
+# qwen thinks at the 600s remote guard (r19–20 drain-cap stalls, the seat
+# frozen exactly when the famine demanded adaptation). The local box
+# has no shared rate budget — the wall's job there is only runaway
+# hygiene, so it moves to 3600s: a full hard-rewrite think (~40–50 min
+# at ~32 tok/s) completes inside the cap instead of dying on it.
+_LOCAL_DRAIN_CAP_DEFAULT_S = 3600.0
+# Reasoning families whose THINKS legitimately outrun the 600s remote
+# guard (evidence, not generosity): the 2026-11-03 L1 live smoke put
+# a 65536-budget minimax author call at 45,146 reasoning chars in
+# 600s with 0 content — the drain cap, not the token budget, was the
+# freeze (run 70's Harald, same seat, same film at 8192). The wall's
+# job for a known long-thinker is runaway hygiene, not pace
+# governance — the same reasoning that moved the local llama seat.
+_DRAIN_CAP_FAMILY_DEFAULTS: dict[str, float] = {
+    "minimax": 3600.0,
+}
 
 
-def _drain_cap_s(explicit: float | None) -> float:
+def _drain_cap_s(explicit: float | None,
+                 default: float = _DRAIN_CAP_DEFAULT_S,
+                 env: dict[str, str] | None = None,
+                 model: str | None = None) -> float:
     """Resolve the per-attempt wall cap in seconds (0 disables it).
     Healthy authoring p95 is ~400s (run 33: authors 200–360s, diaries
     30–160s, deepseek ~85s), so 600s is 1.5x headroom over health —
     only the trickle mode ever sees it. ECON_AGENT_DRAIN_CAP_S
     overrides (seconds; 0/off/false restores the let-it-trickle
     behavior); unparseable values fall back to the default, not to
-    off — a typo must not silently unarm the cap."""
+    off — a typo must not silently unarm the cap. `default` moves the
+    fallback for the local llama.cpp seat (3600s — see
+    _LOCAL_DRAIN_CAP_DEFAULT_S); `env` lets a hermetic caller (tests,
+    llama_model's env dict) substitute the environment the read acts
+    on without monkeypatching the process. `model` names a reasoning
+    family whose thinks outrun the remote guard (see
+    _DRAIN_CAP_FAMILY_DEFAULTS — same substring match as
+    _default_max_tokens).
+    """
     if explicit is not None:
         return max(0.0, float(explicit))
-    raw = os.environ.get("ECON_AGENT_DRAIN_CAP_S", "").strip().lower()
+    raw = (env if env is not None else os.environ).get(
+        "ECON_AGENT_DRAIN_CAP_S", "").strip().lower()
     if not raw:
-        return _DRAIN_CAP_DEFAULT_S
+        if model:
+            lowered = model.lower()
+            for family, cap in _DRAIN_CAP_FAMILY_DEFAULTS.items():
+                if family in lowered:
+                    return cap
+        return default
     if raw in ("0", "off", "false"):
         return 0.0
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return _DRAIN_CAP_DEFAULT_S
+        return default
 
 
 class RepetitionBreaker:
@@ -939,8 +992,10 @@ class NimModel(OpenAIModel):
         # detector per channel per attempt, armed unless disabled.
         self._breaker = _breaker_enabled(repetition_breaker)
         # Wall-clock guard against diverse trickles the breaker cannot
-        # see (see _DrainCapExceeded): 0 disarms it.
-        self._drain_cap_s = _drain_cap_s(drain_cap_s)
+        # see (see _DrainCapExceeded): 0 disarms it. Reasoning families
+        # with measured long thinks (minimax) take a family default
+        # over the 600s remote guard — see _DRAIN_CAP_FAMILY_DEFAULTS.
+        self._drain_cap_s = _drain_cap_s(drain_cap_s, model=model)
         # The no-thinking body for the empty-finish nudge (run 54 r4: the
         # qwen seat ended in its thinking channel with an empty final
         # channel, twice — the thinking is gone by the time the empty

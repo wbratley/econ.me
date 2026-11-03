@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from experiments.agent.nim_run import (McpCallLog, _abbrev, _liveness_gate,
+from experiments.agent.nim_run import (McpCallLog, _abbrev,
+                                       _deepseek_window_line,
+                                       _liveness_gate,
                                        _parse_epoch_spec, _traced,
                                        create_browser_user)
 
@@ -198,6 +200,34 @@ def test_liveness_gate_skips_unprobed_seats():
 # start_epoch) does the validating, so the parser only strips the code
 # and leaves the value to be re-cased / re-typed there.
 # ===========================================================================
+
+def test_deepseek_window_line_reports_the_choice(monkeypatch):
+    # run 70's Ivar froze at r20 by design: the off-peak gate worked
+    # and a 16h run outran an 8h discount window. The launch line
+    # makes the money decision VISIBLE instead: window=any, off-peak
+    # now, or peak with the wait ahead — a frozen back half must be a
+    # printed decision, never a surprise.
+    from datetime import datetime, timezone
+    from experiments.agent.llm import DeepSeekModel
+    monkeypatch.delenv("ECON_DEEPSEEK_WINDOW", raising=False)
+    m = DeepSeekModel("k", "deepseek-v4-flash")
+    # Monday 10:00 Beijing — peak; the window opens tomorrow 00:30
+    # Beijing = 14.5h away, and the line names the escape hatch
+    peak = _deepseek_window_line(
+        "Ivar", m, now=datetime(2026, 9, 7, 2, 0, tzinfo=timezone.utc))
+    assert "PEAK" in peak and "14.5h" in peak
+    assert "ECON_DEEPSEEK_WINDOW=any" in peak
+    # Monday 08:00 Beijing — inside the weekday discount window
+    off = _deepseek_window_line(
+        "Ivar", m, now=datetime(2026, 9, 7, 0, 0, tzinfo=timezone.utc))
+    assert "off-peak now" in off
+    # the explicit per-seat override and the env both speak "any"
+    seat_any = _deepseek_window_line(
+        "Ivar", DeepSeekModel("k", "deepseek-v4-flash", window="any"))
+    assert "window=any" in seat_any and "any hour" in seat_any
+    monkeypatch.setenv("ECON_DEEPSEEK_WINDOW", "any")
+    assert "any hour" in _deepseek_window_line("Ivar", m)
+
 
 def test_parse_epoch_spec_maps_each_code_to_its_param_key():
     assert _parse_epoch_spec("innovate:FIRE_HARDENING") == \

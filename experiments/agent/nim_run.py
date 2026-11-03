@@ -58,7 +58,8 @@ from pathlib import Path
 
 from .dashboard import build_dashboard
 from .llm import (Model, DeepSeekModel, NimModel, ScriptedModel,
-                  deepseek_key, nim_key, llama_model)
+                  deepseek_key, nim_key, llama_model,
+                  deepseek_offpeak, _deepseek_minutes_to_window)
 from .loop import AgentLoop, McpClient
 from .multi import (Dynasty, build_agent_world, read_world_meta,
                     run_rounds)
@@ -400,6 +401,35 @@ def clock_waiter(base: str, admin_token: str,
     return wait
 
 
+def _deepseek_window_line(name: str, model: "DeepSeekModel",
+                          now: "_dt.datetime | None" = None) -> str:
+    """One deepseek seat's billing-window state at T0, as a log line.
+
+    Run 70's Ivar froze at r20 exactly as designed: the off-peak
+    gate worked and a 16-hour run outran an 8-hour discount window.
+    Spending at peak is an operator money decision, so the lever is
+    SURFACING, not flipping: at launch every deepseek seat's line
+    records the choice actually in force — window=any (pay peak),
+    off-peak now, or PEAK with the wait ahead — so a frozen back
+    half is a decision that was printed, never a surprise. `now` is
+    injectable for tests; the mode resolution mirrors complete()'s:
+    the model's explicit window arg, else ECON_DEEPSEEK_WINDOW, else
+    offpeak.
+    """
+    mode = (model._window if model._window is not None
+            else os.environ.get("ECON_DEEPSEEK_WINDOW", "offpeak"))
+    if mode == "any":
+        return (f"{name}: deepseek window=any — spending at any hour "
+                f"(peak rates included)")
+    if deepseek_offpeak(now):
+        return (f"{name}: deepseek off-peak now — seats spend freely "
+                f"until the window closes")
+    minutes = _deepseek_minutes_to_window(now)
+    return (f"{name}: deepseek PEAK now — the discount window opens in "
+            f"{minutes / 60:.1f}h ({minutes:.0f} min); seats refuse to "
+            f"spend until then (ECON_DEEPSEEK_WINDOW=any pays peak)")
+
+
 def _liveness_gate(seats, budget_s: float | None = None,
                    first_backoff_s: float = 15.0) -> None:
     """Probe every remote seat's model before the world exists.
@@ -655,6 +685,13 @@ def main(argv=None) -> int:
                 else:
                     models.append(NimModel(key, seat_model))
                 model_names.append(seat_model)
+        # T0 window-state log (run 70, L1): every deepseek seat's
+        # billing-window state rides the launch record — a 16h run
+        # outruns an 8h discount window, and a frozen back half must
+        # be a printed decision, never a surprise.
+        for n, m in zip(names, models):
+            if isinstance(m, DeepSeekModel):
+                print(_deepseek_window_line(n, m))
 
     names = args.names or [f"House {i + 1}" for i in range(len(model_names))]
     seed_source = (Path(args.seed_script).read_text()
