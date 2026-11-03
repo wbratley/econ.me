@@ -68,6 +68,8 @@ from sqlalchemy.orm import Session
 from econengine import spawns, tick as tick_mod
 from econengine.models import Base, Entity, Holding, Script, Tick, Unlock
 from econengine.models.entity import EntityStatus
+from econengine.models.place import Place as _Place
+from econengine.models.recipe import Recipe as _Recipe
 from econengine.models.script import ScriptType
 
 from . import stone_age
@@ -78,6 +80,88 @@ STARTER = stone_age._gate_pack_script(stone_age.STARTER)
 HOUSES = ("Alpha", "Bravo", "Charlie")
 DAYS = 10
 WORLDS = 5
+
+# --- The L2 floor-tax instrument (post-70 lever spec) ---------------------
+# Run 70's census: WARM_BY_FIRE 33-40% + TRAVEL hops 29-42% of every
+# house's completed work, facility_dark 13 of 20 days, and 2.4 gathers
+# per round-trip -- the floor tax that leaves ~5 discretionary ticks a
+# day. Those were SEAT-run numbers (agent-edited scripts); the soak's
+# starter-only baseline is its own number and the lever is tuned
+# against IT. Buckets (the run-census methodology, so the two are
+# comparable): MOVE = travel hops; WARM = WARM_BY_FIRE + SLEEP_BY_FIRE
+# + PACE (fireless pacing is warmth too); STOKE/COOK/eat are counted
+# raw, not folded. Shares are computed over travel + process_completed,
+# per house, then aggregated across the batch.
+MOVE_IS = "travel"            # travel hops count as the tick's act
+WARM_RECIPES = ("WARM_BY_FIRE", "SLEEP_BY_FIRE", "PACE")
+GATHER_RECIPES = ("GATHER", "GATHER_BAG")
+
+
+def _instrument_init(house_ids):
+    return dict(
+        recipe_counts={hid: {} for hid in house_ids},
+        instant_counts={hid: {} for hid in house_ids},
+        stoke_refusals=0,
+        travel_hops={hid: 0 for hid in house_ids},
+        trips=0,                    # away-spells (left home at all)
+        gathers_per_trip=[],        # gathers in each away-spell with >=1
+        trip_close_hour={},         # close-hour histogram (diagnostic)
+        trip_gather_hops={},        # (gathers, hops-in-spell) histogram
+        dark_events=0,
+        dark_days=set(),
+        dark_hours={},              # hour-of-day histogram of darks
+        busy={hid: set() for hid in house_ids},   # ticks that were
+        # the house's act: a travel hop, a process completion, or an
+        # applied start of a duration >= 1 recipe (instants -- stokes,
+        # meals -- are tick-free). IDLE = alive ticks minus busy: the
+        # discretionary budget the L3 decision rule reads.
+        alive_ticks={hid: 0 for hid in house_ids},
+    )
+
+
+def _instrument_tick(inst, tick_no, tick, house_ids, instant_recipes=frozenset()):
+    """Fold one tick's events into the instrument.
+
+    Instant (duration-0) recipes -- stokes, meals, drinks -- complete
+    inline at start and never emit process_completed (verified against
+    production.py: the remaining==0 branch calls _complete inside
+    start_process). They are tick-free, so they stay OUT of the share
+    denominators (a stoke is not an hour); they are counted as raw
+    diagnostics (instants), including stoke refusals -- the capacity
+    wall (fuel 3 +4 > cap 6) is a first-class lever signal. Busy vs
+    idle uses `instant_recipes` (duration_ticks == 0 codes, fetched
+    once by the caller) so instant starts do not mark their tick busy.
+    """
+    for event in tick.events or []:
+        et = event.get("type")
+        if et == "facility_dark":
+            inst["dark_events"] += 1
+            inst["dark_days"].add((tick_no - 1) // 24 + 1)
+            hh = (tick_no - 1) % 24
+            inst["dark_hours"][hh] = inst["dark_hours"].get(hh, 0) + 1
+        if et == "travel" and event.get("entity_id") in house_ids:
+            inst["travel_hops"][event["entity_id"]] += 1
+            inst["busy"][event["entity_id"]].add(tick_no)
+        if et == "process_completed" and event.get("entity_id") in house_ids:
+            counts = inst["recipe_counts"][event["entity_id"]]
+            counts[event.get("recipe")] = counts.get(event.get("recipe"), 0) + 1
+            inst["busy"][event["entity_id"]].add(tick_no)
+        if et == "start_process" and event.get("entity_id") in house_ids:
+            recipe = (event.get("params") or {}).get("recipe")
+            if event.get("status") == "applied":
+                counts = inst["instant_counts"][event["entity_id"]]
+                counts[recipe] = counts.get(recipe, 0) + 1
+                if recipe not in instant_recipes:
+                    inst["busy"][event["entity_id"]].add(tick_no)
+            elif recipe == "STOKE_FIRE":
+                inst["stoke_refusals"] += 1
+
+
+def _instrument_finish(inst, spell_state):
+    """Close any still-open away-spell at end of run."""
+    for hid, st in spell_state.items():
+        if st["away"] and st["gathers"] >= 1:
+            inst["gathers_per_trip"].append(st["gathers"])
 
 
 def _soak_world(days=DAYS):
@@ -109,6 +193,19 @@ def _soak_world(days=DAYS):
             script_errors=0,
             deaths=[],                  # (tick, name, condition)
         )
+        # L2: places are read per tick to reconstruct away-spells (the
+        # gather trip shape); place ids -> keys once, the map is static.
+        place_keys = {
+            row[0]: row[1] for row in session.execute(
+                select(_Place.id, _Place.key)).fetchall()}
+        instant_recipes = frozenset(
+            row[0] for row in session.execute(
+                select(_Recipe.code).where(
+                    _Recipe.duration_ticks == 0)).fetchall())
+        home_key = next((k for k in place_keys.values() if k == "HEARTH"),
+                        "HEARTH")
+        inst = _instrument_init(house_ids)
+        spell = {hid: dict(away=False, gathers=0) for hid in house_ids}
         for tick_no in range(1, days * 24 + 1):
             # The platform drives the cadence on round boundaries; a
             # day is a round here (round == day in the genesis run's
@@ -117,6 +214,43 @@ def _soak_world(days=DAYS):
                 spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
             tick = tick_mod.run_tick(session)
             session.commit()
+            _instrument_tick(inst, tick_no, tick, house_ids, instant_recipes)
+            # the away-spell tracker reads END-of-tick places: a spell
+            # opens the first tick the house stands away, closes the
+            # tick it is home again; gathers land in the open spell.
+            for hid in house_ids:
+                ent = session.get(Entity, hid)
+                if ent.status == EntityStatus.ACTIVE:
+                    inst["alive_ticks"][hid] += 1
+                pkey = place_keys.get(ent.location_place_id)
+                st = spell[hid]
+                if pkey != home_key:
+                    if not st["away"]:
+                        st["away"], st["gathers"] = True, 0
+                        st["hops"] = 0
+                        st["start"] = tick_no
+                        inst["trips"] += 1
+                    if (tick.events or []) and any(
+                            e.get("type") == "process_completed"
+                            and e.get("entity_id") == hid
+                            and e.get("recipe") in GATHER_RECIPES
+                            for e in tick.events):
+                        st["gathers"] += 1
+                    if (tick.events or []) and any(
+                            e.get("type") == "travel"
+                            and e.get("entity_id") == hid
+                            for e in tick.events):
+                        st["hops"] = st.get("hops", 0) + 1
+                elif st["away"]:
+                    st["away"] = False
+                    hh = (tick_no - 1) % 24
+                    inst["trip_close_hour"][hh] = \
+                        inst["trip_close_hour"].get(hh, 0) + 1
+                    key = (st.get("gathers", 0), st.get("hops", 0))
+                    inst["trip_gather_hops"][key] = \
+                        inst["trip_gather_hops"].get(key, 0) + 1
+                    if st["gathers"] >= 1:
+                        inst["gathers_per_trip"].append(st["gathers"])
 
             for event in tick.events or []:
                 if event.get("type") == "script_error":
@@ -170,6 +304,8 @@ def _soak_world(days=DAYS):
             select(func.count()).select_from(Holding).where(
                 Holding.symbol == "SPEAR", Holding.quantity > 0,
                 Holding.entity_id.in_(house_ids))).scalar()
+        out["instrument"] = dict(
+            inst, dark_days=len(inst["dark_days"]))
         return out
 
 
@@ -260,8 +396,117 @@ def test_the_genesis_soak_pins_run_55_closed():
         f"worlds -- the starter's survival margin collapsed "
         f"(deaths: {[w['deaths'] for w in worlds]})")
 
+    # --- the L2 floor-tax bars (run 70 -> post-70 lever spec) --------
+    # Aggregate-ONLY (a per-world share flakes on the same per-seat
+    # lottery as the study bar). Baseline (pre-lever, 5 worlds, the
+    # shipped run-69 starter): MOVE 36-37%, gath/trip 1.8-1.9. The
+    # lever's measured landing: MOVE 25-26%, gath/trip 3.2-4.3 across
+    # four gated batches. Bars sit one step past the baseline with
+    # headroom under the landing zone (the headroom doctrine): 31%
+    # catches a regression to the un-batched shape, 2.5 catches the
+    # one-gather commute, and neither flakes on batch variance. The
+    # gath/trip ceiling is structural, not tuned: the carry law caps a
+    # bare back at 20 and the fattest bare roll is six, so a trip from
+    # an empty back tops out near four rolls -- and a walk-out bar
+    # tight enough to force four-plus (load <= 5) starves the floor
+    # (measured: alive 2/15 -- the larder rots faster than the back
+    # drains; batching past ~3 rolls banks rot, not food). The
+    # facility_dark story is the same shape: stoke timing is optimal
+    # now (bank at fuel <= 2 -- the zero-waste moment under the +4
+    # stoke and cap 6; the watch is a home duty, no mid-trip chase),
+    # and the remaining darks are wood-supply-bound (0.6 logs per
+    # gather roll against a fire that eats six a day) -- reported as a
+    # diagnostic in measure(), not barred.
+    hops = sum(sum(w["instrument"]["travel_hops"].values()) for w in worlds)
+    done = sum(sum(c for per in w["instrument"]["recipe_counts"].values()
+                   for c in per.values()) for w in worlds)
+    move_share = hops / max(hops + done, 1)
+    assert move_share <= 0.31, (
+        f"aggregate MOVE share {100 * move_share:.0f}% across {WORLDS} "
+        f"worlds -- the batched-trip starter regressed past the bar "
+        f"(pre-lever baseline 36-37%, landing zone 25-26%)")
+    all_trips = [g for w in worlds
+                 for g in w["instrument"]["gathers_per_trip"]]
+    gpt = sum(all_trips) / max(len(all_trips), 1)
+    assert gpt >= 2.5, (
+        f"aggregate gathers per round-trip {gpt:.1f} across {WORLDS} "
+        f"worlds ({len(all_trips)} trips) -- the commute tax is back "
+        f"(pre-lever baseline 1.8-1.9, landing zone 3.2-4.3)")
+
     # The dynasty's capital line: most worlds keep a living house.
     worlds_with_a_house = sum(1 for w in worlds if w["houses_alive"] >= 1)
     assert worlds_with_a_house >= 3, (
         f"only {worlds_with_a_house}/{WORLDS} worlds kept a living house -- "
         f"the survival margin collapsed")
+
+
+def measure(n=WORLDS, days=DAYS):
+    """L2 floor-tax report: run n soak worlds headless and print the
+    starter's process-share baseline (not collected by pytest -- a
+    measurement entry point for the lever's before/after table):
+
+        .venv/bin/python -c \
+          "from experiments.world.test_genesis_soak import measure; measure()"
+
+    Buckets per the module doc: MOVE = travel hops, WARM = the three
+    warmth recipes, shares over travel + process_completed -- the same
+    methodology as the run-69/70 seat census, so starter numbers and
+    seat numbers are directly comparable.
+    """
+    worlds = [_soak_world(days) for _ in range(n)]
+    print(f"\n=== L2 floor-tax baseline: {n} worlds x {days} days, "
+          f"shipped starter ===")
+    tot = dict(hops=0, done=0, warm=0, gather=0, trips=0, dark=0,
+               dark_days=0, alive=0, seats=0)
+    all_trips = []
+    for i, w in enumerate(worlds):
+        inst = w["instrument"]
+        hops = sum(inst["travel_hops"].values())
+        counts = {}
+        for per_house in inst["recipe_counts"].values():
+            for sym, c in per_house.items():
+                counts[sym] = counts.get(sym, 0) + c
+        instants = {}
+        for per_house in inst["instant_counts"].values():
+            for sym, c in per_house.items():
+                instants[sym] = instants.get(sym, 0) + c
+        done = sum(counts.values())
+        warm = sum(counts.get(r, 0) for r in WARM_RECIPES)
+        gath = sum(counts.get(r, 0) for r in GATHER_RECIPES)
+        trips = inst["gathers_per_trip"]
+        all_trips.extend(trips)
+        gh = dict(sorted(inst["trip_gather_hops"].items()))
+        print(f"world {i}: alive={w['houses_alive']}/3 "
+              f"hops={hops} done={done} "
+              f"MOVE={100 * hops / max(hops + done, 1):.0f}% "
+              f"WARM={100 * warm / max(hops + done, 1):.0f}% "
+              f"GATHER={100 * gath / max(hops + done, 1):.0f}% "
+              f"trips={inst['trips']} gath/trip="
+              f"{sum(trips) / max(len(trips), 1):.1f} "
+              f"dark={inst['dark_events']}ev/{inst['dark_days']}d "
+              f"stokes={instants.get('STOKE_FIRE', 0)}"
+              f"(+{inst['stoke_refusals']}ref) "
+              f"eats={instants.get('EAT_BERRIES', 0) + instants.get('EAT_APPLES', 0)}")
+        alive_t = sum(inst["alive_ticks"].values())
+        busy_t = sum(len(v) for v in inst["busy"].values())
+        idle_t = max(alive_t - busy_t, 0)
+        print(f"         IDLE={100 * idle_t / max(alive_t, 1):.0f}% "
+              f"of {alive_t} alive house-ticks "
+              f"(~{idle_t / 10 / 3:.1f} idle h/house/day)")
+        print(f"         close-hour={dict(sorted(inst['trip_close_hour'].items()))}")
+        print(f"         (gathers,hops)={gh}")
+        print(f"         dark-hours={dict(sorted(inst['dark_hours'].items()))}")
+        tot["hops"] += hops; tot["done"] += done; tot["warm"] += warm
+        tot["gather"] += gath; tot["trips"] += inst["trips"]
+        tot["dark"] += inst["dark_events"]
+        tot["dark_days"] += inst["dark_days"]
+        tot["alive"] += w["houses_alive"]; tot["seats"] += 3
+    t = tot["hops"] + tot["done"]
+    print(f"AGGREGATE: alive={tot['alive']}/{tot['seats']} "
+          f"MOVE={100 * tot['hops'] / max(t, 1):.0f}% "
+          f"WARM={100 * tot['warm'] / max(t, 1):.0f}% "
+          f"GATHER={100 * tot['gather'] / max(t, 1):.0f}% "
+          f"gath/trip={sum(all_trips) / max(len(all_trips), 1):.1f} "
+          f"(n={len(all_trips)}) dark={tot['dark']}ev/"
+          f"{tot['dark_days']}d")
+    return worlds

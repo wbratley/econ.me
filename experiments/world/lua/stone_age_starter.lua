@@ -25,10 +25,20 @@
 -- player's invention: the floor remains POOR, and the spear is the
 -- floor's because without it the protein walk is a 55%-nothing gamble
 -- the floor does not take.
--- It still spends nearly every tick on the next meal or the next
--- log: that is the point. A player who changes nothing stays on the
--- treadmill; every further escape -- tools, clothes, shelter, trade
--- -- is theirs to add on top of the hunt.
+-- The day's SHAPE (L2, run 70: WARM_BY_FIRE 33-40% + TRAVEL 29-42% of
+-- every tick, 1.9 gathers a round-trip, the fire dark 13 of 20 days
+-- beside a wood supply): the commute is paid PER TRIP, not per
+-- basket, so the floor BATCHES -- out once, gather to a full back,
+-- home before dark (the road is an hour each way; a trip that
+-- retires at load 5 puts the house back on it two hours later). The
+-- fire watch is a HOME duty banked by time-remaining -- a house
+-- away keeps its commitment (a dark-by-day fire relights from one
+-- stoke on the walk in) and the dusk discipline has it home to bank
+-- the night, which is the dark that kills. It still spends most of
+-- every day on the next meal or the next log: that is the point. A
+-- player who changes nothing stays on the treadmill; every further
+-- escape -- tools, clothes, shelter, trade -- is theirs to add on
+-- top of the hunt.
 --
 -- The blocks are independent priorities, NOT one elseif chain: the
 -- fire-block's first branch ("no fire yet") must not swallow the gather
@@ -209,9 +219,20 @@ end
 --    four and burns one fuel an hour, lit or empty. Keep it fed -- a
 --    split log (STOKE_FIRE: 1 WOOD) buys four hours for everyone it
 --    warms, free and night-legal -- and take a seat by dark (warming
---    is a SEAT: +6 an hour, a body holds six). Both hearth-bound: if
---    the fire will want work, walk home first -- the walk is the
---    tick's act.
+--    is a SEAT: +6 an hour, a body holds six). Stoke discipline
+--    (L2, run 70's ledger: the fire went dark 13 of 20 days beside a
+--    wood SUPPLY -- the floor chased the fire): the watch is a HOME
+--    duty, banked by time-remaining, never chased. A house AT HOME
+--    stokes the moment the bank runs low (fuel <= 2 -- the capacity
+--    wall prices every stoke at +4 against a cap of 6, so 2 is the
+--    zero-waste moment: 2+4 = 6 exactly); a house AWAY keeps its
+--    commitment -- the fire may go dark by day (it relights from one
+--    stoke on the walk in; coals do not cook, but a dark bank is not
+--    a dead fire), and the dusk discipline has the house home to
+--    bank and watch the night, which is the dark that kills. The
+--    night watch stays emergent: sleep while the bank holds, stoke
+--    the hour it runs low (the branch above takes the tick between
+--    sleeps), wood drawn from the back and the shared woodpile.
 local fires = world.lit_fires(home)
 local low_fuel = #fires == 0
 for _, f in ipairs(fires) do
@@ -221,12 +242,8 @@ end
 -- none -- so every walk is a DAYLIGHT act (a refused walk is a wasted
 -- tick; by dark you are either home or you hold where you stand).
 local can_walk = not std.is_night()
-if low_fuel and wood >= 1 and (place == home or can_walk) then
-  if place ~= home then
-    ctx.action.travel(home)
-  else
-    ctx.action.start_process("STOKE_FIRE")
-  end
+if low_fuel and wood >= 1 and place == home then
+  ctx.action.start_process("STOKE_FIRE")
 end
 
 -- 1a. Sleep or sit by dark (P4): the night draws 3 warmth an hour
@@ -349,6 +366,13 @@ local load = berries + apples + cooked + jerky + meat
                                     -- pile is not on this back)
 local walk_home = world.distance_ticks(place or home, home) or 1
 local dusk_closing = std.hour() + walk_home >= 19
+-- The trip window (L2): a gather trip is worth its roads only when
+-- the day still holds the walk out, two honest rolls, and the walk
+-- home -- the run-70 afternoon micro-trip walked out at 16, turned
+-- around at the thicket by dusk discipline, and bought two hops of
+-- nothing. Priced from home over the woods road both ways.
+local walk_back = world.distance_ticks(woods, home) or 1
+local trip_window_open = std.hour() + walk_back + 2 + walk_back <= 19
 -- The protein walk: a speared house hunts the deep forest when the
 -- meat shelf thins (protein < 3: one landed hunt retires the errand)
 -- and the day is young enough for the whole circuit -- out by the
@@ -438,14 +462,39 @@ if not std.is_night() then
     -- 0a's at-river branch sets the FISH intent; this branch holds
     -- the commitment (no sideways walk) while the catch accumulates.
   elseif (food < 8 or wood < 6) and not dusk_closing
-     and load < 16
+     and ((place == home and load <= 8 and trip_window_open)
+          or (place == woods and load < 15)
+          or (place ~= home and place ~= woods))
      and not std.running_recipe("GATHER")
      and not std.running_recipe("GATHER_BAG") then
-    -- load < 16: a full back is a day's work DONE (the soak's
-    -- finding: a floor that gathered past its shoulders -- twenty-
-    -- nine units on a back that carries twenty -- was refused the
-    -- road home by the walk's own load law, and stood stranded in
-    -- the thicket in the dark with a feast it could not move).
+    -- BATCHED GATHERS (L2, run 70's ledger: 1.9 gathers a round-trip
+    -- -- the house spent half its day on the road home and back for
+    -- the same wood). TWO gates make a trip worth its roads:
+    --   HEADROOM (load <= 8 at the walk-out): a batch is only as big
+    --     as the back has room -- a trip from a fat morning back
+    --     retires at load 15 after two rolls and puts the house back
+    --     on the road by noon. The house eats the morning down
+    --     first (the doctrine: the belly is the pantry that cannot
+    --     rot) and banks its wood to the pile (block 4) until the
+    --     back is worth filling.
+    --   WINDOW (trip_window_open): the day must hold the walk out,
+    --     two honest rolls, and the walk home -- the run-70 ledger's
+    --     afternoon micro-trips walked out at 16 and turned around
+    --     at the thicket by dusk discipline: two hops, nothing
+    --     gathered, the fire unbanked for it.
+    -- At the woods the trip is bounded by the BACK, not the shelf:
+    -- gather to 15 -- the carry law's safe edge for the bare table
+    -- (the last roll starts at load <= 14 and the fattest bare roll
+    -- is six, so the back lands at most twenty, the road's own
+    -- ceiling: never stranded; the away valve, block 4, stays the
+    -- emergency). The old stocked-shelf return (food >= 8 and wood
+    -- >= 6) is GONE on purpose -- it retired trips at load 5 and put
+    -- the house back on the road two hours later. A full back banks
+    -- the night's wood WITH the day's food -- the dawn-dark fires
+    -- of run 70 were wood poverty at the night's end, not supply.
+    -- The bag's doubled rolls make 15 the wrong bar for a tooled
+    -- house -- the floor is bare-handed and the gate reads the
+    -- floor's table; a player who bags up owns their own batching.
     if place ~= woods then
       ctx.action.travel(woods)
     else
@@ -453,8 +502,9 @@ if not std.is_night() then
       -- uses the rung, it does not build it); bare hands otherwise
       ctx.action.start_process(bag >= 1 and "GATHER_BAG" or "GATHER")
     end
-  elseif place ~= home and (dusk_closing or load >= 16
-                            or (food >= 8 and wood >= 6)) then
+  elseif place ~= home and (dusk_closing or load >= 15) then
+    -- the trip home: dusk discipline (no walk may land in the dark)
+    -- or the full back.
     ctx.action.travel(home)
   end
 else
@@ -489,7 +539,16 @@ end
 --    everything anyway. What is dropped is anyone's to pick up, so a
 --    drop is a gift the world may or may not return; food dropped in
 --    the field rots where it lies (the race the spec wants).
-if load >= 16 then
+if load >= 16 or (place == home and wood_held > 3) then
+  -- The wood-banking widening (L2): at home, a back carrying more
+  -- than three logs sheds one a tick to the shared pile -- the pile
+  -- is the night's bank (the dawn-dark fires of run 70 were wood
+  -- poverty at the night's end: the rolls existed, they rode backs
+  -- that were eaten down or rotted, not banked), and a lighter back
+  -- is headroom: the batched trip (block 3) walks out when the back
+  -- has room, so wood on the back is a delayed trip as much as a
+  -- fuel reserve. Away from home the valve stays the emergency it
+  -- always was (the load bar alone).
   if place == home then
     local ballast = { "WOOD", "FLINT", "YARN", "EGGS", "HERB" }
     local heaviest, heavy_q = nil, 0
