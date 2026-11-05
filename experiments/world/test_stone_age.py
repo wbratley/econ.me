@@ -1050,6 +1050,27 @@ def test_neglect_kills(session):
     assert died_at is not None and 40 <= died_at <= 70, died_at
 
 
+def test_shelter_is_a_spears_price(session):
+    """C2, the run-72 caveman audit: the fire-free night is the SECOND
+    capital, not the sixth. MAKE_SHELTER costs a spear's materials
+    (2 WOOD + 1 YARN, one afternoon) -- runs 71-72's houses died
+    fireless (FATIGUE @7.59) holding spears whose yarn could have been
+    roofs. And the ladder text carries it at rung 1b, where a seat
+    reads top-down (the old ladder priced the roof at rung 6, 7 WOOD
+    + 7 YARN bundled with clothes -- nobody ever built one)."""
+    create_content(session)
+    r = production.get_recipe(session, "MAKE_SHELTER")
+    cost = {i.symbol: i.quantity for i in r.inputs}
+    assert cost["WOOD"] == Decimal("2")
+    assert cost["YARN"] == Decimal("1")
+    assert cost["LABOR"] == Decimal("1")
+    # the roof is legible at the top of the ladder, not the bottom
+    from econengine.models import WorldSetting
+    row = session.get(WorldSetting, stone_age.MANUAL_KEY)
+    flat = " ".join(row.value["text"].split()).lower()
+    assert "a shelter is a spear's price" in flat
+
+
 def test_shelter_alone_is_misery_not_death(session):
     """The graded ladder under the clock: REST under a SHELTER covers
     the whole 1/hour DAYTIME draw; nights still gap (3 draw vs 1 drip
