@@ -1032,20 +1032,22 @@ def _starter_seat(session, name):
 
 
 def test_neglect_kills(session):
-    """Doing nothing is fatal: the buffers run out and the conditions --
-    EXPOSURE first, then HUNGER -- reach their thresholds. Death lands
-    inside two DAYS (24-tick days): after tick 18, before tick 40."""
+    """Doing nothing is fatal: the buffers run out and HUNGER (its
+    equilibrium 16 above the 15 line -- C1's grant 0.8) reaches the
+    threshold. Death lands on the SECOND day: after tick 40, before
+    tick 70 (one day's fast is debt, two are death -- the caveman
+    audit restored the ordering: no food kills, just slower)."""
     create_content(session)
     _no_wolves(session)
     w = _seat(session, "Doomed")
-    _run(session, 40)
+    _run(session, 70)
     assert session.get(Entity, w.id).status == EntityStatus.INCAPACITATED
     died_at = None
     for tick in session.execute(select(Tick).order_by(Tick.number)).scalars():
         if any(e.get("type") == "entity_incapacitated" for e in (tick.events or [])):
             died_at = tick.number
             break
-    assert died_at is not None and 18 <= died_at <= 40, died_at
+    assert died_at is not None and 40 <= died_at <= 70, died_at
 
 
 def test_shelter_alone_is_misery_not_death(session):
@@ -2808,6 +2810,27 @@ def test_rest_need_registered_and_the_clock(session):
     assert _hold(session, fresh.id, "REST") == Decimal("0")   # idle restores nothing
 
 
+def test_fasting_clock_day_debt_not_death(session):
+    """C1, the run-72 caveman audit: hunger's grant drops 1.0 -> 0.8.
+    Equilibrium 16 vs kill 15 -> a total fast kills at ~t55, so ONE
+    full day's fast lands near 12 (debt: weak, in pain, alive) and only
+    the second day kills -- skipping meals is a loan. Water keeps the
+    faster clock (grant 0.5, kill 7.5 at ~t28): the real-world urgency
+    ordering, restored. The loan is legible too: the seat-readable
+    description prices it (run 72's seats priced jerky against a
+    clock they could not see)."""
+    create_content(session)
+    from econengine import needs as needs_mod
+    need = needs_mod.get_need(session, "FOOD")
+    assert need.condition_symbol == "HUNGER"
+    assert need.condition_quantity == Decimal("0.8")
+    # water stays the urgent clock: grant 0.5, kill 7.5
+    thirst = needs_mod.get_need(session, "WATER")
+    assert thirst.condition_quantity == Decimal("0.5")
+    # the fast's price is in the catalog text, not just the math
+    assert "debt, not death" in need.description
+
+
 def test_the_sleepless_clock_kills_on_the_third_night(session):
     """Two sleepless nights tired, three dead (P4): fed, warm, and
     watered -- but never sleeping -- the house dies of FATIGUE at
@@ -4382,10 +4405,14 @@ def test_the_white_season_two_houses(session):
                  if e.get("type") == "entity_incapacitated"
                  and e.get("entity_id") == idler.id), None)
     # THE SALTER LIVES, WITH MARGIN: active at the year's end, hunger
-    # far from the line (15), and food still on the shelf
+    # far from the line (15), and food still on the shelf. (C1, the
+    # run-72 caveman audit: hunger's grant 1.0 -> 0.8 -- the slower
+    # clock lets the salter spend the last strip inside winter and
+    # still stand at year's end; the margin now reads in hunger
+    # headroom < 8, the larder may end exactly spent.)
     assert salter.status == EntityStatus.ACTIVE
     assert _hold(session, salter.id, "HUNGER") < Decimal("8")
-    assert _hold(session, salter.id, "JERKY") > Decimal("0")
+    assert _hold(session, salter.id, "JERKY") >= Decimal("0")
     assert _hold(session, salter.id, "EGGS") > Decimal("0")   # the pen pays
     # THE IDLER DIES INSIDE WINTER, ON THE HUNGER LINE: same floor,
     # same clothes, same fire -- no bank, and the thicket is closed

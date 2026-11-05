@@ -291,8 +291,14 @@ EMBER_TICKS = 2
 # its chronic-neglect equilibrium (grant/decay) -- the run5 lesson, applied
 # three times deliberately:
 #
-#   HUNGER:   grant 1.0/tick, decay 0.05 -> equilibrium 20, dies at 15.
-#             Total fast: ~tick 27 from cold; buffers push it into round 2.
+#   HUNGER:   grant 0.8/tick, decay 0.05 -> equilibrium 16, dies at 15
+#             (t ~ 55 from cold). The run-72 caveman audit: at grant 1.0
+#             a total fast killed in ~27 ticks -- one missed day was
+#             death, ~20x real fasting, and hunger killed FASTER than
+#             thirst (the inverted clock). Now a full day's fast is
+#             survivable debt (hunger ~12 of 15: weak, in pain, alive)
+#             and only the second day kills -- skipping meals is a
+#             loan, water stays the urgent clock.
 #   EXPOSURE: full neglect grants 1.5/tick -> equilibrium 30, dies at 18.
 #             Any single warmth source (1.0 or 0.5/tick) equilibrates at 10
 #             or 20* -- see WARMTH sources below -- chronically cold but
@@ -3176,10 +3182,13 @@ def _create_needs(session: Session) -> None:
         description="The stomach's hourly draw (0.5). Only EAT recipes fill "
                     "it -- EAT_BERRIES (thin), EAT_COOKED, EAT_JERKY (dense), "
                     "EAT_RAW (a disease lottery). A larder is not a meal: "
-                    "food in holdings satisfies nothing until you eat it. "
-                    "Miss the draw and hunger accrues.",
+                    "a full larder to a fed body, and starving beside "
+                    "one is the experiment, not a bug. Miss the draw and "
+                    "hunger accrues: a day's fast is debt, not death (the "
+                    "body weakens near 12, holds until 15) -- two days "
+                    "of nothing kill.",
         entity_type=EntityType.INDIVIDUAL, priority=0,
-        condition_symbol="HUNGER", condition_quantity=Decimal("1"),
+        condition_symbol="HUNGER", condition_quantity=Decimal("0.8"),
     )
     # WARMTH: a flow good, stocked by fire/shelter/clothes. Unmet ->
     # EXPOSURE. The clock (run 18): 1/hour by day, 3/hour at night --
