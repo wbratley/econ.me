@@ -1236,7 +1236,7 @@ def test_post_quotes_both_sides_on_its_first_tick(session):
         by_sym[("buy", mid[o.market_id])] = o
     # the post's own books price the opening book: retail =
     # genesis basis x 1.30 (JERKY 0.90 -> 1.17, BERRIES 0.50 -> 0.65,
-    # CHICKEN 3.00 -> 3.90, WATERSKIN 4.50 -> 5.85)
+    # CHICKEN 3.00 -> 3.90, WATERSKIN 2.30 -> 2.99)
     assert by_sym[("sell", "JERKY")].limit_price == Decimal("1.17")
     assert by_sym[("sell", "BERRIES")].limit_price == Decimal("0.65")
     assert by_sym[("sell", "BERRIES")].quantity == Decimal("60")
@@ -1534,7 +1534,7 @@ def test_the_genesis_basis_prices_the_opening_book(session):
     assert m
     lua = dict(re.findall(r"(\w+)\s*=\s*([\d.]+)", m.group(1)))
     expected = {"JERKY": "0.90", "BERRIES": "0.50", "APPLES": "0.70",
-                "EGGS": "0.70", "CHICKEN": "3.00", "WATERSKIN": "4.50",
+                "EGGS": "0.70", "CHICKEN": "3.00", "WATERSKIN": "2.30",
                 "WOOD": "1.00", "MEAT": "1.00", "YARN": "1.50",
                 "FLINT": "1.50", "PELT": "3.00", "SALT": "1.50",
                 "HONEY": "1.80", "TONIC": "3.00", "BEEHIVE": "3.50"}
@@ -2693,10 +2693,11 @@ def test_thirst_kills_the_dry_larder_on_day_three(session):
 
 
 def test_the_post_anchors_a_waterskin(session):
-    """The price anchor (P3): one waterskin on the post's shelf, asked
-    off its own books (genesis basis 4.50 x 1.30 = 5.85 -- between "sew
-    it yourself" and the egg trade it unlocks). The market exists; the
-    shelf holds exactly one; water itself is never sold (the tap is
+    """The price anchor (P3, repriced C3): one waterskin on the post's
+    shelf, asked off its own books (genesis basis 2.30 x 1.30 = 2.99 --
+    one pelt sold at the bid nearly buys the skin: the toll fits the
+    day-2 purse that the old 4.50 basis priced out). The market exists;
+    the shelf holds exactly one; water itself is never sold (the tap is
     free)."""
     create_content(session)
     post = _post(session)
@@ -2704,7 +2705,7 @@ def test_the_post_anchors_a_waterskin(session):
     _run(session, 2)
     sell = _open_orders(session, post.id, "WATERSKIN", OrderSide.SELL)
     assert len(sell) == 1
-    assert Decimal(next(iter(sell)).limit_price) == Decimal("5.85")
+    assert Decimal(next(iter(sell)).limit_price) == Decimal("2.99")
     # water itself is never sold: the tap is free, the SKIN is the stock
     assert not any(m.symbol in ("WATER", "SKINWATER")
                    for m in session.execute(select(Market)).scalars())

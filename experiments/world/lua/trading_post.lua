@@ -66,7 +66,14 @@ local GENESIS_BASIS = {
   APPLES    = 0.70,
   EGGS      = 0.70,
   CHICKEN   = 3.00,
-  WATERSKIN = 4.50,
+  WATERSKIN = 2.30,   -- C3 (run-72 audit): the thirsty house's toll
+                       -- must fit the purse a house has on day 2 --
+                       -- one pelt sold at the bid nearly buys the
+                       -- skin (a dead wolf is the skin it died for);
+                       -- at 4.50 the anchor priced the designed
+                       -- answer to thirst OUT of every poor house's
+                       -- reach (run 72: Lagertha died THIRST @7.54
+                       -- with 0.55 coin, optimizing its grocery bill)
   WOOD      = 1.00,
   MEAT      = 1.00,
   YARN      = 1.50,
