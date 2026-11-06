@@ -7,7 +7,9 @@ number is what the dynasties themselves could see on their own MCP
 surface (§13 parity), which is exactly what `multi.run_rounds` snapshots.
 
 Sections: the square (a chat board — every spoken line, live), one
-tab per house (state card, holdings ledger, their feed), and the
+tab per house (state card, holdings ledger, the seat's journal — the
+full author-cycle forensics the round table trims — and their feed),
+and the
 world tab — final standings; the map — places, roads, and who stands
 where, round by round; per-house holdings &amp; conditions by round;
 wealth / money / prices / needs charts over
@@ -661,6 +663,80 @@ def _chat_history(snapshots: list[dict]) -> list[dict]:
     return out[-400:]
 
 
+# The journal's outcome classes (run 66/67's edit-loop forensics) →
+# cell colour. Synthesised entries (extinct / missed_window) and
+# pre-outcome journals fall back to the accepted flag.
+_JOURNAL_OUTCOME_CLASS = {
+    "edit-exact": "ok", "edit-fuzzy": "ok", "rewrite": "ok",
+    "keep": "quiet", "keep-forward": "quiet", "missed_window": "quiet",
+    "extinct": "extinct",
+    "lint-refusal": "warn", "compile-refusal": "warn",
+    "edit-miss": "warn", "smoke-crash": "warn", "inert-refusal": "warn",
+    "model-failure": "bad", "platform-failure": "bad",
+}
+
+
+def _house_journal(snapshots: list[dict], name: str) -> str:
+    """The seat's journal, one row per author cycle. The round-by-round
+    activity table carries attempts + a 60-char refusal; everything else
+    the loop journals — outcome class, apply rung, nudges, prompt size,
+    say lines, full refusals, lint warnings, diary thoughts, reply
+    heads — was invisible until the jsonl was opened by hand. Older
+    runs without an `outcome` field fall back to the accepted flag."""
+    cycles = [(s["round"], s["dynasties"][name].get("entry") or {})
+              for s in snapshots]
+    cycles = [(r, e) for r, e in cycles if e]
+    if not cycles:
+        return ""
+    rows = []
+    for rnd, e in cycles:
+        action = e.get("action") or ""
+        outcome = e.get("outcome") or ""
+        if outcome:
+            cls = _JOURNAL_OUTCOME_CLASS.get(outcome, "quiet")
+            label = outcome
+        elif action == "extinct":
+            cls, label = "extinct", "extinct"
+        elif action == "missed_window":
+            # the journal's raw vocabulary — the activity table's
+            # "⌛ missed — kept" gloss stays its own (a test pins it)
+            cls, label = "quiet", "missed_window"
+        elif e.get("accepted"):
+            cls, label = "ok", action or "accepted"
+        else:
+            cls, label = "bad", action or "refused"
+        att = str(e.get("attempts", "?")) + ("⚡" if e.get("nudge") else "")
+        prompt = (f"{e['prompt_bytes'] / 1024:.1f}K"
+                  if e.get("prompt_bytes") else "·")
+        say = _esc(str(e.get("say") or "")[:40]) or "·"
+        notes = []
+        if e.get("refusal"):
+            notes.append(f'<p class="bad">{_esc(str(e["refusal"]))}</p>')
+        for w in e.get("warnings") or []:
+            notes.append(f'<p class="warn">⚠ {_esc(str(w))}</p>')
+        if e.get("thoughts"):
+            notes.append(f"<p>{_esc(str(e['thoughts']))}</p>")
+        if e.get("reply_head"):
+            notes.append(f"<pre>{_esc(str(e['reply_head']))}</pre>")
+        detail = (f"<details><summary>full</summary>{''.join(notes)}</details>"
+                  if notes else "")
+        short = _esc(str(e.get("refusal") or e.get("thoughts") or "")[:60])
+        rows.append(
+            f"<tr><td>{rnd}</td>"
+            f'<td class="{cls}">{_esc(label)}</td>'
+            f"<td>{_esc(action or '—')}</td>"
+            f"<td>{_esc(str(e.get('edit_rung') or '·'))}</td>"
+            f'<td class="num">{att}</td>'
+            f'<td class="num">{prompt}</td>'
+            f"<td>{say}</td>"
+            f'<td class="quiet">{short}{detail}</td></tr>')
+    return ("<h3>The seat's journal — one row per author cycle</h3>"
+            '<div class="hsum-scroll"><table class="grid"><tr><th>Round</th>'
+            "<th>Outcome</th><th>Action</th><th>Rung</th><th>Att</th>"
+            "<th>Prompt</th><th>Say</th><th>Notes</th></tr>"
+            + "".join(rows) + "</table></div>")
+
+
 def _house_tab(snapshots: list[dict], name: str) -> str:
     """One house, one tab: the state card (what they hold, where they
     stand, how they burn), the per-round holdings ledger, and the
@@ -738,6 +814,7 @@ def _house_tab(snapshots: list[dict], name: str) -> str:
                        f'{_fmt(q) if q else "·"}</td>')
         parts.append("".join(row) + "</tr>")
     parts.append("</table></div>")
+    parts.append(_house_journal(snapshots, name))
 
     feed: list[tuple[int, str, bool]] = []
     for snap in snapshots:
@@ -1325,6 +1402,10 @@ def build_dashboard(snapshots: list[dict], meta: dict) -> str:
       td.num{text-align:right;font-variant-numeric:tabular-nums}
       td.num.strong{font-weight:600}td.name{font-weight:600}
       td.ok{color:#34d399}td.bad{color:#f87171}td.extinct{color:#8b93a3}
+      td.warn,p.warn{color:#fbbf71}p.bad{color:#f87171;margin:4px 0}
+      p.warn{margin:4px 0}td pre{white-space:pre-wrap;font-size:11.5px;
+           color:#8b93a3;margin:4px 0;max-width:520px}
+      td p{margin:4px 0}td details summary{color:#6b7280;font-size:11.5px}
       .chart{margin:14px 0}svg{width:100%;max-width:920px;display:block}
       .grid{stroke:#262b36;stroke-width:1}.tick{fill:#8b93a3;font-size:11px}
       .legend{margin-top:6px}.legend span{margin-right:16px;font-size:12px}

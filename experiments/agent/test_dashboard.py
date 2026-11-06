@@ -46,7 +46,10 @@ def _snap() -> dict:
                 "needs": [{"need": "FOOD", "satisfaction": "0.8"}],
                 "leaderboard": {"unlocks": 2, "status": "ACTIVE"},
                 "entry": {"entity": "e1", "accepted": True,
-                          "action": "edit", "attempts": 1,
+                          "action": "edit", "attempts": 2,
+                          "outcome": "edit-fuzzy", "edit_rung": "fuzzy",
+                          "nudge": True, "prompt_bytes": 45678,
+                          "say": "Alpha holds the hearth.",
                           "thoughts": "plan"},
                 "behaviour": {"sha": "abc", "state": None,
                               "source": "-- x"}},
@@ -56,7 +59,11 @@ def _snap() -> dict:
                 "needs": [], "leaderboard": {"unlocks": 0,
                                              "status": "ACTIVE"},
                 "entry": {"entity": "e2", "accepted": False,
-                          "action": "keep", "attempts": 1},
+                          "action": "edit", "attempts": 3,
+                          "outcome": "edit-miss",
+                          "refusal": "SEARCH block 1 matched nothing in "
+                                      "the installed behaviour source",
+                          "warnings": ["undeclared global `wooden``"]},
                 "behaviour": {"sha": "def", "state": None,
                               "source": "-- y"}}}}
 
@@ -79,6 +86,36 @@ def test_chat_history_marks_anonymous_heards():
          "witnessed": True})
     hist = _chat_history([snap])
     assert hist[-1]["who"] == "—" and hist[-1]["t"] == 3
+
+
+def test_the_house_tab_carries_the_seat_journal():
+    h = build_dashboard([_snap()], {"title": "t"})
+    assert "The seat's journal — one row per author cycle" in h
+    # outcome labels + rung land as their own columns...
+    assert 'class="ok">edit-fuzzy' in h
+    assert 'class="warn">edit-miss' in h
+    assert ">fuzzy</td>" in h
+    # ...the prompt size and the nudge marker render...
+    assert "44.6K" in h and "2⚡" in h and ">3</td>" in h
+    # ...the say line is quoted...
+    assert "Alpha holds the hearth." in h
+    # ...and the FULL refusal + the lint warnings ride the disclosure,
+    # not the round table's 60-char trim
+    assert "matched nothing in the installed behaviour source" in h
+    assert "undeclared global `wooden`" in h
+
+
+def test_the_journal_section_falls_back_for_pre_outcome_journals():
+    snap = _snap()
+    snap["dynasties"]["House Alpha"]["entry"] = {
+        "accepted": True, "action": "edit", "attempts": 1}
+    snap["dynasties"]["House Beta"]["entry"] = {
+        "accepted": False, "action": "edit", "attempts": 2,
+        "refusal": "old-style refusal"}
+    h = build_dashboard([snap], {"title": "t"})
+    assert 'class="ok">edit' in h          # accepted → ok, label = action
+    assert 'class="bad">edit' in h         # refused → bad
+    assert "old-style refusal" in h
 
 
 def test_build_dashboard_mounts_the_tabs_and_feeds():
