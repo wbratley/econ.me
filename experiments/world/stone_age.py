@@ -580,6 +580,14 @@ ridge's weather in the white season -- the storms are its fact.
    WOOD) adds four public seats when the clearing is crowded.
    SLEEP_BY_FIRE pays the full hour's rest (+1) but holds no torch --
    the watch is worth the wolf risk. Do not sleep fireless.
+1b. A SHELTER IS A SPEAR'S PRICE (2 WOOD + 1 YARN, one afternoon,
+   MAKE_SHELTER): the fire-free night. Under your own roof the day's
+   warmth is covered and a sheltered sleep covers two of the night's
+   three -- chronic misery (equilibrium 10 against the 18 line), never
+   death, and no wood again. The caveman order -- roof before haft:
+   run 71-72's houses died fireless with a spear on the wall and the
+   yarn in it. BUILD IT EARLY; the fire still cooks and warms, but
+   it stops being the thing that kills you when it goes dark.
 1a. TORCHES are the night road: the same commons fire that warms you
    lights your brands (LIGHT_TORCH, free) -- MAKE them by daylight (1
    WOOD + 1 YARN), CHAIN them off your own flame (or its two-tick
@@ -637,7 +645,8 @@ keeps, the pot that makes a flock feed), never bare survival.
 5. HENS (see THE LARDER below): a pen and four hens is the best
    food/labor in the world once the capital is paid -- income that
    arrives while you sleep.
-6. SHELTER + CLOTHES (7 WOOD + 7 YARN; clothes want the TANNING rank):
+6. SHELTER + CLOTHES: the SHELTER itself is rung 1b's cheap roof
+   (2 WOOD + 1 YARN); CLOTHES want the TANNING rank --
 daytime warmth becomes FREE;
    nights still draw 3/hour -- the fire you stop paying for by day is
    the one you need at dusk.
@@ -703,9 +712,10 @@ EGGS and PELTS, and it
 sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
 salted meat that never rots, so the shop always has food) -- it
 sells HENS (ask ~4: the larder's seed capital; a hen returns her
-price in four eggs sold back), and ONE WATERSKIN (ask ~6: a pelt's
-worth of carried river -- the price anchor for thirsty houses with
-coin and no wolf). THE SHELF RESTOCKS THE WAY A LARDER DOES (run 52):
+price in four eggs sold back), and ONE WATERSKIN (ask ~3: one pelt sold
+at the bid nearly buys the skin -- a dead wolf is the skin it died
+for; the toll fits the day-2 purse, which at ask ~6 it never did).
+THE SHELF RESTOCKS THE WAY A LARDER DOES (run 52):
 there is no back channel and no hills to deal with -- what the
 forest sells him raw he salts at his own back-room shed (2 MEAT
 make 2 JERKY), and the jerky ask follows the fills that stocked it.
@@ -2656,10 +2666,13 @@ def _create_recipes(session: Session) -> None:
     # 10 < 18) but miserable: the graded ladder from misery to comfort.
     production.create_recipe(
         session, "MAKE_SHELTER", name="Build Shelter",
-        description="Warmth as capital: pays once, then drips forever — "
-                    "with clothes, the whole WARMTH need covered free.",
-        inputs={"LABOR": D("1"), "WOOD": D("4"),
-                                          "YARN": D("2")},
+        description="Warmth as capital: a spear's price -- two logs, one "
+                    "cord, an afternoon -- pays once, then drips forever. "
+                    "With clothes, the whole WARMTH need covered free; "
+                    "alone, the fire-free night (equilibrium 10 against "
+                    "the 18 line: misery, never death).",
+        inputs={"LABOR": D("1"), "WOOD": D("2"),
+                                          "YARN": D("1")},
         outputs={}, duration_ticks=3, builds_facility="SHELTER",
     )
     production.create_recipe(
