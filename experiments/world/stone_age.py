@@ -712,9 +712,10 @@ EGGS and PELTS, and it
 sells safe food (BERRIES, COOKED_MEAT while they last, and JERKY --
 salted meat that never rots, so the shop always has food) -- it
 sells HENS (ask ~4: the larder's seed capital; a hen returns her
-price in four eggs sold back), and ONE WATERSKIN (ask ~6: a pelt's
-worth of carried river -- the price anchor for thirsty houses with
-coin and no wolf). THE SHELF RESTOCKS THE WAY A LARDER DOES (run 52):
+price in four eggs sold back), and ONE WATERSKIN (ask ~3: one pelt sold
+at the bid nearly buys the skin -- a dead wolf is the skin it died
+for; the toll fits the day-2 purse, which at ask ~6 it never did).
+THE SHELF RESTOCKS THE WAY A LARDER DOES (run 52):
 there is no back channel and no hills to deal with -- what the
 forest sells him raw he salts at his own back-room shed (2 MEAT
 make 2 JERKY), and the jerky ask follows the fills that stocked it.
