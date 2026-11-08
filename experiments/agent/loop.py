@@ -967,13 +967,46 @@ def _diary_leak(text: str) -> bool:
     return any(t.startswith(opener) for opener in _DIARY_LEAK_OPENERS)
 
 
+def _complete_bounded(model, system: str, user: str,
+                      wall_s: float) -> str:
+    """Model.complete() under a wall clock: a garnish call (the diary)
+    must never wedge the round. Run 73's incident: a kept-old tail's
+    diary call entered a provider that retried x3 internally, each
+    attempt under its own 3600s drain wall — three hours of dead
+    round. The wall ABANDONS the call: the daemon thread is left to
+    the provider's own caps (bounded, eventually retired), the round
+    proceeds as if the diary had failed — which is exactly its
+    documented degrade path."""
+    import threading
+    box: list[str] = []
+    err: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            box.append(model.complete(system, user))
+        except BaseException as exc:   # noqa: BLE001 — relayed to caller
+            err.append(exc)
+
+    t = threading.Thread(target=_run, daemon=True, name="diary-complete")
+    t.start()
+    t.join(wall_s)
+    if t.is_alive():
+        raise TimeoutError(
+            f"diary wall: complete() still running after {wall_s:.0f}s "
+            "(abandoned; the provider call's own caps retire the thread)")
+    if err:
+        raise err[0]
+    return box[0]
+
+
 class AgentLoop:
     def __init__(self, mcp: McpClient, model, entity_id: str | None = None,
                  max_attempts: int = 3, journal_path: str | None = None,
                  last_ticks: int = 8, edit_mode: bool = False,
                  diary: bool = False, manual: str | None = None,
                  catalog: str | None = None,
-                 trace_dir: str | None = None, seat: str | None = None):
+                 trace_dir: str | None = None, seat: str | None = None,
+                 diary_wall_s: float = 600.0):
         self.mcp = mcp
         self.model = model
         self.entity_id = entity_id
@@ -982,6 +1015,10 @@ class AgentLoop:
         self.last_ticks = last_ticks
         self.edit_mode = edit_mode
         self.diary = diary
+        self.diary_wall_s = diary_wall_s   # run 73: the kept-old diary
+        #   tail retried x3 inside a provider call (each with its own
+        #   3600s drain wall) and wedged the round for 3h — the garnish
+        #   gets its own wall
         self.manual = manual              # authored notes, if the pack ships any
         self.catalog = catalog            # generated readable world (3a fold)
         self._feedback: list[str] = []          # rides into the next prompt
@@ -1530,7 +1567,9 @@ class AgentLoop:
 
         # The strategy diary: one extra short call, same mind, after the
         # decision stands. Failure degrades to silence — the diary must
-        # never be the reason a round dies.
+        # never be the reason a round dies. A HANG is just a slower
+        # failure: the wall (run 73) abandons the call — the round
+        # moves on and the provider's own drain caps retire the thread.
         thoughts = ""
         if self.diary:
             try:
@@ -1538,8 +1577,9 @@ class AgentLoop:
                                             action, last_error)
                 self._trace_ctx["kind"] = "diary"
                 self._persist_prompt("diary", d_sys, d_usr)
-                thoughts = strip_think(self.model.complete(
-                    d_sys, d_usr)).strip()
+                thoughts = strip_think(_complete_bounded(
+                    self.model, d_sys, d_usr,
+                    wall_s=self.diary_wall_s)).strip()
             except ScriptedModelEmpty:
                 raise                 # a missing fixture, not a provider hiccup
             except Exception:

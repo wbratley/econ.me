@@ -1897,3 +1897,39 @@ def test_observe_carries_vitals_and_a_slimmed_full_round_tail(client, monkeypatc
     for t in obs["events"]["ticks"]:
         for ev in t["events"]:
             assert "entity_id" not in ev and "process_id" not in ev
+
+
+def test_the_diary_wall_abandons_a_hung_call(client):
+    """Run 73's incident, pinned: a provider whose diary call hangs
+    (the kept-old tail hit one that retried x3 under 3600s drain
+    walls — a 3h dead round) must not wedge the cycle. The wall
+    abandons the call, thoughts degrade to silence, and the round's
+    decision stands exactly as a failed diary would leave it."""
+    import time
+
+    class _HungDiaryModel:
+        name = "hung-diary"
+        no_thinking = True
+
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, system, user, thinking=True):
+            self.calls += 1
+            if self.calls == 1:          # the author call: fine
+                return CLEAN
+            time.sleep(5.0)              # the diary call: hangs
+            return "never reached"
+
+    model = _HungDiaryModel()
+    lp = AgentLoop(mcp(client), model, diary=True, diary_wall_s=0.3)
+    t0 = time.monotonic()
+    entry = lp.cycle()
+    elapsed = time.monotonic() - t0
+    assert entry["accepted"]              # the decision stood
+    assert entry["thoughts"] == ""        # the garnish degraded to silence
+    assert elapsed < 4.0, elapsed         # 0.3s wall, not 5s+ of hang
+    # and the abandoned thread retires without breaking anything after
+    time.sleep(5.0 - elapsed + 0.2)
+    got = lp.mcp.call("get_behaviour", {"entity_id": lp.entity_id})
+    assert got["source"] == CLEAN         # the world is untouched by the hang
