@@ -746,14 +746,23 @@ def main(argv=None) -> int:
         if gate is not None:
             # Attach to the existing seats: same deterministic user ids,
             # entity ids recovered from ownership — the world IS the state.
+            # G2 (the generational spec): a lineage may hold SEVERAL
+            # entities across generations (the dead soma stay in the
+            # table); the seat rebinds to the newest ACTIVE body, and
+            # only falls back to the newest corpse when the whole line
+            # is down (the extinct-dynasty skip then ignores it).
+            from econengine.models import EntityStatus
             for d in dynasties:
-                ent = s.execute(_select(Entity)
-                                .where(Entity.owner_id == d.user_id)
-                                ).scalar_one_or_none()
-                if ent is None:
+                lineage = s.execute(
+                    _select(Entity).where(Entity.owner_id == d.user_id)
+                    .order_by(Entity.created_at)
+                ).scalars().all()
+                if not lineage:
                     raise SystemExit(
                         f"--resume: no seat owned by {d.user_id} — is "
                         f"{out} the run dir for these --names?")
+                ent = next((e for e in lineage
+                            if e.status == EntityStatus.ACTIVE), lineage[-1])
                 d.entity_id = ent.id
             world_meta = read_world_meta(s)
             print(f"resuming: world intact, rounds 1..{start_round - 1} "
