@@ -566,6 +566,9 @@ def test_the_starter_hafts_the_spear_rung(session):
     _no_wolves(session)
     _to_tick(session, 8)                 # hour 7: three honest hours fit
     seat = _starter_seat(session, "Haft")
+    # roof before haft (G0, the C2 doctrine): latch the shelter stamp
+    # so this test's subject stays the spear, not the roof
+    _starter_state(session, seat, {"shelter": True})
     from econengine import tech
     tech.grant_unlock(
         session, seat, tech.get_technology(session, "KNAPPING"),
@@ -1015,7 +1018,7 @@ def _to_tick(session, n):
         session.commit()
 
 
-def _starter_seat(session, name):
+def _starter_seat(session, name, state=None):
     """A house running the pack's inherited STARTER, gate-packed the
     way genesis installs it."""
     seat = _seat(session, name)
@@ -1025,10 +1028,21 @@ def _starter_seat(session, name):
         source=stone_age._gate_pack_script(stone_age.STARTER),
         entity_id=seat.id,
         timeout_ms=200,
-        state={},
+        state=dict(state or {}),
     ))
     session.flush()
     return seat
+
+
+def _starter_state(session, seat, patch):
+    """Poke the starter's ctx.state latch(es) after the fact (the
+    script's own stamp path): a test can pre-latch S.shelter etc."""
+    from econengine.models import Script as ScriptModel
+    row = session.execute(
+        select(ScriptModel).where(ScriptModel.entity_id == seat.id)
+    ).scalar_one()
+    row.state = {**(row.state or {}), **patch}
+    session.flush()
 
 
 def test_neglect_kills(session):
@@ -2693,15 +2707,17 @@ def test_thirst_kills_the_dry_larder_on_day_three(session):
 
 
 def test_the_post_anchors_a_waterskin(session):
-    """The price anchor (P3, repriced C3): one waterskin on the post's
-    shelf, asked off its own books (genesis basis 2.30 x 1.30 = 2.99 --
-    one pelt sold at the bid nearly buys the skin: the toll fits the
-    day-2 purse that the old 4.50 basis priced out). The market exists;
-    the shelf holds exactly one; water itself is never sold (the tap is
+    """The price anchor (P3, repriced C3, supply widened G0): three
+    waterskins on the post's shelf (one per house -- the run-73 audit:
+    a single skin meant the first buyer emptied the designed answer to
+    thirst for the other two), asked off its own books (genesis basis
+    2.30 x 1.30 = 2.99 -- one pelt sold at the bid nearly buys the
+    skin: the toll fits the day-2 purse that the old 4.50 basis priced
+    out). The market exists; water itself is never sold (the tap is
     free)."""
     create_content(session)
     post = _post(session)
-    assert _hold(session, post.id, "WATERSKIN") == Decimal("1")
+    assert _hold(session, post.id, "WATERSKIN") == Decimal("3")
     _run(session, 2)
     sell = _open_orders(session, post.id, "WATERSKIN", OrderSide.SELL)
     assert len(sell) == 1
@@ -5141,3 +5157,52 @@ def test_the_forest_bleeds_resin(session):
     assert [u.technology.code for u in study.unlocks] == ["LEATHERWORK"]
     assert {r.symbol: r.quantity for r in study.inputs} == {
         "PELT": Decimal("1"), "WATER": Decimal("1")}
+
+
+def test_the_g0_scaffold_blocks_parse_and_the_tool_run_fires(session):
+    """G0, the generational spec: the floor's survival exits are
+    BLOCK-MARKED scaffold (drop/replace/rollback-able by a seat or the
+    succession machinery -- whole-script inheritance is fragile), and
+    the tool run actually runs: a coin-pursed house standing home in
+    daylight walks to the counter and buys the skin and the cords
+    (run 73's audit: both affordances existed and NO seat ever took
+    them -- the floor inherits them now)."""
+    import re as _re
+    src = stone_age._gate_pack_script(stone_age.STARTER)
+    opens = _re.findall(r"===== BLOCK ([a-z.]+)", src)
+    ends = _re.findall(r"===== END ([a-z.]+)", src)
+    assert "market" in opens and "market" in ends
+    assert "shelter" in opens and "shelter" in ends
+    # the sections are balanced (one END per BLOCK family)
+    for fam in set(opens):
+        assert fam.split(".")[0] in {e.split(".")[0] for e in ends}, fam
+    # the purse read is the currency form (ctx.query.balance is by
+    # ACCOUNT ID -- the run-73 debug: "COIN" read nil there and the
+    # wants never fired)
+    assert 'std.balance("COIN")' in src
+
+    # end to end: day-2 shape, purse 10, at home -- the tool run walks
+    create_content(session)
+    _no_wolves(session)
+    _to_tick(session, 32)                # day 2, hour 8
+    seat = _starter_seat(session, "Toolrun")
+    from econengine import tech
+    tech.grant_unlock(                     # the study rung is behind it
+        session, seat, tech.get_technology(session, "KNAPPING"),
+        production.next_tick_number(session))
+    _set(session, seat, "SATIETY", 6)    # the day is spare (not famine)
+    _set(session, seat, "WOOD", 2)       # the night paid
+    session.commit()
+    _run(session, 2)
+    assert any(e["entity_id"] == seat.id
+               and str(e.get("to", e.get("place", ""))).upper() == "POST"
+               for e in _events(session, "travel"))
+    # and standing at the counter, the skin order lands on its own book
+    _run(session, 4)                     # the walk is an hour each way
+    bought = [e for e in _events(session, "place_order")
+              if e["entity_id"] == seat.id
+              and str(e.get("params", {}).get("symbol", "")).upper() in
+              ("WATERSKIN", "YARN", "JERKY")]
+    assert any("WATERSKIN" in str(b.get("params", {}).get("symbol"))
+               for b in bought), bought
+    assert _events(session, "script_error") == []
