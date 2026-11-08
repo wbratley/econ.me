@@ -826,11 +826,13 @@ POST_FOOD = {"BERRIES": Decimal("60"), "COOKED_MEAT": Decimal("20"),
              # priced like flint. Two of them buy the SALT_CURING rank
              # over this very counter (STUDY_SALT).
              "SALT": Decimal("8"),
-             # The water kit's anchor (P3): one waterskin on the shelf
-             # -- the price a thirsty house with coin reads. Water
-             # itself is never sold: the river is free, and the SKIN
-             # is what coin buys.
-             "WATERSKIN": Decimal("1"),
+             # The water kit's anchor (P3, supply widened G0): three
+             # skins on the shelf -- one per house at the 2.99 ask
+             # (the run-73 audit: one skin on the shelf meant the
+             # FIRST buyer emptied the designed answer to thirst for
+             # the other two). Water itself is never sold: the river
+             # is free, and the SKIN is what coin buys.
+             "WATERSKIN": Decimal("3"),
              # The comfort ladder's storefront (P4): one bed on the
              # shelf -- the capital that pays every night forever,
              # priced for the house that has food, water, and fire

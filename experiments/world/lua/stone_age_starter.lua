@@ -20,11 +20,24 @@
 -- lottery it always was, taken the day it turns up. Protein before
 -- the spear rides the drink errand: fish at the bank (certain-ish,
 -- and nothing there hunts you); with a spear in hand the house walks
--- the deep forest's table when the meat shelf thins. Everything else
--- -- bag, axe, bow, shelter, clothes, even its own fire -- stays the
--- player's invention: the floor remains POOR, and the spear is the
--- floor's because without it the protein walk is a 55%-nothing gamble
--- the floor does not take.
+-- the deep forest's table when the meat shelf thins.
+-- G0 (the generational spec, post run 73): the floor now owns THREE
+-- rungs of capital and the law of the counter -- the spear (food's
+-- key), the ROOF (the fire-free night: runs 71-73's strongest
+-- houses all died of fireless sleep beside the recipe), and the SKIN
+-- plus the market law that prices them (the tool run buys cord and
+-- skin at the shelf instead of praying the lottery; the famine
+-- bridge buys strips sized to the purse). The floor remains
+-- otherwise POOR -- bag, axe, bow, clothes, its own fire are still
+-- the player's -- but the survival-critical exits are no longer
+-- inventions: they are inheritance.
+-- THE BLOCK MARKERS (G0): scaffold blocks are delimited
+--   -- ===== BLOCK <name>[.<part>] | provenance =====
+--   -- ===== END <name> =====
+-- so a seat (or the succession machinery, G3) can drop, replace, or
+-- roll back a whole block without touching its neighbours -- the
+-- live seats of runs 71-72 proved block-shaped edits are what models
+-- actually land; whole-script inheritance is fragile by comparison.
 -- The day's SHAPE (L2, run 70: WARM_BY_FIRE 33-40% + TRAVEL 29-42% of
 -- every tick, 1.9 gathers a round-trip, the fire dark 13 of 20 days
 -- beside a wood supply): the commute is paid PER TRIP, not per
@@ -208,7 +221,7 @@ if disease >= 1 then
     ctx.action.start_process("TAKE_TONIC")
   elseif place == "POST" then
     local ask = std.best_ask("TONIC")
-    local purse = tonumber(ctx.query.balance("COIN")) or 0
+    local purse = std.balance("COIN")
     if ask and purse >= ask then
       ctx.action.place_order("TONIC", "buy", "1", std.amount_str(ask))
     end
@@ -279,6 +292,26 @@ if (std.is_night() or warmth < 4 or comfort < 0.1) and #fires > 0
   end
 end
 
+-- 1a-s. ===== BLOCK shelter (the fire-free night) | G0, C2 =====
+--     The completion stamp (a facility event latches S.shelter
+--     forever; the build gate reads the latch, never the shelf) and
+--     the dark-night fallback: with the fire OUT and a roof UP, the
+--     watch sleeps cold-adjacent -- REST +1, WARMTH +2 of the
+--     night's 3: chronic misery (equilibrium 10 against the 18
+--     line), never death. The two FATIGUE deaths of run 73 were
+--     houses that never built this; the floor now builds it for
+--     them (block 3) and sleeps under it here.
+for _, e in ipairs(ctx.events or {}) do
+  if e.type == "process_completed" and e.facility == "SHELTER" then
+    S.shelter = true
+  end
+end
+if std.is_night() and place == home and #fires == 0 and S.shelter
+   and rest < 6 and not std.running_recipe("SLEEP_SHELTERED") then
+  ctx.action.start_process("SLEEP_SHELTERED")
+end
+-- ===== END shelter =====
+
 -- 1b. Wolves are creatures that RANGE: by day the packs work the
 --     forest game, and in the last daylight a hungry one walks the
 --     road to the fire-ground -- the people's clearing is where it
@@ -331,6 +364,7 @@ local knapping = std.has_unlock("KNAPPING")
 --     Early enough that three honest hours still end in light; the
 --     walk home from the scrape is part of the errand.
 if spear < 1 and knapping and flint >= 1 and wood >= 4 and yarn >= 1
+   and (S.shelter or S.shelter_started)
    and not std.is_night() and std.hour() < 15 then
   if place ~= home then
     ctx.action.travel(home)
@@ -338,6 +372,73 @@ if spear < 1 and knapping and flint >= 1 and wood >= 4 and yarn >= 1
     ctx.action.start_process("MAKE_SPEAR")
   end
 end
+
+-- 2d. ===== BLOCK market | the counter's standing law (G0) =====
+--     The tool run and the famine bridge, as one committed errand:
+--     the post is where a purse becomes capital (run 71-72's live
+--     seat proved every line below -- the flint-rich back sells
+--     stones it cannot eat; the haft-wanting back buys cord at the
+--     shelf price instead of praying the thicket's one-in-twenty;
+--     the starving back buys strips sized TO THE PURSE: min(4,
+--     (coin-1)/ask) -- four strips or none starved a rich-knowledge
+--     house one coin short of a stocked shelf, run 72's epitaph).
+--     The wants are computed every tick (cheap reads); the ORDERS
+--     land only standing at the counter. Resting buys escrow coin:
+--     food first, skin second, cord third, and the flint sale (only
+--     past three stones: the haft's own flint is never sold) refunds
+--     the purse for the next bridge. Re-asserting supersedes; the
+--     per-tick auction fills what rests.
+local coin = std.balance("COIN")
+local skin_ask = std.best_ask("WATERSKIN")
+local yarn_ask = std.best_ask("YARN")
+local jerky_ask = std.best_ask("JERKY")
+local flint_bid = std.best_bid("FLINT", 0)
+local hunger_now = std.holding_qty("HUNGER")
+-- TRIP wants are loose (the walk is decided at dawn, when the
+-- keeper's book may still be bare from the night -- he re-quotes as
+-- the morning opens); the ORDER wants below stay tight at the counter.
+local want_skin_trip = skin < 1 and coin >= 4
+local want_skin = skin < 1 and skin_ask ~= nil
+   and tonumber(skin_ask) <= 3 and coin >= tonumber(skin_ask) + 1
+local yarns_wanted = 1
+if spear < 1 and not S.shelter then yarns_wanted = 2 end
+local want_yarn = yarn < yarns_wanted and (spear < 1 or not S.shelter)
+   and yarn_ask ~= nil and tonumber(yarn_ask) <= 4
+   and coin >= tonumber(yarn_ask) * yarns_wanted + 2
+local want_yarn_trip = yarn < yarns_wanted and (spear < 1 or not S.shelter)
+   and coin >= 5
+local want_food = hunger_now > 8 and jerky_ask ~= nil
+   and tonumber(jerky_ask) <= 1.5
+   and coin >= tonumber(jerky_ask) + 1
+local want_food_trip = hunger_now > 8 and coin >= 2
+local post_wants = want_skin_trip or want_yarn_trip or want_food_trip
+if place == "POST" then
+  if want_food then
+    local strips = 0
+    local purse = coin - 1
+    while strips < 4 and purse >= tonumber(jerky_ask) * (strips + 1) do
+      strips = strips + 1
+    end
+    if strips >= 1 then
+      ctx.action.place_order("JERKY", "buy", tostring(strips),
+                             jerky_ask, std.account_id("COIN"))
+    end
+  end
+  if want_skin then
+    ctx.action.place_order("WATERSKIN", "buy", "1", skin_ask,
+                           std.account_id("COIN"))
+  end
+  if want_yarn then
+    ctx.action.place_order("YARN", "buy", tostring(yarns_wanted - math.floor(yarn)),
+                           yarn_ask, std.account_id("COIN"))
+  end
+  if flint > 3 and flint_bid >= 1 then
+    ctx.action.place_order("FLINT", "sell", "2",
+                           std.amount_str(flint_bid - 0.01),
+                           std.account_id("COIN"))
+  end
+end
+-- ===== END market =====
 
 -- 3. Everything else is gathering at the thicket: food first, then wood
 --    for the fire (wolves or no wolves, a dark camp is the expensive
@@ -417,6 +518,38 @@ if not std.is_night() then
     else
       ctx.action.start_process("DIG_FLINT")
     end
+  -- ===== BLOCK market.errand (the tool run: skin, cord, bridge) =====
+  --     One committed day-trip to the counter while a want stands:
+  --     the same day-commitment as the study and the fish (a floor
+  --     that re-decides its errand every tick zig-zags and starves
+  --     -- run 56's soak). Wood-first like every walk (the night
+  --     paid before the road), EXCEPT the famine bridge: a hungry
+  --     back walks on one log. The errand holds the counter until
+  --     dusk discipline walks it home (the orders rest and fill on
+  --     the book either way; presence only avoids bounce-walks).
+  --     PRIORITY: before the fish run -- capital (the skin, the
+  --     cord, the famine bridge) is a one-time buy; the river
+  --     recurs every hungry week. A floor that fishes first never
+  --     banks the tool money.
+  elseif post_wants and place == home and can_walk
+     and std.hour() < 14 and (wood >= 1 or want_food) then
+    S.errand_day, S.errand = std.day(), "post"
+    ctx.action.travel("POST")
+  elseif S.errand == "post" and place == "POST"
+     and not dusk_closing then
+    -- 2d places the orders on arrival; this branch holds the day.
+  -- ===== BLOCK shelter.build (the roof: fireless nights retire) =====
+  --     The rung-1b roof (C2): a spear's materials, one afternoon,
+  --     built ONCE (S.shelter_started latches the queue; the stamp
+  --     latches the completion -- a missed event never rebuilds, a
+  --     latched queue never double-pays). Local work at home, before
+  --     the fish run and the gather: the day the cord and two logs
+  --     exist, the roof goes up (runs 71-73: every strong house died
+  --     of a fireless night beside this recipe).
+  elseif not S.shelter and not S.shelter_started and wood >= 2
+     and yarn >= 1 and place == home and std.hour() < 14 then
+    S.shelter_started = true
+    ctx.action.start_process("MAKE_SHELTER")
   -- 2c. The feast (run 54 P2): comfort is the one want worth being
   --     SAFE for, and the feast is its one bulk buy. When ease has run
   --     dry (an unloved hour accrues squalor, and squalor shrinks the

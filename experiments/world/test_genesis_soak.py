@@ -192,6 +192,10 @@ def _soak_world(days=DAYS):
             squalor_beast_days=0,       # any beast holding SQUALOR, any day
             script_errors=0,
             deaths=[],                  # (tick, name, condition)
+            shelter_by_d3=set(),        # G0: houses that completed the roof
+            shelter_by_d5=set(),        # G0: the honest window (d3 is the
+                                        # study->post->roof chain's edge)
+            skin_by_d3=set(),           # G0: houses that bought a skin
         )
         # L2: places are read per tick to reconstruct away-spells (the
         # gather trip shape); place ids -> keys once, the map is static.
@@ -266,6 +270,17 @@ def _soak_world(days=DAYS):
                         and event.get("status") == "applied"
                         and recipe == "STUDY_KNAPPING"):
                     out["studies"].append(tick_no)
+                if (event.get("type") == "process_completed"
+                        and event.get("recipe") == "MAKE_SHELTER"):
+                    if tick_no <= 72:
+                        out["shelter_by_d3"].add(event.get("entity_id"))
+                    if tick_no <= 120:
+                        out["shelter_by_d5"].add(event.get("entity_id"))
+                if (event.get("type") == "trade"
+                        and event.get("side") == "buy"
+                        and event.get("market") == "WATERSKIN"
+                        and tick_no <= 72):
+                    out["skin_by_d3"].add(event.get("entity_id"))
                 if event.get("type") == "entity_incapacitated":
                     gone = session.get(Entity, event.get("entity_id"))
                     out["deaths"].append(
@@ -439,6 +454,39 @@ def test_the_genesis_soak_pins_run_55_closed():
         f"only {worlds_with_a_house}/{WORLDS} worlds kept a living house -- "
         f"the survival margin collapsed")
 
+    # --- the G0 scaffold bars (generational spec; run 73's audit) ------
+    # The floor now OWNS the survival exits (skin, cords, the roof) as
+    # block-marked scaffold -- measured by ADOPTION, aggregate-only
+    # (the day-commitment ladder is a per-house lottery: a poor house
+    # spends every daylight on food and the tool run waits -- the
+    # Malthusian point, not a defect). Two gated samples: skin_d3
+    # 13/15 and 8/15; shelter_d3 4/15 and 4/15 with the honest window
+    # at day 5 (the chain is study d1 -> post d2 -> roof d3+, and the
+    # roof's dawn-wood gate slips a day in poor draws): shelter_d5
+    # 10/15 and 4/15. Bars sit one step under the observed minima.
+    skin_d3 = sum(len(w["skin_by_d3"]) for w in worlds)
+    assert skin_d3 >= 5, (
+        f"only {skin_d3}/15 houses held a waterskin by day 3 -- the "
+        f"tool run stopped reaching the counter (observed 8-13)")
+    shelter_d5 = sum(len(w["shelter_by_d5"]) for w in worlds)
+    assert shelter_d5 >= 3, (
+        f"only {shelter_d5}/15 houses raised a roof by day 5 -- the "
+        f"cord-to-roof conversion broke (observed 4-10)")
+    # WARM share: the spec guessed the scaffold would push it under
+    # 45%; measured, it does NOT (46-49% both samples -- the roof
+    # survives DARK nights, it does not replace lit-fire hours, which
+    # the bucket already counts as sleep). The bar is the regression
+    # guard, not the thesis: the fire watch stays the day's spine
+    # until a later lever attacks the time budget itself.
+    warm = sum(sum(per.get(r, 0)
+                   for per in w["instrument"]["recipe_counts"].values()
+                   for r in WARM_RECIPES)
+               for w in worlds)
+    warm_share = warm / max(hops + done, 1)
+    assert warm_share <= 0.52, (
+        f"aggregate WARM share {100 * warm_share:.0f}% -- the fire "
+        f"watch regressed past the guard (landing zone 41-49%)")
+
 
 def measure(n=WORLDS, days=DAYS):
     """L2 floor-tax report: run n soak worlds headless and print the
@@ -486,7 +534,9 @@ def measure(n=WORLDS, days=DAYS):
               f"dark={inst['dark_events']}ev/{inst['dark_days']}d "
               f"stokes={instants.get('STOKE_FIRE', 0)}"
               f"(+{inst['stoke_refusals']}ref) "
-              f"eats={instants.get('EAT_BERRIES', 0) + instants.get('EAT_APPLES', 0)}")
+              f"eats={instants.get('EAT_BERRIES', 0) + instants.get('EAT_APPLES', 0)} "
+              f"shelter_d3={len(w['shelter_by_d3'])}"
+              f"/d5={len(w['shelter_by_d5'])} skin_d3={len(w['skin_by_d3'])}")
         alive_t = sum(inst["alive_ticks"].values())
         busy_t = sum(len(v) for v in inst["busy"].values())
         idle_t = max(alive_t - busy_t, 0)
@@ -501,8 +551,13 @@ def measure(n=WORLDS, days=DAYS):
         tot["dark"] += inst["dark_events"]
         tot["dark_days"] += inst["dark_days"]
         tot["alive"] += w["houses_alive"]; tot["seats"] += 3
+    shel = sum(len(w["shelter_by_d3"]) for w in worlds)
+    shel5 = sum(len(w["shelter_by_d5"]) for w in worlds)
+    skin = sum(len(w["skin_by_d3"]) for w in worlds)
     t = tot["hops"] + tot["done"]
     print(f"AGGREGATE: alive={tot['alive']}/{tot['seats']} "
+          f"shelter_d3={shel}/d5={shel5}/{tot['seats']} "
+          f"skin_d3={skin}/{tot['seats']} "
           f"MOVE={100 * tot['hops'] / max(t, 1):.0f}% "
           f"WARM={100 * tot['warm'] / max(t, 1):.0f}% "
           f"GATHER={100 * tot['gather'] / max(t, 1):.0f}% "
