@@ -753,10 +753,12 @@ def main(argv=None) -> int:
             # is down (the extinct-dynasty skip then ignores it).
             from econengine.models import EntityStatus
             for d in dynasties:
-                lineage = s.execute(
-                    _select(Entity).where(Entity.owner_id == d.user_id)
-                    .order_by(Entity.created_at)
-                ).scalars().all()
+                lineage = sorted(
+                    s.execute(
+                        _select(Entity).where(Entity.owner_id == d.user_id)
+                    ).scalars().all(),
+                    key=lambda e: str(e.id))   # deterministic (Entity has
+                                               # no created_at column)
                 if not lineage:
                     raise SystemExit(
                         f"--resume: no seat owned by {d.user_id} — is "
