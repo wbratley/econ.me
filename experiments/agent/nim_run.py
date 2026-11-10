@@ -63,6 +63,7 @@ from .llm import (Model, DeepSeekModel, NimModel, ScriptedModel,
 from .loop import AgentLoop, McpClient
 from .multi import (Dynasty, build_agent_world, read_world_meta,
                     run_rounds)
+from .succession import KILL_WINDOW_TICKS, Succession
 
 
 def http_transport(base: str, token: str,
@@ -566,6 +567,18 @@ def main(argv=None) -> int:
                          "(round-XX.json), append to its journals. Without "
                          "an existing world this just runs fresh.")
     ap.add_argument("--keep-server", action="store_true")
+    ap.add_argument("--succession", action="store_true",
+                    help="G3: automatic succession — when a house's "
+                         "entity dies, the seat succeeds automatically "
+                         "(join the successor, install the inherited "
+                         "genome minus the kill-window, the death "
+                         "certificate on file if any, rebind) instead of "
+                         "parking. The lineage outlives its body; the "
+                         "run still ends at --rounds")
+    ap.add_argument("--succession-cooldown", type=int, default=2,
+                    metavar="N", help="rounds the world runs without a "
+                    "dead house before its successor joins — the price "
+                    "of death (default 2)")
     ap.add_argument("--seed-script", default=None, metavar="PATH",
                     help="lua file installed as every dynasty's starting "
                          "behaviour instead of the scenario starter, "
@@ -889,6 +902,14 @@ def main(argv=None) -> int:
                           build_dashboard(snaps, meta))
             _atomic_write(out / "meta.json", json.dumps(meta, indent=1))
 
+        succession = None
+        if args.succession:
+            succession = Succession(
+                base, out / "world.db", out,
+                ticks_per_round=args.ticks_per_round,
+                cooldown_rounds=args.succession_cooldown)
+            print(f"succession: ON (cooldown {args.succession_cooldown}"
+                  f" rounds, kill-window {KILL_WINDOW_TICKS} ticks)")
         snapshots = run_rounds(loops, args.rounds, out,
                                on_round=write_dash,
                                start_round=start_round,
@@ -897,7 +918,8 @@ def main(argv=None) -> int:
                                    base, admin_token,
                                    args.world_tick_seconds)
                                    if args.world_tick_seconds > 0
-                                   else None))
+                                   else None),
+                               succession=succession)
         elapsed = time.monotonic() - t0
     finally:
         if not args.keep_server:
