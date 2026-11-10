@@ -436,17 +436,22 @@ class _RunState:
         return bool(self.phases) and all(p == "extinct"
                                          for p in self.phases.values())
 
+    def all_succeeding(self) -> bool:
+        return bool(self.phases) and all(p == "succeeding"
+                                         for p in self.phases.values())
+
     def snapshot_entries(self, round_no: int) -> dict[str, dict]:
         """Each dynasty's journal entry for a closing round: the entry
         it authored FOR this round if one landed in time; else — a
-        tombstone for the dead (the dashboard counts them as neither
-        refusals nor keeps) and an honest missed-window keep for the
-        living (run 52's rounds 6-10 closed with no entry at all; the
-        snapshot now says what happened instead of going quiet)."""
+        tombstone for the dead and the in-succession (the dashboard
+        counts them as neither refusals nor keeps) and an honest
+        missed-window keep for the living (run 52's rounds 6-10 closed
+        with no entry at all; the snapshot now says what happened
+        instead of going quiet)."""
         with self.cond:
             out = {}
             for name, d in self.dynasties.items():
-                if self.phases.get(name) == "extinct":
+                if self.phases.get(name) in ("extinct", "succeeding"):
                     out[name] = _extinct_entry(d, round_no)
                     continue
                 landed = [e for e in self.entries[name]
@@ -456,13 +461,64 @@ class _RunState:
             return out
 
 
-def _seat_worker(d: Dynasty, lp: AgentLoop, state: _RunState) -> None:
+def _await_cooldown(state: _RunState, name: str, cooldown_rounds: int) -> None:
+    """The price of death: the world runs `cooldown_rounds` rounds without
+    the house before its successor joins (the world runs WITHOUT it —
+    the other houses keep the gate closing, the dying seat is not
+    eligible and costs nobody a round). The wait breaks early when the
+    WHOLE generation is in succession at once — nobody is left to keep
+    the world running, so a round can never close and a round-counted
+    cooldown would hang; the lineages then succeed together and the
+    world continues with the new generation — or when the run stops."""
+    if cooldown_rounds <= 0:
+        return
+    with state.cond:
+        target_closed = state.closed + cooldown_rounds
+        while (not state.stop and state.closed < target_closed
+               and not state.all_succeeding()):
+            state.cond.wait(_WORKER_POLL_S)
+
+
+def _succeed_seat(d: Dynasty, lp: AgentLoop, state: _RunState, name: str,
+                  succession) -> None:
+    """The seat's body died: the LINEAGE succeeds (G3) — the seat
+    outlives the entity. Pay the cooldown (the world runs without the
+    house), join the successor through the front doors (genome = the
+    last accepted version minus the kill-window; the death certificate
+    rides the genome's leading comment), rebind the seat to the new
+    body, and play on. A succession the front doors refuse (join 4xx,
+    install lint, no script to inherit) parks the line as extinct — a
+    broken lineage is a dead line, not a wedged round."""
+    with state.cond:
+        state.phases[name] = "succeeding"
+        state.cond.notify_all()
+    _await_cooldown(state, name, succession.cooldown_rounds)
+    try:
+        succ_id = succession.succeed(d)
+    except Exception as exc:      # a broken lineage: park, don't wedge
+        with state.cond:
+            state.phases[name] = "extinct"
+            state.ready_refusals[name] = f"succession refused: {exc}"
+            state.cond.notify_all()
+        return
+    with state.cond:
+        d.entity_id = succ_id
+        lp.entity_id = succ_id
+        state.submitted[name] = state.closed      # the successor authors
+        state.phases[name] = "deciding"           # from the next round on
+        state.cond.notify_all()
+
+
+def _seat_worker(d: Dynasty, lp: AgentLoop, state: _RunState,
+                 succession=None) -> None:
     """One dynasty's authoring cadence, free of every other seat: read
     the world, author and submit for the next round it hasn't closed,
     signal consent, repeat — at the seat's own pace. A submission that
     lands after its round closed applies going forward (a keep for the
     rounds slept through); a slow seat costs its own house those
-    rounds, never another seat's. The dead park for good."""
+    rounds, never another seat's. A dead body, with succession, is not
+    the end: the lineage succeeds (G3) and the seat plays on in its
+    successor. Without succession the dead park for good."""
     name = d.name
     try:
         while True:
@@ -487,7 +543,10 @@ def _seat_worker(d: Dynasty, lp: AgentLoop, state: _RunState) -> None:
                 state.phases[name] = ("extinct" if dead else "readying")
                 state.cond.notify_all()
             if dead:
-                return                      # the dead get no turn
+                if succession is None:
+                    return               # no succession: the dead park
+                _succeed_seat(d, lp, state, name, succession)
+                continue                 # the successor plays on
             try:
                 with state.ready_lock:
                     out_ready = lp.set_ready()
@@ -580,7 +639,7 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
                admin_advance=None, on_round=None,
                start_round: int = 1,
                snapshots: list[dict] | None = None,
-               clock_wait=None) -> list[dict]:
+               clock_wait=None, succession=None) -> list[dict]:
     """Rounds until the WORLD has completed N (default 1..N; a resumed
     run continues at start_round and passes the rounds already on disk
     as `snapshots` so `on_round` and the return value carry the WHOLE
@@ -615,7 +674,8 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
         submitted={d.name: start_round - 1 for d, _ in loops},
         entries={d.name: [] for d, _ in loops},
     )
-    workers = [threading.Thread(target=_seat_worker, args=(d, lp, state),
+    workers = [threading.Thread(target=_seat_worker,
+                                args=(d, lp, state, succession),
                                 daemon=True, name=f"seat-{d.name}")
                for d, lp in loops]
     for w in workers:

@@ -224,6 +224,33 @@ browser account to paste into the client. Use `--resume --browser-user ...`
 for that. Add `--keep-server` if the API should remain reachable after the
 final round.
 
+### Generational play: automatic succession (G3)
+
+The seat outlives the entity. When a house's entity dies, its seat does
+not park — the lineage succeeds AUTOMATICALLY through the platform's front
+doors: it joins a successor, installs the inherited genome (the last
+ACCEPTED version minus the kill-window mutations — the prime suspects for
+the death) together with the death certificate (if one is on file), and
+rebinds the seat to the new body. The cooldown (`--succession-cooldown`,
+default 2) is the price of death: the world runs without the house for N
+rounds before the successor joins, so death still selects. If the WHOLE
+generation dies in the same breath there is nobody left to keep the world
+running, so the lineages succeed together and the world continues with the
+new generation — the run still ends at `--rounds`.
+
+```bash
+.venv/bin/python -m experiments.agent.nim_run \
+    --models <slug-1> <slug-2> <slug-3> \
+    --names "House Llama" "House Qwen" "House Mistral" \
+    --scenario stone_age --rounds 40 --ticks-per-round 20 \
+    --succession --succession-cooldown 2 \
+    --out /tmp/stone-run
+```
+
+Without `--succession`, a dead seat parks for good and the run ends when no
+dynasty is left to act — the pre-G3 behaviour (the operator runs the
+succession by hand, `experiments/agent` journal + the world db).
+
 The living-world client and the dashboard can be open side by side: the
 client shows terrain, actors, presence, and speech; the dashboard remains
 the per-round strategy/audit record.
