@@ -479,6 +479,23 @@ def _await_cooldown(state: _RunState, name: str, cooldown_rounds: int) -> None:
             state.cond.wait(_WORKER_POLL_S)
 
 
+def _await_season(state: _RunState, name: str, succession) -> None:
+    """The season gate (the spec amendment): after the cooldown, the
+    successor also waits to be BORN in a gated-in season (default
+    spring — the trainer's assays all start at tick 1, so a birth in
+    any other season is an unassayable handicap; run 74's heirs died of
+    the birth, not the genome). The wait breaks when the WHOLE
+    generation is in succession (a world nobody runs grows no seasons —
+    they succeed together out of season, the generation collision
+    costing what it costs) or the run stops."""
+    if not succession.season_gate or succession.birth_ok():
+        return
+    with state.cond:
+        while (not state.stop and not state.all_succeeding()
+               and not succession.birth_ok()):
+            state.cond.wait(_WORKER_POLL_S)
+
+
 def _succeed_seat(d: Dynasty, lp: AgentLoop, state: _RunState, name: str,
                   succession) -> None:
     """The seat's body died: the LINEAGE succeeds (G3) — the seat
@@ -493,6 +510,7 @@ def _succeed_seat(d: Dynasty, lp: AgentLoop, state: _RunState, name: str,
         state.phases[name] = "succeeding"
         state.cond.notify_all()
     _await_cooldown(state, name, succession.cooldown_rounds)
+    _await_season(state, name, succession)
     try:
         succ_id = succession.succeed(d)
     except Exception as exc:      # a broken lineage: park, don't wedge
