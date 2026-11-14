@@ -113,11 +113,19 @@ class _FakeModel:
         self.response = response
         self.usage = usage
         self.calls = []
+        self._cb = None
 
     def complete(self, system, user):
         self.calls.append((system, user))
         return self.response
 
+    # the HttpModel shape: a property with a setter (the mutator
+    # assigns, it does not call)
+    @property
+    def on_trace(self):
+        return self._cb
+
+    @on_trace.setter
     def on_trace(self, cb):
         self._cb = cb
 

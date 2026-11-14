@@ -180,7 +180,10 @@ class LlmMutator:
         self.tokens_prompt = 0
         self.tokens_completion = 0
         if hasattr(model, "on_trace"):
-            model.on_trace(self._trace)
+            try:
+                model.on_trace = self._trace   # property setter (HttpModel)
+            except AttributeError:
+                model.on_trace(self._trace)    # plain method (fakes)
 
     def _trace(self, fields: dict) -> None:
         usage = fields.get("usage") or {}
