@@ -999,6 +999,16 @@ def create_content(session: Session, verify: bool = True) -> None:
         "place": "HEARTH",
         "starter_behaviour": _read_lua(STARTER),
     }))
+    # The generational floor (the G-series): death holds the estate in
+    # escrow for the dynasty's next founder, decaying while it waits --
+    # succession must cost SOME capital (the anti-rebirth tax), never
+    # all of it (the run-74 kill box: heirs froze while the pyre burned
+    # axes). Votable data like the rest of the estate policy.
+    session.add(WorldSetting(key="estate_rule", value={"policy": "escrow"}))
+    session.add(WorldSetting(key="estate.escrow", value={
+        "ticks": 240,          # ten days: enough for manual + armed succession
+        "decay": "0.02",       # ~62% of the pot is gone after a 2-round wait
+    }))
     # 15.4: everything above was installed by this pack -- say so on
     # every row, so the catalog attributes content and a later install
     # attempt on a claimed key is refused with the owner's name.

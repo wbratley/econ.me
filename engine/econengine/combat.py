@@ -407,7 +407,7 @@ def resolve_attack(session: Session, attacker_id: str,
     # grant rides the event's "granted" field, post-clip truth.
     granted: dict[str, str] = {}
     for symbol, qty in sorted((rules.get("on_hit_grants") or {}).items()):
-        credited = conditions._credit_holding(
+        credited = conditions.credit_holding(
             session, defender, symbol, Decimal(qty))
         if credited > 0:
             granted[symbol] = str(credited.quantize(_QUANTUM))

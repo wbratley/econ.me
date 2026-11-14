@@ -44,14 +44,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
-    Account, Entity, EntityStatus, FacilityHolding, Good, Holding, Order,
-    OrderStatus, Parcel, Process, ProcessStatus, WorldSetting,
+    Account, Entity, EntityStatus, EstateEscrow, FacilityHolding, Good,
+    Holding, Order, OrderStatus, Parcel, Process, ProcessStatus, WorldSetting,
 )
 
 _QUANTUM = Decimal("0.0001")
 
 ESTATE_RULE_KEY = "estate_rule"
-ESTATE_POLICIES = ("burn", "heir", "treasury")
+ESTATE_POLICIES = ("burn", "heir", "treasury", "escrow")
+ESCROW_CONFIG_KEY = "estate.escrow"
 
 
 def is_condition(good: Good) -> bool:
@@ -133,6 +134,48 @@ def get_estate_rule(session: Session) -> dict:
     return dict(setting.value)
 
 
+def get_escrow_config(session: Session) -> dict | None:
+    """The escrow knobs ({"ticks": int, "decay": "0.02"}) — votable data.
+    Returns None when unset or malformed (the escrow policy then fails
+    closed to burn: a configured policy with no knobs must not hang the
+    estate mid-air with no window)."""
+    setting = session.get(WorldSetting, ESCROW_CONFIG_KEY)
+    if setting is None or not isinstance(setting.value, dict):
+        return None
+    raw = setting.value
+    try:
+        ticks = int(raw["ticks"])
+        decay = Decimal(str(raw["decay"]))
+    except (KeyError, ValueError, ArithmeticError):
+        return None
+    if ticks <= 0 or not (Decimal("0") <= decay < Decimal("1")):
+        return None
+    return {"ticks": ticks, "decay": decay}
+
+
+def set_escrow_config(session: Session, ticks: int, decay) -> WorldSetting:
+    """Declare the escrow window and per-tick decay (exact decimals).
+    Both are votable policy: the window is how long the dead hand holds
+    the pot, the decay is the anti-rebirth tax — the capital the heir
+    gets back shrinks with every tick waited, so dying to reset one's
+    vitals must cost more than the reset is worth."""
+    ticks = int(ticks)
+    decay = Decimal(str(decay))
+    if ticks <= 0:
+        raise ValueError("escrow window must be positive ticks")
+    if not (Decimal("0") <= decay < Decimal("1")):
+        raise ValueError("escrow decay must be in [0, 1)")
+    setting = session.get(WorldSetting, ESCROW_CONFIG_KEY)
+    value = {"ticks": ticks, "decay": str(decay)}
+    if setting is None:
+        setting = WorldSetting(key=ESCROW_CONFIG_KEY, value=value)
+        session.add(setting)
+    else:
+        setting.value = value
+    session.flush()
+    return setting
+
+
 def set_estate_rule(
     session: Session, policy: str, treasury_entity_id: str | None = None
 ) -> WorldSetting:
@@ -169,6 +212,13 @@ def _estate_recipient(session: Session, entity: Entity) -> tuple[str, Entity | N
         recipient = session.get(Entity, recipient_id)
         if recipient is not None and recipient.status == EntityStatus.ACTIVE:
             return policy, recipient
+    if policy == "escrow":
+        # the future heir is not known at death; the pot waits (or the
+        # policy fails closed to burn when the knobs are missing/bad).
+        # An OWNERLESS entity (the world's own creatures -- wolves, test
+        # bodies) has no dynasty to wait for: it burns.
+        if entity.owner_id and get_escrow_config(session) is not None:
+            return "escrow", None
     return "burn", None
 
 
@@ -258,7 +308,7 @@ def run_condition_grants(session: Session, tick_number: int) -> list[dict]:
             ).scalar_one_or_none()
             if holding is None or holding.quantity < Decimal(row["at"]):
                 continue
-            granted = _credit_holding(
+            granted = credit_holding(
                 session, entity, row["grants"], Decimal(row["quantity"]))
             if granted > 0:
                 events.append({
@@ -371,7 +421,10 @@ def _incapacitate(
         process.status = ProcessStatus.CANCELLED  # inputs are forfeit, as ever
 
     policy, recipient = _estate_recipient(session, entity)
-    estate = _apply_estate(session, entity, recipient)
+    escrow = None
+    if policy == "escrow":
+        escrow = _open_escrow(session, entity, tick_number)
+    estate = _apply_estate(session, entity, recipient, escrow=escrow)
 
     return {
         "type": "entity_incapacitated",
@@ -385,10 +438,81 @@ def _incapacitate(
     }
 
 
-def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) -> dict:
-    """Move (or burn, when recipient is None) everything the entity has.
-    Condition holdings always burn. Returns event fields summarising what
-    moved."""
+def _open_escrow(session: Session, entity: Entity, tick_number: int) -> EstateEscrow:
+    """Open (or merge into) the owner's escrow row. One pot per dynasty:
+    a second death inside the window sums in, the window extends to the
+    later expiry, and the camp moves to the later death — the estate of
+    a dynasty is one pot, however many bodies it burned. The pot ages
+    from the FIRST death (created_tick unchanged on merge): merging is
+    not a decay reset."""
+    cfg = get_escrow_config(session)
+    expires = tick_number + cfg["ticks"]
+    existing = session.execute(
+        select(EstateEscrow)
+        .where(EstateEscrow.owner_id == entity.owner_id,
+               EstateEscrow.expires_tick >= tick_number)
+        .order_by(EstateEscrow.created_tick)
+    ).scalars().first()
+    if existing is not None:
+        existing.expires_tick = max(existing.expires_tick, expires)
+        existing.place_id = entity.location_place_id or existing.place_id
+        return existing
+    row = EstateEscrow(
+        owner_id=entity.owner_id,
+        entity_id=entity.id,
+        entity_name=entity.name,
+        created_tick=tick_number,
+        expires_tick=expires,
+        place_id=entity.location_place_id,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def run_escrow_expiry(session: Session, tick_number: int) -> list[dict]:
+    """Burn every escrow past its window (owner_id ascending — the
+    engine's ordering law). The money leaves the world for good (it
+    left supply at death; expiry just closes the ledger), the goods
+    never re-enter. The dead hand lets go."""
+    events: list[dict] = []
+    for row in session.execute(
+        select(EstateEscrow)
+        .where(EstateEscrow.expires_tick < tick_number)
+        .order_by(EstateEscrow.owner_id, EstateEscrow.created_tick)
+    ).scalars().all():
+        goods_total = sum(
+            (Decimal(q) for q in row.goods.values()), Decimal("0"))
+        money_total = sum(
+            (Decimal(a) for a in row.money.values()), Decimal("0"))
+        events.append({
+            "type": "estate_expired",
+            "owner_id": row.owner_id,
+            "entity_name": row.entity_name,
+            "goods": str(goods_total.quantize(_QUANTUM)),
+            "money": str(money_total.quantize(_QUANTUM)),
+            "expired_tick": row.expires_tick,
+        })
+        session.delete(row)
+    if events:
+        session.flush()
+    return events
+
+
+def _escrow_add(row: EstateEscrow, field: str, key: str, amount: Decimal) -> None:
+    """Add into an escrow payload — REASSIGNING the JSON column (SQLAlchemy
+    does not track in-place mutation of JSON values)."""
+    payload = dict(getattr(row, field))
+    payload[key] = str(Decimal(payload.get(key, "0")) + amount)
+    setattr(row, field, payload)
+
+
+def _apply_estate(session: Session, entity: Entity, recipient: Entity | None,
+                  *, escrow: "EstateEscrow | None" = None) -> dict:
+    """Move (or burn, when recipient is None; or escrow, when the policy
+    resolved to escrow) everything the entity has. Condition holdings always
+    burn — an heir does not inherit the deceased's fever. Returns event
+    fields summarising what moved."""
     condition_symbols = {
         symbol for (symbol,) in session.execute(
             select(Good.symbol).where(
@@ -400,15 +524,19 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
     goods_moved = Decimal("0")
     goods_burned = Decimal("0")
     goods_clipped = Decimal("0")
+    goods_escrowed = Decimal("0")
     for holding in session.execute(
         select(Holding)
         .where(Holding.entity_id == entity.id, Holding.quantity > 0)
         .order_by(Holding.symbol)
     ).scalars():
         if recipient is not None and holding.symbol not in condition_symbols:
-            landed = _credit_holding(session, recipient, holding.symbol, holding.quantity)
+            landed = credit_holding(session, recipient, holding.symbol, holding.quantity)
             goods_moved += landed
             goods_clipped += holding.quantity - landed
+        elif escrow is not None and holding.symbol not in condition_symbols:
+            _escrow_add(escrow, "goods", holding.symbol, holding.quantity)
+            goods_escrowed += holding.quantity
         else:
             goods_burned += holding.quantity
         holding.quantity = Decimal("0")
@@ -433,12 +561,19 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
             target = _facility_row(session, row.facility_id, recipient.id, row.symbol)
             target.quantity = (target.quantity + row.quantity).quantize(_QUANTUM)
             goods_moved += row.quantity
+        elif escrow is not None and row.symbol not in condition_symbols:
+            # stowed goods wait with the rest of the pot; they re-enter at
+            # the heir's feet (their holdings), not back on the shelf —
+ # the camp's new owner re-stows as they like
+            _escrow_add(escrow, "goods", row.symbol, row.quantity)
+            goods_escrowed += row.quantity
         else:
             goods_burned += row.quantity
         row.quantity = Decimal("0")
 
     money_moved = Decimal("0")
     money_burned = Decimal("0")
+    money_escrowed = Decimal("0")
     for account in session.execute(
         select(Account)
         .where(Account.entity_id == entity.id, Account.balance != 0)
@@ -447,11 +582,15 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
         if recipient is not None:
             _credit_account(session, recipient, account.currency, account.balance)
             money_moved += account.balance
+        elif escrow is not None:
+            _escrow_add(escrow, "money", account.currency, account.balance)
+            money_escrowed += account.balance  # out of supply until delivered
         else:
             money_burned += account.balance  # buried with the dead: supply shrinks
         account.balance = Decimal("0")
 
     parcels_moved = 0
+    parcels_escrowed = 0
     for parcel in session.execute(
         select(Parcel)
         .where(Parcel.owner_id == entity.id)
@@ -460,6 +599,13 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
         # the entity's bound processes were just cancelled, and only the
         # controller can bind a process, so no running process pins these
         parcel.owner_id = recipient.id if recipient else None  # None = unclaimed
+        if escrow is not None and recipient is None:
+            # the roof waits with the pot: the camp parcel reverts
+            # unclaimed (facilities stay on it), recorded for the heir's
+            # delivery — claimable by anyone in the window, the race is
+            # part of the cost
+            escrow.parcels = list(escrow.parcels) + [parcel.id]
+            parcels_escrowed += 1
         parcels_moved += 1
 
     return {
@@ -468,13 +614,16 @@ def _apply_estate(session: Session, entity: Entity, recipient: Entity | None) ->
         "goods_transferred": str(goods_moved.quantize(_QUANTUM)),
         "goods_burned": str(goods_burned.quantize(_QUANTUM)),
         "goods_clipped": str(goods_clipped.quantize(_QUANTUM)),
+        "goods_escrowed": str(goods_escrowed.quantize(_QUANTUM)),
         "money_transferred": str(money_moved.quantize(_QUANTUM)),
         "money_burned": str(money_burned.quantize(_QUANTUM)),
+        "money_escrowed": str(money_escrowed.quantize(_QUANTUM)),
         "parcels": parcels_moved,
+        "parcels_escrowed": parcels_escrowed,
     }
 
 
-def _credit_holding(session: Session, entity: Entity, symbol: str, quantity: Decimal) -> Decimal:
+def credit_holding(session: Session, entity: Entity, symbol: str, quantity: Decimal) -> Decimal:
     """Credit a holding, clipped at the good's banking cap (the same
     clip as adjust_holding: an heir cannot bank more warmth than the
     living could). Returns the quantity actually credited."""

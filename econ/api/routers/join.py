@@ -77,6 +77,13 @@ def join_world(
     # order (account first, then the seat, then the starter below).
     apply_founder_seat(session, entity, cfg)
 
+    # Succession's second half (the generational game): if this owner's
+    # lineage left an escrow, the heir takes delivery -- the decayed
+    # estate, the camp parcels still unclaimed, and the wake-up at the
+    # camp (overriding the seat's default place: the heir walks into
+    # the parent's camp, not the founder origin).
+    inheritance = services.deliver_escrow(session, entity)
+
     behaviour = None
     starter = cfg["starter_behaviour"]
     if starter:
@@ -92,4 +99,5 @@ def join_world(
     session.refresh(account)
     if behaviour is not None:
         session.refresh(behaviour)
-    return JoinResult(entity=entity, account=account, behaviour=behaviour)
+    return JoinResult(entity=entity, account=account, behaviour=behaviour,
+                       inheritance=inheritance)

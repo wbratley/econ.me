@@ -989,9 +989,9 @@ def test_warmth_cannot_be_banked(session):
     markets.adjust_holding(session, w, "WARMTH", -WARMTH_BUFFER)
     markets.adjust_holding(session, w, "WARMTH", Decimal("50"))  # clip at 6
     assert _hold(session, w.id, "WARMTH") == WARMTH_CAP
-    # the same clip on the estate path (conditions._credit_holding)
+    # the same clip on the estate path (conditions.credit_holding)
     from econengine import conditions
-    conditions._credit_holding(session, other, "WARMTH", Decimal("9"))
+    conditions.credit_holding(session, other, "WARMTH", Decimal("9"))
     assert _hold(session, other.id, "WARMTH") == WARMTH_CAP
 
 

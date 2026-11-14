@@ -187,8 +187,9 @@ def test_incapacity_burn_default(session):
         "condition": "COND-SICK", "quantity": "50.0000", "threshold": "50.0000",
         "estate_policy": "burn", "recipient_id": None,
         "goods_transferred": "0.0000", "goods_burned": "60.0000",
-        "goods_clipped": "0.0000",
-        "money_transferred": "0.0000", "money_burned": "100.0000", "parcels": 1,
+        "goods_clipped": "0.0000", "goods_escrowed": "0.0000",
+        "money_transferred": "0.0000", "money_burned": "100.0000",
+        "money_escrowed": "0.0000", "parcels": 1, "parcels_escrowed": 0,
     }]
 
 

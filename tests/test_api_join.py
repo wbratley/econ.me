@@ -19,7 +19,8 @@ from sqlalchemy.pool import StaticPool
 
 from econ.api.deps import bearer_scheme, get_current_user, get_session
 from econ.api.main import app
-from econengine.models import Base, Entity, EntityStat, Holding, Parcel, Place, Tick, User
+from econengine.models import (
+    Base, Entity, EntityStat, EntityType, Holding, Parcel, Place, Tick, User)
 
 
 @pytest.fixture
@@ -379,3 +380,68 @@ def test_joiner_who_writes_nothing_survives(stone_client):
         # keeps fed never accrues it, and there is no row at all. A
         # missing row is no hunger -- either way it must be under the line.
         assert hunger.get("HUNGER", Decimal("0")) < 15
+
+
+# ===========================================================================
+# succession: join delivers the lineage's escrow (the generational game)
+# ===========================================================================
+
+def test_join_delivers_the_estate_escrow(client):
+    """A lineage death under the escrow policy holds the estate for the
+    owner's next founder: joining inside the window delivers the decayed
+    goods and money, re-claims the still-unclaimed camp parcel, and wakes
+    the heir AT the camp (not the founder seat's place)."""
+    from econengine.conditions import set_escrow_config, set_estate_rule
+    from econengine.markets import adjust_holding
+    from econengine.parcels import create_parcel
+    from econengine.places import create_place, move_entity
+    from econengine.services import (
+        create_account, create_entity, deliver_escrow)
+
+    camp = None
+    with Session(app.state._test_engine) as session:
+        set_estate_rule(session, "escrow")
+        set_escrow_config(session, 240, "0.02")
+        camp_place = create_place(session, "hearth", "CAMP", "the hearth")
+        parent = create_entity(session, "House Old", EntityType.INDIVIDUAL)
+        parent.owner_id = "u-alice"
+        adjust_holding(session, parent, "WOOD", Decimal("4.4366"))
+        create_account(session, parent, "COIN", initial_balance=Decimal("10"))
+        create_parcel(session, "LAND", name="Camp", owner=parent)
+        move_entity(session, parent, camp_place)
+        # the fever that kills (a plain incapacitating good at its level)
+        from econengine.goods import create_good
+        create_good(session, "COND-SICK", incapacitates_at=Decimal("50"))
+        adjust_holding(session, parent, "COND-SICK", Decimal("50"))
+        session.add(Tick(number=100, events=[]))
+        session.commit()
+
+        from econengine.conditions import run_incapacity
+        run_incapacity(session, tick_number=100)
+        session.commit()
+        camp = camp_place.id
+
+    r = _join(client)  # u-alice's heir, inside the window (no ticks passed)
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    assert body["inheritance"]["from"] == "House Old"
+    assert body["inheritance"]["waited_ticks"] == 0
+    assert body["inheritance"]["goods_delivered"]["WOOD"] == "4.4366"
+    assert body["inheritance"]["money_delivered"]["COIN"] == "10.0000"
+    assert body["inheritance"]["parcels_reclaimed"] == 1
+    assert body["inheritance"]["moved_to_camp"] is True
+
+    with Session(app.state._test_engine) as session:
+        heir = session.execute(
+            select(Entity).where(Entity.owner_id == "u-alice",
+                                 Entity.status == "ACTIVE")
+        ).scalar_one()
+        wood = session.execute(
+            select(Holding).where(
+                Holding.entity_id == heir.id, Holding.symbol == "WOOD")
+        ).scalar_one()
+        assert wood.quantity == Decimal("4.4366")
+        assert heir.location_place_id == camp  # woke at the parent's camp
+        parcel = session.execute(select(Parcel)).scalar_one()
+        assert parcel.owner_id == heir.id      # the roof reclaimed

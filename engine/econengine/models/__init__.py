@@ -8,6 +8,7 @@ from .tick import Tick
 from .observer import EventObserver
 from .market import Market
 from .market_escrow import MarketEscrow
+from .estate_escrow import EstateEscrow
 from .holding import Holding
 from .order import Order, OrderSide, OrderStatus
 from .trade import Trade
@@ -45,6 +46,7 @@ __all__ = [
     "EventObserver",
     "Market",
     "MarketEscrow",
+    "EstateEscrow",
     "Holding",
     "Order",
     "OrderSide",
