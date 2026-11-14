@@ -116,11 +116,13 @@ def make_post(tc):
     return post
 
 
-def make_succession(client, cooldown=0, kill_window=48, ticks_per_round=24):
+def make_succession(client, cooldown=0, kill_window=48, ticks_per_round=24,
+                    season_gate=("SPRING",)):
     return Succession(
         "http://127.0.0.1:0", client["db_path"], client["out_dir"],
         ticks_per_round=ticks_per_round, kill_window=kill_window,
-        cooldown_rounds=cooldown, post=make_post(client["tc"]))
+        cooldown_rounds=cooldown, season_gate=season_gate,
+        post=make_post(client["tc"]))
 
 
 def make_loops(client, responses, diary=False):
@@ -418,3 +420,76 @@ def test_whole_generation_dying_succeeds_together(client, monkeypatch,
                 __import__("sqlalchemy").select(Entity)
                 .where(Entity.owner_id == d.user_id)).scalars().all())
         assert len(owned) == 2, d.name
+
+
+# ===========================================================================
+# the season gate: assay-comparable births (the spec amendment)
+# ===========================================================================
+
+def test_birth_ok_reads_the_world_season(client):
+    """current_season reads the world's own clock (latest tick against
+    its votable season length); birth_ok gates on it. A one-day season
+    world flips seasons every day, so ticks 25-48 are SUMMER."""
+    from econengine.models import Tick, WorldSetting
+    succ = make_succession(client)
+    assert succ.current_season() is None          # no ticks: gate open
+    assert succ.birth_ok() is True
+
+    with Session(client["engine"]) as s:
+        s.add(WorldSetting(key="clock.season_days", value=1))
+        s.add(Tick(number=2, events=[]))          # day 1: SPRING
+        s.commit()
+    assert succ.current_season() == "SPRING"
+    assert succ.birth_ok() is True
+
+    with Session(client["engine"]) as s:
+        s.add(Tick(number=26, events=[]))         # day 2: SUMMER
+        s.commit()
+    assert succ.current_season() == "SUMMER"
+    assert succ.birth_ok() is False
+
+    ungated = make_succession(client, season_gate=())
+    assert ungated.birth_ok() is True             # 'any': raw G3
+
+
+def test_winter_death_waits_for_spring_to_be_born(client, monkeypatch,
+                                                  tmp_path):
+    """The gate's point: a house dying in WINTER does not birth its
+    successor into the kill season — the successor joins only once the
+    world's clock reaches a gated-in season. A one-day-season world at
+    the default 24 ticks/round: winter is round 4 (ticks 73-96), the
+    next spring is round 5 (ticks 97-120) — the successor is born
+    THERE, not in the round the cooldown expired."""
+    from econengine.models import Tick, WorldSetting
+    with Session(client["engine"]) as s:
+        s.add(WorldSetting(key="clock.season_days", value=1))
+        s.commit()
+
+    loops = make_loops(client, [[CLEAN]] * 3)
+    prior = run_rounds(loops, 1, tmp_path)
+    # die in winter: tick 74 = day 4 of a 1-day-season year = WINTER
+    kill_house(client, "House Two", tick=74)
+    with Session(client["engine"]) as s:
+        s.add(Tick(number=74, events=[]))
+        s.commit()
+
+    succ = make_succession(client, cooldown=0)
+    assert succ.current_season() == "WINTER"
+    assert succ.birth_ok() is False
+
+    # the run proceeds without the dead house; spring comes at day 5
+    loops2 = make_loops(client, [[CLEAN2] * 12] * 3)
+    snaps = run_rounds(loops2, 5, tmp_path, start_round=2, snapshots=prior,
+                       succession=succ)
+    assert [p["round"] for p in snaps] == [1, 2, 3, 4, 5]
+    d = next(d for d in client["dynasties"] if d.name == "House Two")
+    with Session(client["engine"]) as s:
+        owned = list(s.execute(
+            __import__("sqlalchemy").select(Entity)
+            .where(Entity.owner_id == d.user_id)).scalars().all())
+    assert len(owned) == 2                  # the successor WAS born...
+    # ...and it was born in spring: the successor's birth_tick sits in
+    # a spring window (day 5 of the 1-day year: ticks 97-120)
+    heir = next(e for e in owned if e.status == EntityStatus.ACTIVE
+                and e.id != prior[0]["dynasties"]["House Two"]["entry"]["entity"])
+    assert 97 <= heir.birth_tick <= 120

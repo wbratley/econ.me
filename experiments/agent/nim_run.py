@@ -575,6 +575,12 @@ def main(argv=None) -> int:
                          "certificate on file if any, rebind) instead of "
                          "parking. The lineage outlives its body; the "
                          "run still ends at --rounds")
+    ap.add_argument("--succession-season", default="spring",
+                    metavar="SEASON",
+                    help="season-gated succession: successors wait to be "
+                         "born in this season (assay-comparable births, "
+                         "the trainer's tick-1 standard); 'any' births "
+                         "on cooldown alone (raw G3)")
     ap.add_argument("--succession-cooldown", type=int, default=2,
                     metavar="N", help="rounds the world runs without a "
                     "dead house before its successor joins — the price "
@@ -904,11 +910,15 @@ def main(argv=None) -> int:
 
         succession = None
         if args.succession:
+            gate = () if args.succession_season.lower() in ("any", "none") \
+                else (args.succession_season,)
             succession = Succession(
                 base, out / "world.db", out,
                 ticks_per_round=args.ticks_per_round,
-                cooldown_rounds=args.succession_cooldown)
+                cooldown_rounds=args.succession_cooldown,
+                season_gate=gate)
             print(f"succession: ON (cooldown {args.succession_cooldown}"
+                  f", season gate {succession.season_gate or 'off'}"
                   f" rounds, kill-window {KILL_WINDOW_TICKS} ticks)")
         snapshots = run_rounds(loops, args.rounds, out,
                                on_round=write_dash,

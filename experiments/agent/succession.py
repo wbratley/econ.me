@@ -55,6 +55,15 @@ KILL_WINDOW_TICKS = 48
 #: sets the house back N rounds (the world runs without it).
 DEFAULT_COOLDOWN_ROUNDS = 2
 
+#: The season gate: successors are BORN in these seasons (uppercase
+#: clock.SEASONS names). The trainer's fitness assays all start at tick
+#: 1 -- spring day 1 -- so a continuous-world birth in any other season
+#: is an unassayable handicap (run 74: heirs born into deep winter died
+#: of the birth, not the genome). Timing is strategy, not mechanism:
+#: the seat pays the wait, the world never fakes the season. An empty
+#: gate ("any") births as G3 did, cooldown alone.
+DEFAULT_SEASON_GATE = ("SPRING",)
+
 #: Founder numerals by generation (join names them "Founder"; the
 #: lineage's numeral is the bookkeeping).
 _NUMERALS = ("II", "III", "IV", "V", "VI", "VII", "VIII")
@@ -235,6 +244,7 @@ class Succession:
                  ticks_per_round: int = 24,
                  kill_window: int = KILL_WINDOW_TICKS,
                  cooldown_rounds: int = DEFAULT_COOLDOWN_ROUNDS,
+                 season_gate=DEFAULT_SEASON_GATE,
                  post: Callable[[str, str, dict | None],
                                 tuple[int, dict]] | None = None):
         self.base = base
@@ -243,7 +253,43 @@ class Succession:
         self.ticks_per_round = ticks_per_round
         self.kill_window = kill_window
         self.cooldown_rounds = cooldown_rounds
+        self.season_gate = tuple(
+            str(x).upper() for x in (season_gate or ()))
         self.post = post or _urlopen_post(base)
+
+    # -- the birth season ----------------------------------------------
+
+    def current_season(self) -> str | None:
+        """The world's season now, read straight off the world db (the
+        harness owns the world it built): the latest tick against the
+        world's own `clock.season_days` (votable data, engine default
+        when unset). None when no ticks have run (the world is new --
+        tick 1 is spring day 1, so callers treat None as gate-open)."""
+        from econengine.clock import season_of, SEASON_DAYS
+        db = sqlite3.connect(str(self.db_path))
+        try:
+            tick = db.execute(
+                "SELECT MAX(number) FROM ticks").fetchone()[0]
+            row = db.execute(
+                "SELECT value FROM world_settings "
+                "WHERE key='clock.season_days'").fetchone()
+        finally:
+            db.close()
+        if not tick:
+            return None
+        days = SEASON_DAYS
+        if row and isinstance(row[0], (int, float)) and int(row[0]) >= 1:
+            days = int(row[0])
+        return season_of(int(tick), days)
+
+    def birth_ok(self) -> bool:
+        """May a successor be born now? The gate is open when the world
+        is unstarted (nothing to time against) or the season is gated
+        in."""
+        if not self.season_gate:
+            return True
+        season = self.current_season()
+        return season is None or season in self.season_gate
 
     # -- the lineage's record ------------------------------------------
 
