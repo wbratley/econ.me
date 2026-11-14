@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import os
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -77,6 +77,111 @@ def create_entity(session: Session, name: str, entity_type: EntityType) -> Entit
     session.add(entity)
     session.flush()
     return entity
+
+
+def deliver_escrow(session: Session, heir: Entity) -> dict | None:
+    """Succession's second half (the generational game): deliver the
+    owner's open estate escrow — if any — to a freshly joined heir.
+
+    The anti-rebirth tax is applied here, in one deterministic shot:
+    every payload entry decays by (1 - decay) ** waited_ticks, computed
+    against the world's latest tick (join happens between ticks; the
+    elapsed is the same number the expiry pass would use). The decayed
+    fraction burns — dying to reset one's vitals must cost capital, or
+    famine becomes a retirement plan.
+
+    Delivery order (symbol/currency ascending, the engine's law):
+    goods are credited with the same cap-clip as a heir transfer
+    (``conditions.credit_holding``), money lands on a found-or-created
+    account, parcels are re-claimed ONLY while still unclaimed (the
+    claim race is part of the cost), and the heir is moved to the
+    camp — the dead entity's last place — overriding the founder
+    seat's default place. The escrow row is consumed either way; a
+    second heir finds an empty hand.
+
+    Returns the delivery summary (for the join surface), or None when
+    the dynasty has no open escrow. Raises nothing: a malformed row is
+    a burn, not a crash (fail-closed like the rest of the estate).
+    """
+    from . import conditions
+    from .models import EstateEscrow, Place, Tick
+    from . import places as places_mod
+
+    row = session.execute(
+        select(EstateEscrow)
+        .where(EstateEscrow.owner_id == heir.owner_id)
+        .order_by(EstateEscrow.created_tick)
+    ).scalars().first()
+    if row is None:
+        return None
+
+    now = session.execute(select(func.max(Tick.number))).scalar() or row.created_tick
+    waited = max(0, now - row.created_tick)
+    cfg = conditions.get_escrow_config(session) or {"decay": Decimal("0")}
+    decay = Decimal(str(cfg["decay"]))
+    factor = (Decimal("1") - decay) ** waited
+
+    goods_delivered: dict[str, str] = {}
+    goods_burned = Decimal("0")
+    for symbol in sorted(row.goods):
+        amount = (Decimal(row.goods[symbol]) * factor).quantize(
+            Decimal("0.0001"), rounding=ROUND_DOWN)
+        burned = Decimal(row.goods[symbol]) - amount
+        if amount > 0:
+            landed = conditions.credit_holding(session, heir, symbol, amount)
+            goods_burned += amount - landed  # cap-clipped share burns
+            goods_delivered[symbol] = str(landed)
+        goods_burned += burned
+
+    money_delivered: dict[str, str] = {}
+    money_burned = Decimal("0")
+    for currency in sorted(row.money):
+        amount = (Decimal(row.money[currency]) * factor).quantize(
+            Decimal("0.0001"), rounding=ROUND_DOWN)
+        if amount > 0:
+            account = session.execute(
+                select(Account).where(
+                    Account.entity_id == heir.id,
+                    Account.currency == currency.upper())
+            ).scalar_one_or_none()
+            if account is None:
+                account = create_account(session, heir, currency)
+            account.balance += amount
+            money_delivered[currency.upper()] = str(amount)
+        money_burned += Decimal(row.money[currency]) - amount
+
+    parcels_reclaimed = 0
+    parcels_lost = 0
+    for parcel_id in row.parcels:
+        parcel = session.get(Parcel, parcel_id)
+        if parcel is not None and parcel.owner_id is None:
+            parcel.owner_id = heir.id
+            parcels_reclaimed += 1
+        else:
+            parcels_lost += 1  # claimed in the window, or gone: the race's price
+
+    moved_to_camp = False
+    camp = session.get(Place, row.place_id) if row.place_id else None
+    if camp is not None:
+        places_mod.move_entity(session, heir, camp)   # by object: id, not key
+        moved_to_camp = True
+
+    summary = {
+        "from": row.entity_name,
+        "entity_id": row.entity_id,
+        "waited_ticks": waited,
+        "decay": str(decay),
+        "goods_delivered": goods_delivered,
+        "money_delivered": money_delivered,
+        "goods_burned": str(goods_burned.quantize(Decimal("0.0001"))),
+        "money_burned": str(money_burned.quantize(Decimal("0.0001"))),
+        "parcels_reclaimed": parcels_reclaimed,
+        "parcels_lost": parcels_lost,
+        "moved_to_camp": moved_to_camp,
+    }
+    session.delete(row)
+    session.flush()
+    return summary
 
 
 def create_account(

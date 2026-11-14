@@ -306,6 +306,9 @@ def run_tick(session: Session, lua_engine: LuaEngine | None = None) -> Tick:
     # the floor this tick does not re-stamp, and the ember window starts
     statuses.stamp_lit(session, tick_number=number)
     events.extend(conditions.run_incapacity(session, tick_number=number))
+    # the dead hand lets go: escrows past their window burn (after the
+    # incapacity pass so a death this tick opens its own window first)
+    events.extend(conditions.run_escrow_expiry(session, tick_number=number))
 
     tick = Tick(
         number=number,

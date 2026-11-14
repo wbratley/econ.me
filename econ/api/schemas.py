@@ -599,11 +599,15 @@ class ScriptingTiersRead(BaseModel):
 
 class JoinResult(BaseModel):
     """Returned by ``POST /join`` -- the founder entity, its endowment
-    account, and the starter behaviour applied (None if the world has no
-    starter configured)."""
+    account, the starter behaviour applied (None if the world has no
+    starter configured), and the INHERITANCE: when the joiner's owner
+    had an open estate escrow (a lineage death inside the window), the
+    delivery summary -- what the heir banked, what the wait burned,
+    whether they woke at the camp. None for a true first founder."""
     entity: EntityRead
     account: AccountRead
     behaviour: Optional[ScriptRead] = None
+    inheritance: Optional[dict] = None
 
 
 #: ---------------------------------------------------------------------------
