@@ -49,3 +49,30 @@ def test_deaths_are_attributed():
     fit = fitness([result])
     assert fit["deaths"], "a standing-still house must die of something"
     assert set(fit["deaths"]) <= {"HUNGER", "THIRST", "FATIGUE", "EXPOSURE"}
+
+
+# -- tier two: the winter window ------------------------------------------
+
+def test_short_assays_carry_no_winter_read():
+    fit = fitness(assay_genome(STARTER, replicates=1, days=1))
+    assert "winter" not in fit          # the window never reached winter
+
+
+def test_the_winter_window_reads():
+    """Days 19+ enter winter (the pack's 6-day seasons) and every seat's
+    winter is read separately: alive ticks in-window, deaths in-window
+    attributed. The mechanism is pinned here; the FRONTIER (whether the
+    tier-one champion survives winter) is empirical — run 76's datum,
+    not a test bar (a 2-day gauntlet is a lottery at day 20)."""
+    result = run_assay(STARTER, days=20)     # winter days 19-20 (2 days)
+    fit = fitness([result])
+    assert "winter" in fit
+    assert fit["winter"]["days"] == 2
+    assert 0.0 <= fit["winter"]["mean_alive_days"] <= 2.0
+    # attribution: any death in-window lands in the winter tally with
+    # its domain — the kill-chain memory for the next mutation
+    in_window_deaths = sorted(s.winter_death for s in result.seats
+                              if s.winter_death)
+    tallied = sorted(d for d, n in fit["winter"]["deaths"].items()
+                     for _ in range(n))
+    assert tallied == in_window_deaths

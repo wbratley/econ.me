@@ -101,3 +101,67 @@ def test_radiation_reads_the_pool(tmp_path):
     assert "a:b" in rad and rad["a:b"] <= 1.0
     same = radiation([a, Lineage("c", STARTER, tmp_path)])
     assert same["a:c"] == 1.0                  # identical = collapsed
+
+
+# -- the LLM mutator: structural, token-priced, plateau-armed --------------
+
+class _FakeModel:
+    """A Model-protocol fake: one canned mutation + optional usage trace."""
+    name = "fake:meter"
+
+    def __init__(self, response, usage=None):
+        self.response = response
+        self.usage = usage
+        self.calls = []
+
+    def complete(self, system, user):
+        self.calls.append((system, user))
+        return self.response
+
+    def on_trace(self, cb):
+        self._cb = cb
+
+    def emit(self):
+        self._cb({"usage": self.usage})
+
+
+def test_llm_mutator_returns_the_child_and_meters_tokens():
+    mutant = STARTER.replace("stone_age_starter", "stone_age_starter_2", 1)
+    assert mutant != STARTER
+    model = _FakeModel(f"```lua\n{mutant}\n```",
+                       usage={"prompt_tokens": 1000,
+                              "completion_tokens": 900})
+    from experiments.agent.trainer import LlmMutator
+    m = LlmMutator(model)
+    model.emit()                          # the provider's usage trace
+    child = m.mutate(STARTER, {"mean_alive_days": 9.4})
+    assert child == mutant.strip()        # fences stripped, source whole
+    assert "ONE structural change" in model.calls[0][0]   # the contract
+    assert STARTER[:60] in model.calls[0][1]              # the genome rode
+    assert m.tokens == 1900
+
+
+def test_llm_mutator_counts_unusable_as_spent():
+    from experiments.agent.trainer import LlmMutator
+    m = LlmMutator(_FakeModel("I would suggest improving the fire "
+                              "management by ..."))
+    assert m.mutate(STARTER, None) is None    # prose, no ctx: unusable
+    assert m.calls == 1 and m.failures == 1
+
+
+def test_the_llm_fires_only_on_the_param_plateau(tmp_path):
+    """Tokens are spent where the free operator stopped: the mutator
+    stays cold while param turnover continues, fires after a stalled
+    generation, and the archive row carries its price."""
+    from experiments.agent.trainer import LlmMutator
+    mutant = STARTER.replace("stone_age_starter", "stone_age_starter_x", 1)
+    llm = LlmMutator(_FakeModel(mutant))
+    lin = Lineage("line-1", STARTER, tmp_path)
+    rng = random.Random(5)
+    first = lin.step(mutants=0, replicates=1, days=1, rng=rng, llm=llm)
+    assert first["llm_tokens"] is None and llm.calls == 0   # not stalled
+    second = lin.step(mutants=0, replicates=1, days=1, rng=rng, llm=llm)
+    assert second["llm_tokens"] == 0 and llm.calls == 1     # stalled: fired
+    rows = [json.loads(l) for l in
+            (tmp_path / "archive-line-1.jsonl").read_text().splitlines()]
+    assert any("tokens" in r for r in rows)
