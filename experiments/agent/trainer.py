@@ -46,6 +46,7 @@ from pathlib import Path
 from experiments.world import stone_age
 from experiments.world.assay import (
     ASSAY_DAYS, SEATS, AssayResult, assay_genome, fitness)
+from .llm import strip_fences, strip_think
 
 #: Literals below this are structure (flags, indexes), not parameters.
 MIN_MUTABLE = 2
@@ -134,6 +135,85 @@ def mutate_params(source: str, rng: random.Random) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The LLM mutator (structural, token-priced — G4's datum)
+# ---------------------------------------------------------------------------
+
+MUTATION_SYSTEM = """You are the structural mutator of an evolutionary
+trainer. You receive one Lua BEHAVIOUR genome (a stone-age survival
+script) and its fitness read. You return the FULL mutated Lua source
+and nothing else: no prose, no fences.
+
+The contract:
+- ONE structural change: add, remove, or rewrite a block of LOGIC —
+  a new exit, a re-ordered plan, a different commitment. Not constant
+  tweaks: a parameter operator already covers numbers.
+- Keep the ===== BLOCK <name> ===== / ===== END ===== markers intact —
+  they are the genome's structure (succession edits block-level).
+- Keep ctx.state (the S table) keys you did not change.
+- The script must pass the install gate: strict Lua, only the
+  documented ctx/std/world/pack vocabulary, honest line numbers.
+- Survival is the only judge. Do not be clever; be alive."""
+
+MUTATION_USER = """The champion genome (sha {sha}) and its assay read:
+
+{fit}
+
+What killed seats (if anyone died) is in "deaths"; winter (days 19+)
+is the frontier — a genome that maxes autumn and dies in winter has
+not solved anything. Make ONE structural change that plausibly moves
+the survival read, and return the full source.
+
+{source}"""
+
+
+class LlmMutator:
+    """One structural mutation per call, with its token price on the
+    meter — every call is traced (usage when the provider sends it),
+    summed, and archived with the candidate. This is the number G4's
+    budget sizes: run 75 banked 48 candidates for zero tokens; every
+    token from here on is a structural mutation's."""
+
+    def __init__(self, model):
+        self.model = model
+        self.calls = 0
+        self.failures = 0
+        self.tokens_prompt = 0
+        self.tokens_completion = 0
+        if hasattr(model, "on_trace"):
+            model.on_trace(self._trace)
+
+    def _trace(self, fields: dict) -> None:
+        usage = fields.get("usage") or {}
+        self.tokens_prompt += int(usage.get("prompt_tokens") or 0)
+        self.tokens_completion += int(usage.get("completion_tokens") or 0)
+
+    @property
+    def tokens(self) -> int:
+        return self.tokens_prompt + self.tokens_completion
+
+    def mutate(self, src: str, fit: dict | None) -> str | None:
+        """One structural child, or None (the model returned something
+        unusable — a failed mutation is a spent token, not a crash)."""
+        import json as _json
+        self.calls += 1
+        try:
+            raw = self.model.complete(
+                MUTATION_SYSTEM,
+                MUTATION_USER.format(
+                    sha=_sha16(src),
+                    fit=_json.dumps(fit or {}, indent=1, default=str),
+                    source=src))
+        except Exception:
+            self.failures += 1
+            return None
+        out = strip_fences(strip_think(raw)).strip()
+        if not out or "ctx." not in out:
+            self.failures += 1
+            return None
+        return out
+
+
+# ---------------------------------------------------------------------------
 # A lineage
 # ---------------------------------------------------------------------------
 
@@ -148,32 +228,40 @@ class Lineage:
         self.champion_sha = _sha16(founder_src)
         self.champion_fit: dict | None = None
         self.generation = 0
+        self.stalled = 0          # generations without turnover: the LLM
+                                   # mutator's trigger (param plateau)
 
     def record(self, *, src: str, mutator: str, parent_sha: str | None,
-               fit: dict, champion: bool) -> dict:
+               fit: dict, champion: bool, tokens: int | None = None) -> dict:
         row = {
             "lineage": self.name, "generation": self.generation,
             "sha": _sha16(src), "parent": parent_sha, "mutator": mutator,
             "champion": champion, "fitness": fit,
         }
+        if tokens is not None:
+            row["tokens"] = tokens
         with self.archive_path.open("a") as fh:
             fh.write(json.dumps(row) + "\n")
         return row
 
     def step(self, *, mutants: int, replicates: int, days: int,
-             rng: random.Random, llm=None) -> dict:
+             rng: random.Random, llm=None, llm_stall: int = 1) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
-        becomes the new champion. Returns the generation's report row."""
+        becomes the new champion. The LLM mutator fires only on a
+        param plateau — ``stalled`` generations without turnover — so
+        tokens are spent where the free operator has stopped moving
+        the needle. Returns the generation's report row."""
         candidates = [("champion", self.champion_src)]
         for i in range(mutants):
             candidates.append(
                 (f"param-{i}", mutate_params(self.champion_src, rng)))
-        if llm is not None:
-            children = llm(self.name, self.champion_src,
-                           self.champion_fit, replicates)
-            for i, src in enumerate(children):
-                candidates.append((f"llm-{i}", src))
+        llm_tokens = None
+        if llm is not None and self.stalled >= llm_stall:
+            child = llm.mutate(self.champion_src, self.champion_fit)
+            if child is not None and child != self.champion_src:
+                candidates.append(("llm-0", child))
+            llm_tokens = llm.tokens
 
         rows = []
         for tag, src in candidates:
@@ -194,17 +282,21 @@ class Lineage:
         for tag, src, fit in rows:
             self.record(src=src, mutator=tag.split("-")[0],
                         parent_sha=self.champion_sha, fit=fit,
-                        champion=(src == best_src))   # the belt-holder,
+                        champion=(src == best_src),   # the belt-holder,
                         # incumbent included: a successful title defense
                         # is a champion row too
+                        tokens=llm_tokens if tag == "llm-0" else None)
         if turnover:
             self.champion_src, self.champion_sha = best_src, _sha16(best_src)
+            self.stalled = 0
+        else:
+            self.stalled += 1
         self.champion_fit = best_fit
         self.generation += 1
         return {
             "lineage": self.name, "generation": self.generation,
             "best": best_tag, "turnover": turnover,
-            "fitness": best_fit,
+            "fitness": best_fit, "llm_tokens": llm_tokens,
             "pool": [{"tag": t, "alive": round(f["mean_alive_days"], 2)}
                      for t, _, f in ranked],
         }
@@ -253,11 +345,23 @@ def main(argv=None) -> int:
     ap.add_argument("--replicates", type=int, default=3)
     ap.add_argument("--days", type=int, default=ASSAY_DAYS)
     ap.add_argument("--seed", type=int, default=74)
+    ap.add_argument("--llm", default=None, metavar="MODEL",
+                    help="arm the structural mutator (seat-style model "
+                         "name, e.g. deepseek:deepseek-v4-flash); fires "
+                         "per lineage only after --llm-stall generations "
+                         "without param turnover (the plateau)")
+    ap.add_argument("--llm-stall", type=int, default=1)
     ap.add_argument("--out", type=Path, default=Path("trainer-run"))
     args = ap.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
+    llm = None
+    if args.llm:
+        from .replay_prompt import build_model as build_llm_model
+        llm = LlmMutator(build_llm_model(args.llm, on_trace=None))
+        print(f"llm mutator armed: {args.llm} "
+              f"(fires after {args.llm_stall} stalled generation(s))")
     lineages = [Lineage(name, src, args.out)
                 for name, src in seed_founders(args.lineages, args.seed)]
     print(f"trainer: {len(lineages)} lineages x {args.generations} "
@@ -269,15 +373,28 @@ def main(argv=None) -> int:
         for lin in lineages:
             row = lin.step(mutants=args.mutants,
                            replicates=args.replicates, days=args.days,
-                           rng=rng)
+                           rng=rng, llm=llm, llm_stall=args.llm_stall)
+            winter = row["fitness"].get("winter")
+            wtxt = (f" winter={winter['mean_alive_days']:.2f}"
+                    f" deaths={winter['deaths']}" if winter else "")
             print(f"  {lin.name} gen {row['generation']}: best="
                   f"{row['best']} alive={row['fitness']['mean_alive_days']:.2f}"
-                  f" turnover={row['turnover']}")
+                  f"{wtxt} turnover={row['turnover']}"
+                  + (f" llm_tokens={row['llm_tokens']}"
+                     if row.get("llm_tokens") is not None else ""))
             report.append(row)
         rad = radiation(lineages)
         print(f"  radiation: {rad}")
-    args.out.joinpath("report.json").write_text(json.dumps(
-        {"report": report, "radiation": radiation(lineages)}, indent=1))
+    summary = {"report": report, "radiation": radiation(lineages)}
+    if llm is not None:
+        summary["llm"] = {"model": args.llm, "calls": llm.calls,
+                          "failures": llm.failures,
+                          "tokens_prompt": llm.tokens_prompt,
+                          "tokens_completion": llm.tokens_completion,
+                          "tokens_total": llm.tokens}
+        print(f"llm: {llm.calls} calls, {llm.failures} unusable, "
+              f"{llm.tokens} tokens")
+    args.out.joinpath("report.json").write_text(json.dumps(summary, indent=1))
     print(f"report: {args.out / 'report.json'}")
     return 0
 

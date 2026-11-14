@@ -40,6 +40,13 @@ from . import stone_age
 #: The standardized window (the soak's DAYS) — autumn fitness, tier one.
 ASSAY_DAYS = 10
 
+#: Tier two: the winter window. At the pack's 6-day seasons winter is
+#: days 19-24; a days>=19 assay enters it and every seat's winter is
+#: read separately (alive ticks in-window, deaths in-window) — the
+#: curriculum's second tier, grown exactly when tier one saturates
+#: (run 75: every candidate maxed alive-days from generation 1 on).
+WINTER_START_DAY = 19
+
 #: Seats per assay world — every one of them the candidate.
 SEATS = 3
 
@@ -56,6 +63,8 @@ class SeatRow:
     shelter_by_d5: bool = False  # G0 adoption counters (the exits exist)
     skin_by_d3: bool = False
     script_errors: int = 0
+    winter_alive_ticks: int = 0   # tier two: alive inside days 19..end
+    winter_death: str | None = None
 
 
 @dataclass
@@ -114,6 +123,7 @@ def run_assay(genome_src: str, days: int = ASSAY_DAYS) -> AssayResult:
         session.commit()
 
         by_seat = {hid: row for hid, row in seats}
+        winter_lo = (WINTER_START_DAY - 1) * 24 + 1
         for tick_no in range(1, days * 24 + 1):
             if (tick_no - 1) % 24 == 0:
                 spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
@@ -130,16 +140,22 @@ def run_assay(genome_src: str, days: int = ASSAY_DAYS) -> AssayResult:
                 elif et == "entity_incapacitated" and row.death_tick is None:
                     row.death_tick = tick_no
                     row.death_condition = event.get("condition")
+                    if tick_no >= winter_lo:
+                        row.winter_death = event.get("condition")
                 elif et == "process_completed" and event.get("facility") == "SHELTER" \
                         and tick_no <= 5 * 24:
                     row.shelter_by_d5 = True
                 elif et == "trade" and event.get("symbol") == "WATERSKIN" \
                         and tick_no <= 3 * 24:
                     row.skin_by_d3 = True
+            in_winter = tick_no >= winter_lo
             for hid, row in by_seat.items():
-                if (row.installed
-                        and session.get(Entity, hid).status == EntityStatus.ACTIVE):
+                alive = (row.installed
+                         and session.get(Entity, hid).status == EntityStatus.ACTIVE)
+                if alive:
                     row.alive_ticks += 1
+                    if in_winter:
+                        row.winter_alive_ticks += 1
                 # a refused install scores zero: the founder package's
                 # natural survival is the seat's, not the genome's
     return result
@@ -167,7 +183,7 @@ def fitness(results: list[AssayResult]) -> dict:
     for s in seats:
         if s.death_condition:
             domains[s.death_condition] = domains.get(s.death_condition, 0) + 1
-    return {
+    out = {
         "mean_alive_days": sum(s.alive_ticks for s in seats)
         / (len(seats) * 24.0),
         "installed": sum(1 for s in seats if s.installed),
@@ -176,3 +192,23 @@ def fitness(results: list[AssayResult]) -> dict:
         "shelter": sum(1 for s in seats if s.shelter_by_d5),
         "skin": sum(1 for s in seats if s.skin_by_d3),
     }
+    # tier two, when the window reached winter: the winter read rides
+    # along (selection stays the full-window metric; the winter read is
+    # the report's frontier signal — and the next tier's selection once
+    # the long window saturates in turn)
+    if any(s.winter_alive_ticks or s.winter_death for s in seats) \
+            or results and results[0].days >= WINTER_START_DAY:
+        winter_days = max(0, results[0].days - WINTER_START_DAY + 1) \
+            if results else 0
+        wdomains: dict[str, int] = {}
+        for s in seats:
+            if s.winter_death:
+                wdomains[s.winter_death] = wdomains.get(s.winter_death, 0) + 1
+        out["winter"] = {
+            "days": winter_days,
+            "mean_alive_days": sum(s.winter_alive_ticks for s in seats)
+            / (len(seats) * 24.0),
+            "deaths": dict(sorted(wdomains.items(),
+                                  key=lambda kv: (-kv[1], kv[0]))),
+        }
+    return out
