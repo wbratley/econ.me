@@ -38,6 +38,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import os
 import random
 import re
 import sys
@@ -45,7 +46,7 @@ from pathlib import Path
 
 from experiments.world import stone_age
 from experiments.world.assay import (
-    ASSAY_DAYS, SEATS, AssayResult, assay_genome, fitness)
+    ASSAY_DAYS, SEATS, AssayResult, assay_genome, assay_many, fitness)
 from .llm import strip_fences, strip_think
 
 #: Literals below this are structure (flags, indexes), not parameters.
@@ -248,7 +249,8 @@ class Lineage:
         return row
 
     def step(self, *, mutants: int, replicates: int, days: int,
-             rng: random.Random, llm=None, llm_stall: int = 1) -> dict:
+             rng: random.Random, llm=None, llm_stall: int = 1,
+             workers: int = 0) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
         becomes the new champion. The LLM mutator fires only on a
@@ -266,10 +268,18 @@ class Lineage:
                 candidates.append(("llm-0", child))
             llm_tokens = llm.tokens
 
-        rows = []
+        # the generation's assays as one flat job list: embarrassingly
+        # parallel in-memory worlds (each its own SQLite; no shared
+        # state), order-preserving so candidates zip to their
+        # replicates deterministically
+        jobs = [(src, r, days)
+                for _tag, src in candidates for r in range(replicates)]
+        flat = assay_many(jobs, workers=workers)
+        rows, i = [], 0
         for tag, src in candidates:
-            results = assay_genome(src, replicates=replicates, days=days)
-            rows.append((tag, src, fitness(results)))
+            chunk = flat[i:i + replicates]
+            i += replicates
+            rows.append((tag, src, fitness(chunk)))
         # deterministic selection: alive days, then fewer errors, then
         # the INCUMBENT (ties keep the champion: the tiebreak is stability,
         # not churn — the champion already re-proved itself from scratch
@@ -354,6 +364,20 @@ def main(argv=None) -> int:
                          "per lineage only after --llm-stall generations "
                          "without param turnover (the plateau)")
     ap.add_argument("--llm-stall", type=int, default=1)
+    ap.add_argument("--workers", type=int,
+                    default=min(8, (os.cpu_count() or 1)),
+                    help="assay process pool size (early termination runs "
+                         "first: a world with no counting seat alive stops "
+                         "ticking, which also shrinks per-world cost "
+                         "variance and makes pool balancing trivial)")
+    ap.add_argument("--probe-days", type=int, default=0, metavar="N",
+                    help="the Goodhart check: after the final generation, "
+                         "assay each lineage champion PAST the selection "
+                         "window (N days) — a frontier that aces the "
+                         "window and falls over past it is overfit to the "
+                         "window, and this reads it in the digest before a "
+                         "live run does. Not selection: a census probe.")
+    ap.add_argument("--probe-replicates", type=int, default=2)
     ap.add_argument("--out", type=Path, default=Path("trainer-run"))
     args = ap.parse_args(argv)
 
@@ -376,7 +400,8 @@ def main(argv=None) -> int:
         for lin in lineages:
             row = lin.step(mutants=args.mutants,
                            replicates=args.replicates, days=args.days,
-                           rng=rng, llm=llm, llm_stall=args.llm_stall)
+                           rng=rng, llm=llm, llm_stall=args.llm_stall,
+                           workers=args.workers)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
                     f" deaths={winter['deaths']}" if winter else "")
@@ -389,6 +414,24 @@ def main(argv=None) -> int:
         rad = radiation(lineages)
         print(f"  radiation: {rad}")
     summary = {"report": report, "radiation": radiation(lineages)}
+    if args.probe_days:
+        print(f"probe: champions at {args.probe_days} days "
+              f"({args.probe_days - args.days} past the window)")
+        probe = {}
+        for lin in lineages:
+            results = assay_many(
+                [(lin.champion_src, r, args.probe_days)
+                 for r in range(args.probe_replicates)],
+                workers=args.workers)
+            fit = fitness(results)
+            probe[lin.name] = {"sha": lin.champion_sha, **fit,
+                               "ended_ticks": [r.ended_tick
+                                               for r in results]}
+            w = fit.get("winter") or {}
+            print(f"  {lin.name}: alive={fit['mean_alive_days']:.2f}/"
+                  f"{args.probe_days} winter={w.get('mean_alive_days', -1):.2f}"
+                  f" deaths={fit['deaths']} ended={probe[lin.name]['ended_ticks']}")
+        summary["probe"] = probe
     if llm is not None:
         summary["llm"] = {"model": args.llm, "calls": llm.calls,
                           "failures": llm.failures,

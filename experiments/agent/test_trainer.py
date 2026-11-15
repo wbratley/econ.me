@@ -173,3 +173,24 @@ def test_the_llm_fires_only_on_the_param_plateau(tmp_path):
     rows = [json.loads(l) for l in
             (tmp_path / "archive-line-1.jsonl").read_text().splitlines()]
     assert any("tokens" in r for r in rows)
+
+
+# -- the Goodhart probe: survival past the selection window ----------------
+
+def test_the_probe_reads_champions_past_the_window(tmp_path):
+    """--probe-days: after the final generation each lineage champion is
+    assayed PAST the selection window and the read lands in the report —
+    the standing census check that catches window-overfit before a live
+    run does. Not selection: the champion does not change."""
+    from experiments.agent.trainer import main
+    rc = main(["--lineages", "1", "--generations", "1", "--mutants", "0",
+               "--replicates", "1", "--days", "1", "--probe-days", "2",
+               "--probe-replicates", "1", "--out", str(tmp_path),
+               "--workers", "0"])
+    assert rc == 0
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert "probe" in report and "line-1" in report["probe"]
+    probe = report["probe"]["line-1"]
+    assert probe["days"] if "days" in probe else True
+    assert len(probe["ended_ticks"]) == 1
+    assert 0.0 <= probe["mean_alive_days"] <= 2.0
