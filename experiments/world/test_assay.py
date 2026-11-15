@@ -76,3 +76,30 @@ def test_the_winter_window_reads():
     tallied = sorted(d for d, n in fit["winter"]["deaths"].items()
                      for _ in range(n))
     assert tallied == in_window_deaths
+
+
+# -- early termination: nobody left to measure, stop ticking ---------------
+
+def test_a_dead_world_terminates_early():
+    """Fitness is survival time: when every counting seat is dead the
+    world has nothing left to measure, so it stops ticking (the free
+    speedup BEFORE the pool — and the variance shrinker that makes
+    worker balancing trivial)."""
+    result = run_assay("-- stand still and die\n", days=6)
+    assert result.ended_tick < 6 * 24            # stopped before the wall
+    assert all(s.death_tick is not None for s in result.seats)
+    # and the measurement is honest: nobody's alive_ticks reach the wall
+    assert all(s.alive_ticks < 6 * 24 for s in result.seats)
+
+
+def test_assay_many_runs_the_pool_in_order():
+    """The parallel entry point: (src, replicate, days) jobs across a
+    process pool, results in job order (callers zip candidates to their
+    replicates deterministically)."""
+    from experiments.world.assay import assay_many
+    jobs = [(STARTER, 0, 1), (STARTER, 1, 1), ("not lua", 0, 1)]
+    out = assay_many(jobs, workers=2)
+    assert len(out) == 3
+    assert [r.genome_sha for r in out] == [r.genome_sha for r in out]
+    assert out[0].days == 1 and out[0].mean_alive_days == 1.0
+    assert out[2].mean_alive_days < 1.0           # the broken one scores 0

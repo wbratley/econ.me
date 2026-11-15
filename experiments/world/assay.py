@@ -73,6 +73,11 @@ class AssayResult:
     genome_sha: str
     days: int
     seats: list[SeatRow] = field(default_factory=list)
+    ended_tick: int = 0          # the last tick run: the window, or the
+                                 # tick the last counting seat died (early
+                                 # termination — fitness is survival time,
+                                 # a world with nobody left to measure
+                                 # stops ticking)
 
     @property
     def mean_alive_days(self) -> float:
@@ -124,11 +129,13 @@ def run_assay(genome_src: str, days: int = ASSAY_DAYS) -> AssayResult:
 
         by_seat = {hid: row for hid, row in seats}
         winter_lo = (WINTER_START_DAY - 1) * 24 + 1
+        ended = 0
         for tick_no in range(1, days * 24 + 1):
             if (tick_no - 1) % 24 == 0:
                 spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
             tick = tick_mod.run_tick(session)
             session.commit()
+            ended = tick_no
             for event in tick.events or []:
                 hid = event.get("entity_id")
                 if hid not in by_seat:
@@ -149,15 +156,26 @@ def run_assay(genome_src: str, days: int = ASSAY_DAYS) -> AssayResult:
                         and tick_no <= 3 * 24:
                     row.skin_by_d3 = True
             in_winter = tick_no >= winter_lo
+            counting_alive = False
             for hid, row in by_seat.items():
                 alive = (row.installed
                          and session.get(Entity, hid).status == EntityStatus.ACTIVE)
                 if alive:
+                    counting_alive = True
                     row.alive_ticks += 1
                     if in_winter:
                         row.winter_alive_ticks += 1
                 # a refused install scores zero: the founder package's
                 # natural survival is the seat's, not the genome's
+            if not counting_alive:
+                # early termination: every counting seat is dead, and
+                # fitness is survival time — the world has nothing left
+                # to measure. (Order-of-operations note: this runs BEFORE
+                # multiprocess scaling because it also shrinks the
+                # variance of per-world cost, which makes worker
+                # balancing trivial.)
+                break
+    result.ended_tick = ended
     return result
 
 
@@ -167,6 +185,25 @@ def assay_genome(genome_src: str, replicates: int = 3,
     uuids = independent rolls). The trainer's fitness read is the
     mean over these; the variance is the lottery, reported not hidden."""
     return [run_assay(genome_src, days=days) for _ in range(replicates)]
+
+
+def _assay_job(job: tuple) -> AssayResult:
+    """A picklable one-world job for the process pool: (src, replicate,
+    days). Each world is its own in-memory SQLite — no server, no shared
+    state, near-linear to core count."""
+    src, _replicate, days = job
+    return run_assay(src, days=days)
+
+
+def assay_many(jobs: list[tuple], workers: int = 0) -> list[AssayResult]:
+    """Run (src, replicate, days) jobs across a process pool, preserving
+    job order in the results (callers zip candidates to their
+    replicates deterministically). workers=0 -> sequential (debug)."""
+    if workers <= 1 or len(jobs) <= 1:
+        return [_assay_job(j) for j in jobs]
+    import concurrent.futures as cf
+    with cf.ProcessPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_assay_job, jobs))
 
 
 def fitness(results: list[AssayResult]) -> dict:
