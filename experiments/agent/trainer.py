@@ -306,6 +306,13 @@ class Lineage:
             self.stalled += 1
         self.champion_fit = best_fit
         self.generation += 1
+        # the champion's source lands on disk every generation: the
+        # archive carries shas + fitness, but the probe (and any future
+        # re-assay of a past champion) needs the genome itself
+        champs = self.out_dir / "champions"
+        champs.mkdir(exist_ok=True)
+        champs.joinpath(f"{self.name}-gen{self.generation}.lua").write_text(
+            best_src)
         return {
             "lineage": self.name, "generation": self.generation,
             "best": best_tag, "turnover": turnover,
