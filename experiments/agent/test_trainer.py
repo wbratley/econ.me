@@ -194,3 +194,14 @@ def test_the_probe_reads_champions_past_the_window(tmp_path):
     assert probe["days"] if "days" in probe else True
     assert len(probe["ended_ticks"]) == 1
     assert 0.0 <= probe["mean_alive_days"] <= 2.0
+
+
+def test_champion_sources_land_on_disk(tmp_path):
+    """The archive carries shas; the probe (and re-assaying a past
+    champion) needs the genome itself — every generation's belt-holder
+    is written to champions/<lineage>-gen<N>.lua."""
+    lin = Lineage("line-1", STARTER, tmp_path)
+    lin.step(mutants=1, replicates=1, days=1, rng=random.Random(5))
+    champ = tmp_path / "champions" / "line-1-gen1.lua"
+    assert champ.exists()
+    assert champ.read_text() == lin.champion_src
