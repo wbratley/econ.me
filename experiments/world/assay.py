@@ -65,6 +65,15 @@ class SeatRow:
     script_errors: int = 0
     winter_alive_ticks: int = 0   # tier two: alive inside days 19..end
     winter_death: str | None = None
+    # the behavioral fingerprint (the diversity instrument): what the
+    # genome DOES, measured — process mix by recipe, market use,
+    # movement. Text similarity and behavioral similarity are different
+    # axes (behavior can diverge while text stays similar and vice
+    # versa); the pool's radiation digest reads both.
+    processes: dict = field(default_factory=dict)
+    orders: int = 0
+    trades: int = 0
+    travels: int = 0
 
 
 @dataclass
@@ -149,12 +158,21 @@ def run_assay(genome_src: str, days: int = ASSAY_DAYS) -> AssayResult:
                     row.death_condition = event.get("condition")
                     if tick_no >= winter_lo:
                         row.winter_death = event.get("condition")
-                elif et == "process_completed" and event.get("facility") == "SHELTER" \
-                        and tick_no <= 5 * 24:
-                    row.shelter_by_d5 = True
-                elif et == "trade" and event.get("symbol") == "WATERSKIN" \
-                        and tick_no <= 3 * 24:
-                    row.skin_by_d3 = True
+                elif et == "process_completed":
+                    code = str(event.get("recipe") or "?")
+                    row.processes[code] = row.processes.get(code, 0) + 1
+                    if event.get("facility") == "SHELTER" \
+                            and tick_no <= 5 * 24:
+                        row.shelter_by_d5 = True
+                elif et == "trade":
+                    row.trades += 1
+                    if event.get("symbol") == "WATERSKIN" \
+                            and tick_no <= 3 * 24:
+                        row.skin_by_d3 = True
+                elif et == "place_order":
+                    row.orders += 1
+                elif et == "travel":
+                    row.travels += 1
             in_winter = tick_no >= winter_lo
             counting_alive = False
             for hid, row in by_seat.items():
@@ -220,6 +238,14 @@ def fitness(results: list[AssayResult]) -> dict:
     for s in seats:
         if s.death_condition:
             domains[s.death_condition] = domains.get(s.death_condition, 0) + 1
+    # the fingerprint's process mix, merged across seats and normalized
+    # to shares (the pool digest's behavior axis; fire-hours approximated
+    # by fire-recipe share — the mix carries what the genome DOES)
+    mix: dict[str, int] = {}
+    for s in seats:
+        for code, n in s.processes.items():
+            mix[code] = mix.get(code, 0) + n
+    mix_total = sum(mix.values()) or 1
     out = {
         "mean_alive_days": sum(s.alive_ticks for s in seats)
         / (len(seats) * 24.0),
@@ -228,6 +254,11 @@ def fitness(results: list[AssayResult]) -> dict:
         "script_errors": sum(s.script_errors for s in seats),
         "shelter": sum(1 for s in seats if s.shelter_by_d5),
         "skin": sum(1 for s in seats if s.skin_by_d3),
+        "trades": sum(s.trades for s in seats),
+        "orders": sum(s.orders for s in seats),
+        "travels": sum(s.travels for s in seats),
+        "behavior": {k: round(v / mix_total, 4)
+                     for k, v in sorted(mix.items())},
     }
     # tier two, when the window reached winter: the winter read rides
     # along (selection stays the full-window metric; the winter read is

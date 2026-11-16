@@ -326,17 +326,42 @@ class Lineage:
 # The radiation metric (diversity across lineages)
 # ---------------------------------------------------------------------------
 
+def _behavior_distance(fit_a: dict | None, fit_b: dict | None) -> float:
+    """1 - cosine over the two process-mix vectors (union of keys).
+    Behavior can diverge while text stays similar (two param-twins
+    running different commitment schedules) and vice versa; the digest
+    reads both axes. 0.0 = behaviorally identical."""
+    a = (fit_a or {}).get("behavior") or {}
+    b = (fit_b or {}).get("behavior") or {}
+    if not a or not b:
+        return -1.0                       # unknown: no fingerprint yet
+    keys = set(a) | set(b)
+    dot = sum(a.get(k, 0.0) * b.get(k, 0.0) for k in keys)
+    na = sum(v * v for v in a.values()) ** 0.5
+    nb = sum(v * v for v in b.values()) ** 0.5
+    if na == 0 or nb == 0:
+        return 0.0
+    return round(1.0 - dot / (na * nb), 3)
+
+
 def radiation(lineages: list[Lineage]) -> dict:
-    """Pairwise difflib ratios between lineage champions: 1.0 = the pool
-    has collapsed to one genome; low pairwise ratios = the pool is
-    actually radiating. The report's diversity read."""
-    out = {}
+    """The pool's diversity digest, BOTH axes: pairwise difflib ratios
+    between champion SOURCES (1.0 = text-collapsed) and pairwise
+    behavioral distances between their fingerprints (0.0 =
+    behaviorally identical replicates; high = actually different
+    strategies). Param tuning converges on both; the block library is
+    where behavioral diversity is expected to enter."""
+    out: dict = {}
     for i in range(len(lineages)):
         for j in range(i + 1, len(lineages)):
             a, b = lineages[i], lineages[j]
             ratio = difflib.SequenceMatcher(
                 None, a.champion_src, b.champion_src).ratio()
-            out[f"{a.name}:{b.name}"] = round(ratio, 3)
+            out[f"{a.name}:{b.name}"] = {
+                "text": round(ratio, 3),
+                "behavior": _behavior_distance(a.champion_fit,
+                                               b.champion_fit),
+            }
     return out
 
 
@@ -356,6 +381,24 @@ def seed_founders(k: int, seed: int) -> list[tuple[str, str]]:
     return founders[:k]
 
 
+def seed_founders_from_dir(champions_dir: Path,
+                           k: int) -> list[tuple[str, str]]:
+    """Lineage continuity across runs: founders = a prior run's
+    champions dir, latest generation per lineage (lineage names match:
+    line-1..line-K). The tier ladder climbs on the SAME lineages — tier
+    3 selects among tier 2's survivors, not among fresh starter kicks."""
+    founders = []
+    for i in range(1, k + 1):
+        name = f"line-{i}"
+        gens = sorted(champions_dir.glob(f"{name}-gen*.lua"),
+                      key=lambda p: p.stat().st_mtime)
+        if not gens:
+            raise SystemExit(
+                f"--founders: no {name}-gen*.lua in {champions_dir}")
+        founders.append((name, gens[-1].read_text()))
+    return founders
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--lineages", type=int, default=4)
@@ -365,6 +408,11 @@ def main(argv=None) -> int:
     ap.add_argument("--replicates", type=int, default=3)
     ap.add_argument("--days", type=int, default=ASSAY_DAYS)
     ap.add_argument("--seed", type=int, default=74)
+    ap.add_argument("--founders", type=Path, default=None, metavar="DIR",
+                    help="lineage continuity: seed from a prior run's "
+                         "champions/ dir (latest gen per lineage) instead "
+                         "of fresh starter kicks — the tier ladder climbs "
+                         "on the same lines")
     ap.add_argument("--llm", default=None, metavar="MODEL",
                     help="arm the structural mutator (seat-style model "
                          "name, e.g. deepseek:deepseek-v4-flash); fires "
@@ -396,8 +444,15 @@ def main(argv=None) -> int:
         llm = LlmMutator(build_llm_model(args.llm, on_trace=None))
         print(f"llm mutator armed: {args.llm} "
               f"(fires after {args.llm_stall} stalled generation(s))")
+    if args.founders:
+        founders = seed_founders_from_dir(args.founders, args.lineages)
+        print(f"founders: {args.founders} (continuity: "
+              + ", ".join(f"{n}:{_sha16(s)[:8]}" for n, s in founders)
+              + ")")
+    else:
+        founders = seed_founders(args.lineages, args.seed)
     lineages = [Lineage(name, src, args.out)
-                for name, src in seed_founders(args.lineages, args.seed)]
+                for name, src in founders]
     print(f"trainer: {len(lineages)} lineages x {args.generations} "
           f"generations, {args.mutants}+1 candidates each, "
           f"{args.replicates} replicate worlds x {args.days} days")
