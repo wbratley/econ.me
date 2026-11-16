@@ -235,3 +235,36 @@ def test_champion_sources_land_on_disk(tmp_path):
     champ = tmp_path / "champions" / "line-1-gen1.lua"
     assert champ.exists()
     assert champ.read_text() == lin.champion_src
+
+
+# -- the epsilon margin + window jitter (the assay upgrades) ----------------
+
+def test_epsilon_margin_blocks_noise_turnovers(tmp_path):
+    """Run-78's evidence: M-noise dethroned better genomes. A child
+    within epsilon of the incumbent does NOT take the belt; the belt
+    moves only on signal (child beats the fresh re-assay by > eps)."""
+    lin = Lineage("line-1", STARTER, tmp_path)
+    rng = random.Random(5)
+    first = lin.step(mutants=0, replicates=1, days=1, rng=rng,
+                     epsilon=0.25, jitter=0)
+    champ = lin.champion_sha
+    # day-1 assays: every child ties the champion exactly -> no belt move
+    second = lin.step(mutants=3, replicates=1, days=1, rng=rng,
+                      epsilon=0.25, jitter=0)
+    assert second["turnover"] is False
+    assert lin.champion_sha == champ
+
+
+def test_window_jitter_varies_and_is_shared(tmp_path):
+    """The assay window jitters per generation (line-2's 4th-in-window /
+    1st-in-probe anomaly's standing answer) and ALL candidates in a
+    generation share the same window — selection stays fair within it."""
+    lin = Lineage("line-1", STARTER, tmp_path)
+    rng = random.Random(5)
+    seen = set()
+    for _ in range(3):
+        row = lin.step(mutants=0, replicates=1, days=10, rng=rng,
+                       epsilon=0.25, jitter=2)
+        seen.add(row["window"])
+    assert seen                            # the window moved somewhere
+    assert all(8 <= w <= 12 for w in seen)
