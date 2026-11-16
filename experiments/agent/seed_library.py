@@ -38,19 +38,27 @@ def seed(library_dir: Path) -> Library:
     return lib
 
 
-def seed_line2_allele(library_dir: Path, champion: Path) -> Library:
-    """The spec's first library artifact: run-78 line-2's blocks as an
-    ALLELE of each shared locus (swap-level reuse of its param profile
-    -- the deep optimum is 100% param-only per the step-1 diff)."""
-    lib = seed(library_dir)
+def seed_alleles_from(library_dir: Path, champion: Path,
+                      tag: str = "extracted") -> Library:
+    """A champion's blocks as library ALLELES (swap-level reuse of its
+    param profile — run-78 line-2's deep optimum is 100% param-only, so
+    the allele IS the artifact). Provenance carries the source."""
+    lib = Library(library_dir)
+    if not lib.keys():
+        lib = seed(library_dir)
+    stem = champion.stem                      # e.g. line-2-gen4
     for blk in parse_blocks(champion.read_text()):
-        if blk.name in _SEED_PROVENANCE:
-            allele = Block(
-                name=blk.name, source=blk.source,
-                provenance="extracted:line-2@run78-gen4 (allele)",
-                slot=blk.slot, needs=blk.needs, provides=blk.provides)
-            lib.add(allele, allele="line2")
+        allele = Block(
+            name=blk.name, source=blk.source,
+            provenance=f"{tag}:{stem} (allele)",
+            slot=blk.slot, needs=blk.needs, provides=blk.provides)
+        lib.add(allele, allele=stem.split("-gen")[0])
     return lib
+
+
+def seed_line2_allele(library_dir: Path, champion: Path) -> Library:
+    """Back-compat name for the spec's first artifact."""
+    return seed_alleles_from(library_dir, champion)
 
 
 if __name__ == "__main__":

@@ -268,3 +268,73 @@ def test_window_jitter_varies_and_is_shared(tmp_path):
         seen.add(row["window"])
     assert seen                            # the window moved somewhere
     assert all(8 <= w <= 12 for w in seen)
+
+
+# -- the block operator: the mix, the journal, valley crossing -------------
+
+def _lib(tmp_path):
+    from experiments.agent.seed_library import seed
+    return seed(tmp_path / "lib")
+
+
+def test_block_operator_draws_real_children(tmp_path):
+    from experiments.agent.trainer import BlockOperator
+    from experiments.agent.seed_library import seed_alleles_from
+    lib = _lib(tmp_path)
+    # swaps need a second allele at a shared locus (the plain seed has
+    # one per name — run-79's --allele-from provides the real ones)
+    champ = tmp_path / "champ.lua"
+    champ.write_text(STARTER)
+    lib = seed_alleles_from(lib.root, champ, tag="extracted")
+    op = BlockOperator(lib)
+    rng = random.Random(3)
+    seen = set()
+    for _ in range(30):
+        made = op.child(STARTER, rng)
+        assert made is not None
+        tag, src, meta = made
+        seen.add(meta["op"])
+        assert src != STARTER
+        # every composed child parses and carries its block
+        from experiments.agent.blocklib import parse_blocks
+        names = {b.name for b in parse_blocks(src)}
+        if meta["op"] == "insert":
+            assert meta["fresh_insert"] is True
+    assert seen == {"insert", "remove", "swap"}
+
+
+def test_block_children_journal_their_outcomes(tmp_path):
+    """Per-block outcome journaling: every structural child records op,
+    key, fresh_insert, parent/child scores, delta, took_belt — and each
+    generation appends the champion's block trajectory (the 'good block,
+    never got tuned' vs 'bad block' instrument, and the diffusion
+    rule's feed)."""
+    from experiments.agent.trainer import BlockOperator
+    lib = _lib(tmp_path)
+    lin = Lineage("line-1", STARTER, tmp_path)
+    rng = random.Random(9)
+    lin.step(mutants=4, replicates=1, days=1, rng=rng,
+             epsilon=0.25, jitter=0, block_op=BlockOperator(lib))
+    rows = [json.loads(l)
+            for l in (tmp_path / "blocks-line-1.jsonl").read_text().splitlines()]
+    champs = [r for r in rows if r["kind"] == "champion"]
+    ops = [r for r in rows if r["kind"] == "op"]
+    assert len(champs) == 1 and champs[0]["blocks"]
+    assert ops and all({"op", "key", "delta", "took_belt"} <= set(o)
+                       for o in ops)
+
+
+def test_fresh_inserts_cross_the_valley(tmp_path):
+    """Block-aware epsilon: a fresh-insert child within epsilon BELOW
+    its parent can take the belt (library constants arrive untuned —
+    param mutation gets a generation to tune them); a param child in
+    the same position never does."""
+    from experiments.agent.trainer import BlockOperator
+    lib = _lib(tmp_path)
+    lin = Lineage("line-1", STARTER, tmp_path)
+    rng = random.Random(4)
+    row = lin.step(mutants=4, replicates=1, days=1, rng=rng,
+                   epsilon=0.9, jitter=0, block_op=BlockOperator(lib))
+    # with a fat epsilon a fresh insert within it may take the belt;
+    # the report row records which tag won
+    assert row["best"].startswith(("champion", "param", "block-"))

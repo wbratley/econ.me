@@ -48,6 +48,8 @@ from experiments.world import stone_age
 from experiments.world.assay import (
     ASSAY_DAYS, SEATS, AssayResult, assay_genome, assay_many, fitness)
 from .llm import strip_fences, strip_think
+from .blocklib import (
+    Library, insert_block, parse_blocks, remove_block, swap_block)
 
 #: Literals below this are structure (flags, indexes), not parameters.
 MIN_MUTABLE = 2
@@ -70,6 +72,12 @@ EPSILON_TURNOVER = 0.25
 #: 4th in-window, 1st in the 36-day probe) becomes unlearnable; the
 #: out-of-sample probe stays census-not-selection.
 WINDOW_JITTER_DAYS = 2
+
+#: The mutation budget's structural share (the spec's mix): ~70% param /
+#: ~25% block ops / ~5% authorship drafts (the LLM path, cold unless
+#: armed). Block ops are near-free; authorship drafts are 42K a call.
+BLOCK_OP_SHARE = 0.25
+AUTHORSHIP_SHARE = 0.05
 
 _NUMBER = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])")
 
@@ -231,6 +239,67 @@ class LlmMutator:
 
 
 # ---------------------------------------------------------------------------
+# The block operator: structural children from the library
+# ---------------------------------------------------------------------------
+
+class BlockOperator:
+    """Draws one structural child (insert / remove / swap) from the
+    library against a genome — the composition operator's runtime. Ops
+    are drawn uniform over what's POSSIBLE (library blocks not yet in
+    the genome; genome blocks that are not the last one; alleles at
+    shared loci); a genome with nothing possible yields None (the child
+    slot falls back to param)."""
+
+    def __init__(self, lib: Library):
+        self.lib = lib
+
+    def _moves(self, src: str) -> list[tuple[str, str]]:
+        moves: list[tuple[str, str]] = []
+        genome_blocks = parse_blocks(src)
+        have = {b.name for b in genome_blocks}
+        for key in self.lib.keys():
+            if self.lib.index[key]["name"] not in have:
+                moves.append(("insert", key))
+        if len(genome_blocks) > 1:
+            for b in genome_blocks:
+                moves.append(("remove", b.name))
+        for b in genome_blocks:
+            alleles = [a for a in self.lib.alleles(b.name)]
+            if len(alleles) >= 2:
+                for a in alleles:
+                    moves.append(("swap", a))
+        return moves
+
+    def child(self, src: str, rng: random.Random):
+        """(tag, child_src, meta) or None. meta carries what the outcome
+        journal needs: the op, the block/allele key, and whether the
+        child carries a block fresh to the parent (valley-crossing
+        eligibility)."""
+        moves = self._moves(src)
+        if not moves:
+            return None
+        op, key = rng.choice(moves)
+        parent_blocks = {b.name for b in parse_blocks(src)}
+        try:
+            if op == "insert":
+                blk = self.lib.get(key)
+                out = insert_block(src, blk)
+            elif op == "remove":
+                name = self.lib.index[key]["name"] if key in self.lib.index \
+                    else key
+                out = remove_block(src, key)
+            else:
+                blk = self.lib.get(key)
+                out = swap_block(src, blk)
+        except ValueError:                    # unmet needs / missing block
+            return None
+        child_blocks = {b.name for b in parse_blocks(out)}
+        fresh = bool(child_blocks - parent_blocks)
+        return (f"block-{op}:{key}", out,
+                {"op": op, "key": key, "fresh_insert": fresh})
+
+
+# ---------------------------------------------------------------------------
 # A lineage
 # ---------------------------------------------------------------------------
 
@@ -241,6 +310,7 @@ class Lineage:
         self.name = name
         self.out_dir = out_dir
         self.archive_path = out_dir / f"archive-{name}.jsonl"
+        self.blocks_path = out_dir / f"blocks-{name}.jsonl"
         self.champion_src = founder_src
         self.champion_sha = _sha16(founder_src)
         self.champion_fit: dict | None = None
@@ -264,7 +334,8 @@ class Lineage:
     def step(self, *, mutants: int, replicates: int, days: int,
              rng: random.Random, llm=None, llm_stall: int = 1,
              workers: int = 0, epsilon: float = EPSILON_TURNOVER,
-             jitter: int = WINDOW_JITTER_DAYS) -> dict:
+             jitter: int = WINDOW_JITTER_DAYS, block_op=None,
+             block_share: float = BLOCK_OP_SHARE) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
         becomes the new champion — but the belt moves only on signal: a
@@ -276,11 +347,28 @@ class Lineage:
         mutator fires only on a param plateau. Returns the report row."""
         if jitter:
             days = max(1, days + rng.randint(-jitter, jitter))
+        # the mutation budget's mix (the spec): param ~70% / block ops
+        # ~25% / authorship ~5% (the LLM path, cold unless armed AND
+        # stalled). Each child slot draws its operator; failed block ops
+        # fall back to param children (the mix is a budget, not a quota).
         candidates = [("champion", self.champion_src)]
-        for i in range(mutants):
-            candidates.append(
-                (f"param-{i}", mutate_params(self.champion_src, rng)))
+        block_children: list[dict] = []
         llm_tokens = None
+        for i in range(mutants):
+            r = rng.random()
+            if block_op is not None and r < block_share / (1 - AUTHORSHIP_SHARE):
+                made = block_op.child(self.champion_src, rng)
+                if made is not None:
+                    tag, src_child, meta = made
+                    candidates.append((tag, src_child))
+                    block_children.append(
+                        dict(meta, tag=tag, sha=_sha16(src_child)))
+                    continue
+            candidates.append((f"param-{i}",
+                               mutate_params(self.champion_src, rng)))
+        # the authorship draft (the mix's ~5%): fires only when armed AND
+        # the free operators have stalled — tokens land on the plateau,
+        # one draft per generation max
         if llm is not None and self.stalled >= llm_stall:
             child = llm.mutate(self.champion_src, self.champion_fit)
             if child is not None and child != self.champion_src:
@@ -304,16 +392,29 @@ class Lineage:
         # re-assay by MORE than epsilon (signal, not lottery — the
         # champion re-proved itself in this very assay). Among eligible
         # children: alive days, then fewer errors, then sha.
+        # Block-aware epsilon (valley crossing): a FRESH INSERT arrives
+        # untuned (library-default constants) — within-epsilon of the
+        # parent it takes the belt over a param-only child, so param
+        # mutation gets a generation or two to tune the new gene before
+        # the margin rule can strangle it. Everything else still needs
+        # parent + epsilon.
         incumbent = next(f for t, _s, f in rows if t == "champion")
-        bar = incumbent["mean_alive_days"] + epsilon
-        children = [(t, s_, f) for t, s_, f in rows
-                    if t != "champion"
-                    and f["mean_alive_days"] > bar]
+        fresh_tags = {bc["tag"] for bc in block_children
+                      if bc.get("fresh_insert")}
+        children = []
+        for t, s_, f in rows:
+            if t == "champion":
+                continue
+            bar = incumbent["mean_alive_days"] - epsilon \
+                if t in fresh_tags else incumbent["mean_alive_days"] + epsilon
+            if f["mean_alive_days"] > bar:
+                children.append((t, s_, f))
         if children:
             def key(item):
                 t, _s, f = item
-                return (-f["mean_alive_days"], f["script_errors"],
-                        _sha16(_s))
+                fresh = 0 if t in fresh_tags else 1   # fresh genes first
+                return (-f["mean_alive_days"], fresh,
+                        f["script_errors"], _sha16(_s))
             best_tag, best_src, best_fit = sorted(children, key=key)[0]
         else:
             best_tag, best_src, best_fit = "champion", self.champion_src, \
@@ -321,12 +422,42 @@ class Lineage:
         turnover = best_src != self.champion_src
         # archive every candidate; the winner flagged
         for tag, src, fit in rows:
-            self.record(src=src, mutator=tag.split("-")[0],
+            self.record(src=src, mutator=tag.split(":")[0].split("-")[0],
                         parent_sha=self.champion_sha, fit=fit,
                         champion=(src == best_src),   # the belt-holder,
                         # incumbent included: a successful title defense
                         # is a champion row too
-                        tokens=llm_tokens if tag == "llm-0" else None)
+                        tokens=llm_tokens if tag.startswith("llm") else None)
+
+        # the block outcome journal: every structural child's immediate
+        # delta (feeds the diffusion rule later) + the champion's block
+        # trajectory (presence + score per generation — the only way to
+        # tell 'bad block' from 'good block, never got tuned')
+        if block_children or True:
+            with self.blocks_path.open("a") as fh:
+                by_tag = {t: f for t, _s, f in rows}
+                for bc in block_children:
+                    fit = by_tag.get(bc["tag"])
+                    if fit is None:
+                        continue
+                    fh.write(json.dumps({
+                        "kind": "op", "generation": self.generation + 1,
+                        **bc, "parent_score":
+                            round(incumbent["mean_alive_days"], 3),
+                        "child_score":
+                            round(fit["mean_alive_days"], 3),
+                        "delta": round(
+                            fit["mean_alive_days"]
+                            - incumbent["mean_alive_days"], 3),
+                        "took_belt": bc["sha"] == _sha16(best_src),
+                    }) + "\n")
+                fh.write(json.dumps({
+                    "kind": "champion", "generation": self.generation + 1,
+                    "sha": _sha16(best_src),
+                    "score": round(best_fit["mean_alive_days"], 3),
+                    "blocks": sorted(
+                        b.name for b in parse_blocks(best_src)),
+                }) + "\n")
         if turnover:
             self.champion_src, self.champion_sha = best_src, _sha16(best_src)
             self.stalled = 0
@@ -440,6 +571,17 @@ def main(argv=None) -> int:
                     help="turnover margin in alive-days")
     ap.add_argument("--no-jitter", action="store_true",
                     help="disable per-generation window jitter")
+    ap.add_argument("--library", type=Path, default=None, metavar="DIR",
+                    help="the block library dir (default: seeded into "
+                         "<out>/library on first run)")
+    ap.add_argument("--block-ops", type=float, default=BLOCK_OP_SHARE,
+                    help="structural children's share of the mutation "
+                         "budget (param gets the rest)")
+    ap.add_argument("--allele-from", type=Path, default=None,
+                    metavar="CHAMPION.lua",
+                    help="extract a champion's blocks as library alleles "
+                         "(provenance-carried) — the diffusion rule's "
+                         "manual arm, run-79's line-2 path")
     ap.add_argument("--days", type=int, default=ASSAY_DAYS)
     ap.add_argument("--seed", type=int, default=74)
     ap.add_argument("--founders", type=Path, default=None, metavar="DIR",
@@ -472,6 +614,16 @@ def main(argv=None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
+    block_op = None
+    if args.block_ops > 0:
+        from .seed_library import seed, seed_alleles_from
+        lib_dir = args.library or (args.out / "library")
+        if not (lib_dir / "index.json").exists():
+            seed(lib_dir)
+            if args.allele_from:
+                seed_alleles_from(lib_dir, args.allele_from)
+            print(f"library: seeded {lib_dir}")
+        block_op = BlockOperator(Library(lib_dir))
     llm = None
     if args.llm:
         from .replay_prompt import build_model as build_llm_model
@@ -499,7 +651,9 @@ def main(argv=None) -> int:
                            rng=rng, llm=llm, llm_stall=args.llm_stall,
                            workers=args.workers, epsilon=args.epsilon,
                            jitter=0 if args.no_jitter
-                           else WINDOW_JITTER_DAYS)
+                           else WINDOW_JITTER_DAYS,
+                           block_op=block_op,
+                           block_share=args.block_ops)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
                     f" deaths={winter['deaths']}" if winter else "")
@@ -512,6 +666,17 @@ def main(argv=None) -> int:
         rad = radiation(lineages)
         print(f"  radiation: {rad}")
     summary = {"report": report, "radiation": radiation(lineages)}
+    if block_op is not None:
+        adoption: dict[str, list[str]] = {}
+        for lin in lineages:
+            for b in parse_blocks(lin.champion_src):
+                adoption.setdefault(b.name, []).append(lin.name)
+        summary["adoption"] = {
+            k: v for k, v in sorted(adoption.items()) if len(v) >= 1}
+        shared = {k: v for k, v in summary["adoption"].items()
+                  if len(v) >= 2}
+        print(f"adoption: {len(summary['adoption'])} blocks in champions, "
+              f"{len(shared)} in >=2 lineages: {shared}")
     if args.probe_days:
         print(f"probe: champions at {args.probe_days} days "
               f"({args.probe_days - args.days} past the window)")
