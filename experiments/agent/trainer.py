@@ -58,6 +58,19 @@ PARAM_TOUCH = 0.15
 #: The jitter band: new = old * factor, factor ~ U[0.6, 1.6].
 PARAM_LO, PARAM_HI = 0.6, 1.6
 
+#: The turnover margin (alive-days): a child takes the belt only by
+#: beating the incumbent's fresh re-assay by MORE than epsilon — run-78's
+#: two selection regressions (M=3 noise dethroning better genomes) are
+#: the evidence; combined with M=5 replicates the belt only moves on
+#: signal, not lottery.
+EPSILON_TURNOVER = 0.25
+
+#: The window jitter band (days, per generation): the assay window
+#: randomizes +/- this much every generation. Window-tuning (line-2 was
+#: 4th in-window, 1st in the 36-day probe) becomes unlearnable; the
+#: out-of-sample probe stays census-not-selection.
+WINDOW_JITTER_DAYS = 2
+
 _NUMBER = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])")
 
 
@@ -250,13 +263,19 @@ class Lineage:
 
     def step(self, *, mutants: int, replicates: int, days: int,
              rng: random.Random, llm=None, llm_stall: int = 1,
-             workers: int = 0) -> dict:
+             workers: int = 0, epsilon: float = EPSILON_TURNOVER,
+             jitter: int = WINDOW_JITTER_DAYS) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
-        becomes the new champion. The LLM mutator fires only on a
-        param plateau — ``stalled`` generations without turnover — so
-        tokens are spent where the free operator has stopped moving
-        the needle. Returns the generation's report row."""
+        becomes the new champion — but the belt moves only on signal: a
+        child must beat the incumbent's fresh re-assay by MORE than
+        epsilon (run-78's M=3 noise regressions are the evidence). The
+        window jitters +/- a few days per generation (all candidates
+        share the generation's window — selection stays fair within it;
+        window-tuning becomes unlearnable across generations). The LLM
+        mutator fires only on a param plateau. Returns the report row."""
+        if jitter:
+            days = max(1, days + rng.randint(-jitter, jitter))
         candidates = [("champion", self.champion_src)]
         for i in range(mutants):
             candidates.append(
@@ -280,16 +299,25 @@ class Lineage:
             chunk = flat[i:i + replicates]
             i += replicates
             rows.append((tag, src, fitness(chunk)))
-        # deterministic selection: alive days, then fewer errors, then
-        # the INCUMBENT (ties keep the champion: the tiebreak is stability,
-        # not churn — the champion already re-proved itself from scratch
-        # in this very assay), then sha
-        def key(item):
-            tag, src, fit = item
-            return (-fit["mean_alive_days"], fit["script_errors"],
-                    0 if tag == "champion" else 1, _sha16(src))
-        ranked = sorted(rows, key=key)
-        best_tag, best_src, best_fit = ranked[0]
+        # Deterministic selection with the epsilon margin: the
+        # incumbent keeps the belt unless a child beats its fresh
+        # re-assay by MORE than epsilon (signal, not lottery — the
+        # champion re-proved itself in this very assay). Among eligible
+        # children: alive days, then fewer errors, then sha.
+        incumbent = next(f for t, _s, f in rows if t == "champion")
+        bar = incumbent["mean_alive_days"] + epsilon
+        children = [(t, s_, f) for t, s_, f in rows
+                    if t != "champion"
+                    and f["mean_alive_days"] > bar]
+        if children:
+            def key(item):
+                t, _s, f = item
+                return (-f["mean_alive_days"], f["script_errors"],
+                        _sha16(_s))
+            best_tag, best_src, best_fit = sorted(children, key=key)[0]
+        else:
+            best_tag, best_src, best_fit = "champion", self.champion_src, \
+                incumbent
         turnover = best_src != self.champion_src
         # archive every candidate; the winner flagged
         for tag, src, fit in rows:
@@ -315,10 +343,10 @@ class Lineage:
             best_src)
         return {
             "lineage": self.name, "generation": self.generation,
-            "best": best_tag, "turnover": turnover,
+            "best": best_tag, "turnover": turnover, "window": days,
             "fitness": best_fit, "llm_tokens": llm_tokens,
             "pool": [{"tag": t, "alive": round(f["mean_alive_days"], 2)}
-                     for t, _, f in ranked],
+                     for t, _, f in rows],
         }
 
 
@@ -405,7 +433,13 @@ def main(argv=None) -> int:
     ap.add_argument("--generations", type=int, default=3)
     ap.add_argument("--mutants", type=int, default=3,
                     help="param children per lineage per generation")
-    ap.add_argument("--replicates", type=int, default=3)
+    ap.add_argument("--replicates", type=int, default=5,
+                    help="assay replicates per candidate (M=5: run-78's "
+                         "M=3 selection regressions)")
+    ap.add_argument("--epsilon", type=float, default=EPSILON_TURNOVER,
+                    help="turnover margin in alive-days")
+    ap.add_argument("--no-jitter", action="store_true",
+                    help="disable per-generation window jitter")
     ap.add_argument("--days", type=int, default=ASSAY_DAYS)
     ap.add_argument("--seed", type=int, default=74)
     ap.add_argument("--founders", type=Path, default=None, metavar="DIR",
@@ -463,13 +497,15 @@ def main(argv=None) -> int:
             row = lin.step(mutants=args.mutants,
                            replicates=args.replicates, days=args.days,
                            rng=rng, llm=llm, llm_stall=args.llm_stall,
-                           workers=args.workers)
+                           workers=args.workers, epsilon=args.epsilon,
+                           jitter=0 if args.no_jitter
+                           else WINDOW_JITTER_DAYS)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
                     f" deaths={winter['deaths']}" if winter else "")
             print(f"  {lin.name} gen {row['generation']}: best="
                   f"{row['best']} alive={row['fitness']['mean_alive_days']:.2f}"
-                  f"{wtxt} turnover={row['turnover']}"
+                  f"{wtxt} win={row['window']} turnover={row['turnover']}"
                   + (f" llm_tokens={row['llm_tokens']}"
                      if row.get("llm_tokens") is not None else ""))
             report.append(row)
