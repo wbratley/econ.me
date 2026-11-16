@@ -94,13 +94,43 @@ def test_founders_start_apart():
 
 
 def test_radiation_reads_the_pool(tmp_path):
+    """BOTH axes: text (difflib) and behavior (process-mix cosine) —
+    behavior can diverge while text stays similar and vice versa."""
     a = Lineage("a", STARTER, tmp_path)
     rng = random.Random(1)
     b = Lineage("b", mutate_params(STARTER, rng), tmp_path)
     rad = radiation([a, b])
-    assert "a:b" in rad and rad["a:b"] <= 1.0
+    assert "a:b" in rad
+    assert rad["a:b"]["text"] <= 1.0
+    assert rad["a:b"]["behavior"] == -1.0      # no fingerprints yet
     same = radiation([a, Lineage("c", STARTER, tmp_path)])
-    assert same["a:c"] == 1.0                  # identical = collapsed
+    assert same["a:c"]["text"] == 1.0          # identical = text-collapsed
+
+
+def test_behavior_distance_reads_the_mix():
+    """The diversity instrument's second axis: identical mixes = 0.0,
+    disjoint mixes = 1.0 — two text-similar genomes with different
+    commitment schedules read apart."""
+    from experiments.agent.trainer import _behavior_distance
+    a = {"behavior": {"GATHER": 0.5, "FISH": 0.5}}
+    b = {"behavior": {"GATHER": 0.5, "FISH": 0.5}}
+    c = {"behavior": {"HUNT_SPEAR": 0.5, "STUDY_KNAPPING": 0.5}}
+    assert _behavior_distance(a, b) == 0.0
+    assert _behavior_distance(a, c) == 1.0     # disjoint strategies
+    assert _behavior_distance(a, None) == -1.0  # unknown
+
+
+def test_founders_seed_from_a_champions_dir(tmp_path):
+    """Lineage continuity across runs: --founders reads a prior run's
+    champions dir, latest generation per lineage."""
+    from experiments.agent.trainer import seed_founders_from_dir
+    champs = tmp_path / "champions"
+    champs.mkdir()
+    champs.joinpath("line-1-gen1.lua").write_text("-- old")
+    champs.joinpath("line-1-gen2.lua").write_text("-- new one")
+    champs.joinpath("line-2-gen1.lua").write_text("-- two")
+    founders = seed_founders_from_dir(champs, 2)
+    assert founders == [("line-1", "-- new one"), ("line-2", "-- two")]
 
 
 # -- the LLM mutator: structural, token-priced, plateau-armed --------------
