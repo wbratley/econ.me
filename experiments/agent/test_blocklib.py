@@ -121,3 +121,29 @@ def test_the_composed_genomes_pass_the_real_gate(tmp_path):
             house.owner_id = "u-assay"
             s.flush()
             services.set_entity_behaviour(s, house, src, owner_id="u-assay")
+
+
+# -- the duplicate-span guarantees (run 79's journaled follow-up) -----------
+
+def test_compose_ops_never_stack_spans(tmp_path):
+    """Insertion refuses an existing name; removal takes ALL spans;
+    swaps replace instead of appending; dedupe cleans pre-fix genomes.
+    (Run 79's champions carried shelter x3, spring_restart x2.)"""
+    import pytest as _pytest
+    from experiments.agent.blocklib import dedupe_blocks
+    lib = seed(tmp_path / "lib")
+    d = insert_block(STARTER, lib.get("winter.ration"))
+    names = [b.name for b in parse_blocks(d)]
+    assert names.count("winter.ration") == 1
+    with _pytest.raises(ValueError):
+        insert_block(d, lib.get("winter.ration"))     # presence check
+
+    stacked = d + "\n" + lib.get("winter.ration").source + "\n"
+    n = [b.name for b in parse_blocks(stacked)]
+    assert n.count("winter.ration") == 2             # the pre-fix shape
+    clean = dedupe_blocks(stacked)
+    n2 = [b.name for b in parse_blocks(clean)]
+    assert all(n2.count(x) == 1 for x in set(n2))
+
+    gone = remove_block(stacked, "winter.ration")    # ALL spans
+    assert "winter.ration" not in [b.name for b in parse_blocks(gone)]

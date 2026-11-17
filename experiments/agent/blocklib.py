@@ -282,10 +282,15 @@ def insert_block(genome_src: str, block: Block) -> str:
     the last block/section of a lower-or-equal rank, i.e. immediately
     before the first anchor (BLOCK banner or numbered section) of a
     HIGHER rank; none found -> the genome's end. The needs check gates
-    the call (ValueError on unmet needs — a refused child, not a broken
-    one)."""
+    the call, and so does presence (ValueError on unmet needs OR a
+    block of the same name already standing — run 79's follow-up:
+    swaps accumulated duplicate spans, shelter x3 in line-3's
+    champion; insertion is idempotent-refusing, and remove takes ALL
+    spans of a name, so compose ops can never stack)."""
     if not needs_met(genome_src, block):
         raise ValueError(f"insert {block.name}: unmet needs {block.needs}")
+    if any(b.name == block.name for b in parse_blocks(genome_src)):
+        raise ValueError(f"insert {block.name}: block already present")
     lines = genome_src.splitlines()
     rank = SLOT_RANK[block.slot]
     insert_at = len(lines)               # default: the end
@@ -296,35 +301,48 @@ def insert_block(genome_src: str, block: Block) -> str:
             break
         m = _START.match(line)
         if m:
-            meta = _parse_meta(m.group("meta"), m.group("name"))
+            meta = _parse_meta(m.group("meta"), m.group("name"),
+                               m.group("sec")) or {
+                "provenance": "", "slot": "survival",
+                "needs": [], "provides": []}
             if SLOT_RANK[meta["slot"]] > rank:
                 insert_at = i
                 break
-    body = [block.banner()] + block.source.splitlines() + [
+    # the body: the block's source WITHOUT its own banners (library
+    # files and parsed spans both carry them; banner-inside-banner
+    # double-parses — the run-79 duplicate-span bug's other half)
+    body_lines = _strip_banners(block.source, block.name)
+    body = [block.banner()] + body_lines + [
         f"-- ===== END {block.name} ====="]
     return "\n".join(lines[:insert_at] + body + lines[insert_at:]) + "\n"
 
 
+def _strip_banners(source: str, name: str) -> list[str]:
+    """A block's source minus its own START/END banners."""
+    lines = source.splitlines()
+    if lines:
+        m = _START.match(lines[0])
+        if m and m.group("name") == name:
+            lines = lines[1:]
+    if lines:
+        e = _END.match(lines[-1])
+        if e and e.group("name") == name:
+            lines = lines[:-1]
+    return lines
+
+
 def remove_block(genome_src: str, name: str) -> str:
-    """Delete a block (dead weight is a fitness cost — run-73's 48K
-    scripts; deletion is a first-class operator). Refuses the last
-    block (a genome with nothing is not a genome)."""
+    """Delete a block — ALL spans of it (run 79's duplicate-span
+    follow-up: swaps could leave an older span standing beside the
+    new one, bloating the genome). Deletion stays a first-class
+    operator (dead weight is a fitness cost — run-73's 48K scripts)."""
     lines = genome_src.splitlines()
     out, i, removed = [], 0, 0
     while i < len(lines):
         m = _START.match(lines[i])
         if m and m.group("name") == name:
-            end = None
-            for j in range(i + 1, len(lines)):
-                e = _END.match(lines[j])
-                if e and e.group("name") == name:
-                    end = j
-                    break
-                if _START.match(lines[j]) or \
-                        _section_banner_rank(lines[j]) is not None:
-                    break                # banner-only block: ends here
             removed += 1
-            i = (end + 1) if end is not None else j
+            i = _span_of(lines, i, name)   # ALL spans: loop revisits
             continue
         out.append(lines[i])
         i += 1
@@ -333,9 +351,48 @@ def remove_block(genome_src: str, name: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def _span_of(lines: list[str], i: int, name: str) -> int:
+    """The line AFTER the span starting at lines[i] (a block banner at
+    i): its END, the next banner, the next section, or EOF."""
+    for k in range(i + 1, len(lines)):
+        e = _END.match(lines[k])
+        if e and e.group("name") == name:
+            return k + 1
+        if _START.match(lines[k]) or _section_banner_rank(lines[k]) is not None:
+            return k
+    return len(lines)
+
+
+def dedupe_blocks(genome_src: str) -> str:
+    """Keep only the LAST span of each duplicated block name (the most
+    recent allele), dropping older duplicates — the cleanup for genomes
+    the pre-fix compose ops stacked (run 79's champions: shelter x3,
+    spring_restart x2). Round-trips clean genomes unchanged."""
+    lines = genome_src.splitlines()
+    spans: dict[str, list[int]] = {}
+    for b in parse_blocks(genome_src):
+        spans.setdefault(b.name, []).append(b.start_line - 1)
+    drop: set[int] = set()
+    for name, starts in spans.items():
+        drop.update(starts[:-1])            # all but the last
+    if not drop:
+        return genome_src
+    out, i = [], 0
+    while i < len(lines):
+        if i in drop:
+            m = _START.match(lines[i])
+            i = _span_of(lines, i, m.group("name"))
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out) + "\n"
+
+
 def swap_block(genome_src: str, block: Block) -> str:
     """Replace a block with a library ALLELE of the same locus (same
     structure family, different params/variant) — how param divergence
-    gets reused without text merging."""
-    remove_block(genome_src, block.name)     # raises if absent
-    return insert_block(genome_src, block)
+    gets reused without text merging. (The pre-fix bug lived here: the
+    removal's result was discarded and the allele inserted beside the
+    span it was supposed to replace — run 79's duplicate spans.)"""
+    stripped = remove_block(genome_src, block.name)  # raises if absent
+    return insert_block(stripped, block)
