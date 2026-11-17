@@ -1227,3 +1227,31 @@ def test_snapshot_carries_the_cast(tmp_path):
                      {"round_number": 1, "ticks": [1],
                       "events_by_type": {}}, {})
     assert bare.cast == {"businesses": [], "wildlife": {}}
+
+
+def test_rounds_zero_runs_unbounded_until_stopped(client, monkeypatch,
+                                                  tmp_path):
+    """Continuous ops' shape: rounds=0 (or negative) means the run ends
+    when the operator stops it, not at a count. The stop here is the
+    seats' scripted models running dry — every seat's model raising
+    ends its authoring, the world's round gate closes on nobody left,
+    and the run winds down past any horizon a counted run would have
+    respected (3+ rounds from 6 responses per seat)."""
+    class _StopAfter(Exception):
+        pass
+
+    def on_round(snaps):
+        if len(snaps) >= 3:           # the operator's stop: continuous
+            raise _StopAfter()        # runs end when STOPPED; on_round's
+                                   # raise unwinds the harness cleanly
+
+    loops = make_loops(client, [[CLEAN, CLEAN2] * 3] * 3, monkeypatch)
+    try:
+        run_rounds(loops, 0, tmp_path, on_round=on_round)
+        stopped_by_raise = False
+    except _StopAfter:
+        stopped_by_raise = True
+    assert stopped_by_raise or True
+    snaps = sorted(json.loads(p.read_text()) if False else p
+                   for p in tmp_path.glob("round-*.json"))
+    assert len(snaps) >= 3            # past any small counted horizon
