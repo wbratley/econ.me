@@ -546,7 +546,9 @@ def _seat_worker(d: Dynasty, lp: AgentLoop, state: _RunState,
                         state.phases[name] = "done"
                         return
                     target = state.closed + 1
-                    if target > state.rounds:
+                    # rounds <= 0 = unbounded (continuous ops: the run
+                    # ends when the operator stops it, not at a count)
+                    if state.rounds > 0 and target > state.rounds:
                         state.phases[name] = "done"
                         return
                     if state.submitted.get(name, 0) < target:
@@ -701,7 +703,7 @@ def run_rounds(loops: list[tuple[Dynasty, AgentLoop]], rounds: int,
 
     rounds_done = start_round - 1
     try:
-        while rounds_done < rounds:
+        while rounds <= 0 or rounds_done < rounds:
             resolved = _await_next_round(state, clock_wait, admin_advance,
                                          rounds_done, snapshots)
             if resolved is None:

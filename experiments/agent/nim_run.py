@@ -515,7 +515,9 @@ def main(argv=None) -> int:
                     help="dynasty names, one per model (default: House 1..N)")
     ap.add_argument("--scripted", nargs="+", metavar="JSONL",
                     help="offline: canned-response files, one per dynasty")
-    ap.add_argument("--rounds", type=int, default=10)
+    ap.add_argument("--rounds", type=int, default=10,
+                    help="0 = unbounded (continuous ops: succession "
+                         "armed, the world runs until stopped)")
     ap.add_argument("--ticks-per-round", type=int, default=5)
     ap.add_argument("--scenario", default="frontier",
                     choices=["frontier", "stone_age"],
