@@ -52,12 +52,17 @@ from econengine.catalog import catalog_state, catalog_text
 @dataclass
 class Dynasty:
     """One player seat: a user, a house name, and the model that will
-    mind it. `entity_id` fills in at world build."""
+    mind it. `entity_id` fills in at world build. `frozen` (the
+    validation arm): the seat never authors — the installed genome
+    rides byte-identical, the seat only consents. A frozen arm is the
+    parity meter's clean read: no seat mutation wearing a parity
+    costume (run 80's voided miss #1)."""
     user_id: str
     name: str
     model_name: str
     token: str
     entity_id: str | None = None
+    frozen: bool = False
 
 
 def build_agent_world(session, dynasties: list[Dynasty], scenario: str = "frontier",
@@ -365,6 +370,14 @@ def _decide(d: Dynasty, lp: AgentLoop, round_no: int) -> dict:
         state = lp.mcp.call("entity_state", {"entity_id": d.entity_id})
         if (state.get("entity") or {}).get("status") != "active":
             return _extinct_entry(d, round_no)
+        if getattr(d, "frozen", False):
+            # the validation arm: byte-identical forever, no model call
+            return {
+                "entity": d.entity_id, "model": f"{d.model_name} (frozen)",
+                "round": round_no, "attempts": 0, "accepted": False,
+                "kept_old": True, "refusal": None, "warnings": [],
+                "source_sha": None, "prompt_bytes": 0,
+            }
         return lp.cycle()
     except Exception as exc:                # provider death: keep playing
         return {

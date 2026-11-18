@@ -1255,3 +1255,23 @@ def test_rounds_zero_runs_unbounded_until_stopped(client, monkeypatch,
     snaps = sorted(json.loads(p.read_text()) if False else p
                    for p in tmp_path.glob("round-*.json"))
     assert len(snaps) >= 3            # past any small counted horizon
+
+
+def test_a_frozen_seat_rides_byte_identical_and_consents(client, monkeypatch,
+                                                         tmp_path):
+    """The validation arm (run 80's voided miss #1): a frozen seat
+    never authors — the installed genome rides unchanged, the journal
+    records keeps, the seat consents, and NO model call is made (the
+    ScriptedModel gets zero draws)."""
+    loops = make_loops(client, [[]] * 3, monkeypatch)  # empty models:
+    # any author call would raise ScriptedModelEmpty -> the test fails
+    for d, _ in loops:
+        pass
+    for d, _lp in loops:
+        d.frozen = True
+    snaps = run_rounds(loops, 2, tmp_path)
+    assert [s["round"] for s in snaps] == [1, 2]
+    for snap in snaps:
+        for name, v in snap["dynasties"].items():
+            assert v["entry"].get("kept_old") is True
+            assert "(frozen)" in v["entry"].get("model", "")
