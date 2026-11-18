@@ -577,6 +577,11 @@ def main(argv=None) -> int:
                          "certificate on file if any, rebind) instead of "
                          "parking. The lineage outlives its body; the "
                          "run still ends at --rounds")
+    ap.add_argument("--frozen", action="store_true",
+                    help="the validation arm: every seat rides its "
+                         "installed genome byte-identical (no author "
+                         "calls, consent only) — the parity meter's "
+                         "clean read; token-free")
     ap.add_argument("--succession-season", default="spring",
                     metavar="SEASON",
                     help="season-gated succession: successors wait to be "
@@ -726,11 +731,12 @@ def main(argv=None) -> int:
     # journal just said "model failure". Probe every remote model
     # before the world exists: a non-rate-limit 4xx refuses the start
     # outright, a busy endpoint backs off until the budget runs out.
-    _liveness_gate(zip(names, models, model_names))
+    if not args.frozen:                     # frozen seats make no calls:
+        _liveness_gate(zip(names, models, model_names))  # no liveness to gate
 
     dynasties = [
         Dynasty(user_id=f"u-{slug(name)}", name=name,
-                model_name=mn, token="")
+                model_name=mn, token="", frozen=args.frozen)
         for name, mn in zip(names, model_names)
     ]
 
