@@ -4,7 +4,8 @@ import pytest
 
 from experiments.world import stone_age
 from experiments.world.assay import (
-    ASSAY_DAYS, SEATS, assay_genome, fitness, run_assay)
+    ASSAY_DAYS, SEATS, assay_genome, fitness, run_assay,
+    run_winter_birth)
 
 STARTER = stone_age._gate_pack_script(stone_age.STARTER)
 
@@ -103,3 +104,24 @@ def test_assay_many_runs_the_pool_in_order():
     assert [r.genome_sha for r in out] == [r.genome_sha for r in out]
     assert out[0].days == 1 and out[0].mean_alive_days == 1.0
     assert out[2].mean_alive_days < 1.0           # the broken one scores 0
+
+
+# -- the winter-birth assay (the deconfound instrument) ---------------------
+
+def test_winter_birth_naked_dies_the_wood_buffer_survives():
+    """Run-80 read #3's deconfound, pinned: a naked winter birth dies
+    the FATIGUE winter-birth kill in ~2 days; a ~10-wood buffer (the
+    fuel, not the tools) carries the same genome through the window —
+    the live heirs' measured law, reproducible on demand."""
+    naked = run_winter_birth(STARTER, endowment=None, at_day=22,
+                             days_after=4)
+    assert all(s.death_condition == "FATIGUE" for s in naked.seats)
+    assert all(s.alive_ticks / 24 < 3 for s in naked.seats)
+
+    wood = run_winter_birth(STARTER, endowment={"WOOD": 9.74},
+                            at_day=22, days_after=4)
+    # the buffer strictly extends survival (the 6/6-with-wood law was
+    # measured on the trainer's champion, whose winter fire discipline
+    # converts ~10 wood into a bridged winter tail; the weaker starter
+    # converts it partially — the buffer helps, the genome decides)
+    assert wood.mean_alive_days > naked.mean_alive_days + 1.0
