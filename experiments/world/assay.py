@@ -99,6 +99,69 @@ class AssayResult:
         return sum(s.script_errors for s in self.seats)
 
 
+def run_winter_birth(genome_src: str, *, endowment: dict | None = None,
+                     at_day: int = 22, days_after: int = 6) -> AssayResult:
+    """The winter-birth assay (the deconfound instrument, run-80 read
+    #3): the world runs WITHOUT candidate houses until deep winter,
+    then the candidate is BORN (make_house + genome + optional
+    endowment) — the live succession's exact shape (founder seat +
+    escrow delivery). Measures how many days a genome + capital shape
+    survives a winter birth; the arms isolate the lever (naked seat /
+    +wood buffer / +axe / +axe+wood). Zero tokens, trainer-side."""
+    from decimal import Decimal as _D
+    from .stone_age import make_house
+    sha = _sha16(genome_src)
+    result = AssayResult(genome_sha=sha, days=days_after)
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        create_content(session)
+        birth = (at_day - 1) * 24 + 1
+        seats = []
+        for tick_no in range(1, (at_day - 1) * 24 + days_after * 24 + 1):
+            if (tick_no - 1) % 24 == 0:
+                spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
+            if tick_no == birth:
+                for i in range(SEATS):
+                    house = make_house(session, f"House {i + 1}")
+                    house.owner_id = "u-assay"
+                    session.flush()
+                    row = SeatRow(seat=i)
+                    try:
+                        services.set_entity_behaviour(
+                            session, house, genome_src, owner_id="u-assay")
+                    except Exception as exc:
+                        row.installed = False
+                        row.refusal = str(exc)[:300]
+                    from econengine.markets import adjust_holding
+                    for sym, qty in (endowment or {}).items():
+                        adjust_holding(session, house, sym, _D(str(qty)))
+                    seats.append((house.id, row))
+                    result.seats.append(row)
+                session.commit()
+            tick = tick_mod.run_tick(session)
+            session.commit()
+            born = tick_no >= birth
+            counting = False
+            for hid, row in seats:
+                alive = (row.installed
+                         and session.get(Entity, hid).status == EntityStatus.ACTIVE)
+                if born and alive:
+                    counting = True
+                    row.alive_ticks += 1
+                if born and not alive and row.death_tick is None:
+                    for e in tick.events or []:
+                        if (e.get("entity_id") == hid
+                                and e.get("type") == "entity_incapacitated"):
+                            row.death_tick = tick_no
+                            row.death_condition = e.get("condition")
+            if born and not counting:
+                result.ended_tick = tick_no
+                break
+    return result
+
+
 def _sha16(source: str) -> str:
     import hashlib
     return hashlib.sha256(source.encode()).hexdigest()[:16]
