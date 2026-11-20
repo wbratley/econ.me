@@ -335,7 +335,9 @@ class Lineage:
              rng: random.Random, llm=None, llm_stall: int = 1,
              workers: int = 0, epsilon: float = EPSILON_TURNOVER,
              jitter: int = WINDOW_JITTER_DAYS, block_op=None,
-             block_share: float = BLOCK_OP_SHARE) -> dict:
+             block_share: float = BLOCK_OP_SHARE,
+             bequest_select: bool = False, gen1_floor: float = 18.0,
+             heir_days: int = 6) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
         becomes the new champion — but the belt moves only on signal: a
@@ -392,6 +394,36 @@ class Lineage:
         # re-assay by MORE than epsilon (signal, not lottery — the
         # champion re-proved itself in this very assay). Among eligible
         # children: alive days, then fewer errors, then sha.
+        # Tier-4 selection (stage 2): the fitness read becomes the
+        # two-generation bequest with the gen-1 floor — a candidate
+        # that games the metric by dying young to feed its heir is
+        # ineligible (the floor is the champion-class gen-1 bar).
+        if bequest_select:
+            from experiments.world.assay import run_bequest
+
+            def _bequest_fit(src):
+                rows = [run_bequest(src, days=days, heir_days=heir_days)
+                        for _ in range(2)]
+                seats = [x for r in rows for x in r["seats"]
+                         if x["heir_days"] is not None and x["gen1_days"] > 0]
+                if not seats:
+                    return None
+                g1 = sum(x["gen1_days"] for x in seats) / len(seats)
+                b = sum(x["bequest_days"] for x in seats) / len(seats)
+                if g1 < gen1_floor:
+                    return None             # the gaming guard
+                return {"mean_alive_days": b, "gen1_days": g1,
+                        "script_errors": 0, "deaths": {},
+                        "installed": len(seats), "shelter": 0, "skin": 0}
+            bequest_rows_fit = []
+            for tag, src, _fit in rows:
+                bf = _bequest_fit(src)
+                bequest_rows_fit.append((tag, src, bf if bf else {
+                    "mean_alive_days": -1.0, "gen1_days": 0.0,
+                    "script_errors": 0, "deaths": {}, "installed": 0,
+                    "shelter": 0, "skin": 0}))
+            rows = bequest_rows_fit
+
         # Block-aware epsilon (valley crossing): a FRESH INSERT arrives
         # untuned (library-default constants) — within-epsilon of the
         # parent it takes the belt over a param-only child, so param
@@ -609,6 +641,23 @@ def main(argv=None) -> int:
                          "window, and this reads it in the digest before a "
                          "live run does. Not selection: a census probe.")
     ap.add_argument("--probe-replicates", type=int, default=2)
+    ap.add_argument("--bequest-select", action="store_true",
+                    help="tier-4 PROMOTION (stage 2): selection metric "
+                         "becomes bequest_days (two-generation fitness) "
+                         "with the gen-1 floor armed (--gen1-floor); "
+                         "tier-3 stays the regression gate")
+    ap.add_argument("--gen1-floor", type=float, default=18.0,
+                    help="the champion-class gen-1 floor (bequest "
+                         "selection): candidates whose gen-1 mean falls "
+                         "below it are not eligible — the gaming guard")
+    ap.add_argument("--bequest-probe", type=int, default=0, metavar="DAYS",
+                    help="tier-4 census-not-selection (stage 1): each "
+                         "generation, every lineage champion runs the "
+                         "two-generation bequest assay (heir window "
+                         "DAYS) — rows in the report; selection stays "
+                         "tier-3. Watches (pre-registered): spread, "
+                         "gen1:heir gaming ratio, STOCKPILE adoption + "
+                         "fuel share")
     ap.add_argument("--out", type=Path, default=Path("trainer-run"))
     args = ap.parse_args(argv)
 
@@ -644,6 +693,7 @@ def main(argv=None) -> int:
           f"{args.replicates} replicate worlds x {args.days} days")
 
     report = []
+    bequest_rows: list[dict] = []
     for g in range(args.generations):
         for lin in lineages:
             row = lin.step(mutants=args.mutants,
@@ -653,7 +703,10 @@ def main(argv=None) -> int:
                            jitter=0 if args.no_jitter
                            else WINDOW_JITTER_DAYS,
                            block_op=block_op,
-                           block_share=args.block_ops)
+                           block_share=args.block_ops,
+                           bequest_select=args.bequest_select,
+                           gen1_floor=args.gen1_floor,
+                           heir_days=args.bequest_probe or 6)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
                     f" deaths={winter['deaths']}" if winter else "")
@@ -665,7 +718,39 @@ def main(argv=None) -> int:
             report.append(row)
         rad = radiation(lineages)
         print(f"  radiation: {rad}")
+        if args.bequest_probe:
+            from experiments.world.assay import run_bequest
+            for lin in lineages:
+                row = run_bequest(lin.champion_src, days=args.days,
+                                  heir_days=args.bequest_probe)
+                seats = [x for x in row["seats"]
+                         if x["heir_days"] is not None]
+                if seats:
+                    b = sum(x["bequest_days"] for x in seats) / len(seats)
+                    g1 = sum(x["gen1_days"] for x in seats) / len(seats)
+                    hd = sum(x["heir_days"] for x in seats) / len(seats)
+                    fs = sum(x["fuel_share"] for x in seats) / len(seats)
+                    st = sum(1 for x in seats if x["stockpile"])
+                else:
+                    b = g1 = hd = fs = 0.0
+                    st = 0
+                bequest_rows.append({
+                    "lineage": lin.name, "generation": lin.generation,
+                    "bequest_days": round(b, 2), "gen1_days": round(g1, 2),
+                    "heir_days": round(hd, 2),
+                    "gen1_heir_ratio": round(g1 / hd, 2) if hd else None,
+                    "fuel_share": round(fs, 3), "stockpile_seats": st,
+                })
+                last = bequest_rows[-1]
+                print(f"  bequest[{lin.name}] gen{lin.generation}: "
+                      f"bequest={last['bequest_days']:.2f} "
+                      f"(gen1 {last['gen1_days']:.2f} + heir "
+                      f"{last['heir_days']:.2f}) fuel_share="
+                      f"{last['fuel_share']} stockpile={st}/"
+                      f"{len(seats) or 1}")
     summary = {"report": report, "radiation": radiation(lineages)}
+    if args.bequest_probe:
+        summary["bequest"] = bequest_rows
     if block_op is not None:
         adoption: dict[str, list[str]] = {}
         for lin in lineages:
