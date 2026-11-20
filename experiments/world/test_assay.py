@@ -125,3 +125,19 @@ def test_winter_birth_naked_dies_the_wood_buffer_survives():
     # converts ~10 wood into a bridged winter tail; the weaker starter
     # converts it partially — the buffer helps, the genome decides)
     assert wood.mean_alive_days > naked.mean_alive_days + 1.0
+
+
+# -- the bequest assay (tier 4): fitness is what you leave ---------------
+
+def test_the_bequest_assay_measures_two_generations():
+    """Phase 1 runs the genome to death under the pack's escrow policy
+    (seats own separate escrows); phase 2 delivers each estate to a
+    fresh heir born at the first death and measures its survival. The
+    rows must be honest arithmetic: bequest == gen1 + heir."""
+    from experiments.world.assay import run_bequest
+    out = run_bequest(STARTER, days=10, heir_days=2)
+    assert out["seats"] and len(out["seats"]) == SEATS
+    for s in out["seats"]:
+        assert s["gen1_days"] >= 0 and s["heir_days"] is not None
+        assert abs(s["bequest_days"]
+                   - (s["gen1_days"] + s["heir_days"])) < 0.01
