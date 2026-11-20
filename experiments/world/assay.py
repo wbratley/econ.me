@@ -162,6 +162,14 @@ def run_winter_birth(genome_src: str, *, endowment: dict | None = None,
     return result
 
 
+def _genome_has_block(src: str, name: str) -> bool:
+    try:
+        from experiments.agent.blocklib import parse_blocks
+        return any(b.name == name for b in parse_blocks(src))
+    except Exception:
+        return False
+
+
 def run_bequest(genome_src: str, *, days: int = 24,
                 heir_days: int = 6) -> dict:
     """The bequest assay (tier 4, the fuel law's curriculum): fitness
@@ -197,75 +205,88 @@ def run_bequest(genome_src: str, *, days: int = 24,
             owners.append((house.id, house.owner_id, ok))
         session.commit()
 
-        # phase 1: to the death (early-exit when every counting seat
-        # is dead — the estate pass escrows each into its owner's pot)
-        first_death_tick = None
-        for tick_no in range(1, days * 24 + 1):
+        # phase 1 + 2 fused: per-line succession. The world ticks
+        # once; the tick a gen-1 seat dies, its line's heir is BORN
+        # (make_house + genome + escrow delivery — the live rule: each
+        # heir at its own line's funeral, never overlapping a living
+        # parent), and the heir's window closes heir_days after its
+        # birth. Early exit: every line resolved (gen-1 dead AND its
+        # heir dead), or the horizon.
+        heirs: dict[str, dict] = {}
+
+        def _birth_heir(owner, tick_no):
+            heir = make_house(session, f"Heir {owner[-1]}")
+            heir.owner_id = owner
+            session.flush()
+            installed = True
+            try:
+                services.set_entity_behaviour(
+                    session, heir, genome_src, owner_id=owner)
+            except Exception:
+                installed = False
+            summary = services.deliver_escrow(session, heir)
+            session.commit()
+            heirs[owner] = {"id": heir.id, "installed": installed,
+                            "born": tick_no, "summary": summary,
+                            "died": None}
+
+        horizon = days * 24 + heir_days * 24
+        last_tick = 0
+        for tick_no in range(1, horizon + 1):
             if (tick_no - 1) % 24 == 0:
                 spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
             tick = tick_mod.run_tick(session)
             session.commit()
-            alive_any = False
+            last_tick = tick_no
+            resolved = True
             for hid, owner, ok in owners:
                 ent = session.get(Entity, hid)
                 if ok and ent.status == EntityStatus.ACTIVE:
-                    alive_any = True
-                elif ok and ent.status == EntityStatus.INCAPACITATED:
-                    if first_death_tick is None:
-                        first_death_tick = tick_no
-            if not alive_any:
+                    resolved = False            # a gen-1 still living
+                elif ok and ent.incapacitated_tick == tick_no:
+                    _birth_heir(owner, tick_no)  # the funeral birth
+            for owner, row in heirs.items():
+                if row["died"] is None:
+                    ent2 = session.get(Entity, row["id"])
+                    if row["installed"] and ent2.status \
+                            == EntityStatus.ACTIVE \
+                            and tick_no < row["born"] + heir_days * 24:
+                        resolved = False        # an heir in its window
+                    elif ent2.incapacitated_tick:
+                        row["died"] = ent2.incapacitated_tick
+            if resolved and len(heirs) == sum(
+                    1 for _hid, _o, ok in owners if ok):
                 break
 
-        # phase 2: the heirs — born the tick after the first death
-        # (the world's worst case, the succession's reality), each
-        # taking delivery of its line's escrow
-        if first_death_tick is None:
-            for hid, owner, ok in owners:
-                ent = session.get(Entity, hid)
-                out["seats"].append({
-                    "gen1_days": (tick_no and min(tick_no, days * 24) or 0) / 24
-                    if ok else 0.0,
-                    "heir_days": None, "bequest_days": None})
-            return out
-        heirs = []
-        for i, (hid, owner, ok) in enumerate(owners):
-            heir = make_house(session, f"Heir {i + 1}")
-            heir.owner_id = owner
-            session.flush()
-            try:
-                services.set_entity_behaviour(
-                    session, heir, genome_src, owner_id=owner)
-                installed = True
-            except Exception:
-                installed = False
-            summary = services.deliver_escrow(session, heir)
-            heirs.append((heir.id, owner, installed))
-        session.commit()
-        for tick_no2 in range(first_death_tick + 1,
-                              first_death_tick + 1 + heir_days * 24):
-            if (tick_no2 - 1) % 24 == 0:
-                spawns.apply_on_round(session, (tick_no2 - 1) // 24 + 1)
-            tick = tick_mod.run_tick(session)
-            session.commit()
-            alive_any = False
-            for hid2, owner2, ok2 in heirs:
-                if ok2 and session.get(Entity, hid2).status \
-                        == EntityStatus.ACTIVE:
-                    alive_any = True
-            if not alive_any:
-                break
-        for i, ((hid, owner, ok), (hid2, owner2, ok2)) in enumerate(
-                zip(owners, heirs)):
+        for hid, owner, ok in owners:
             ent1 = session.get(Entity, hid)
-            g1 = (ent1.incapacitated_tick or tick_no) / 24 if ok else 0.0
-            ent2 = session.get(Entity, hid2)
-            h = ((ent2.incapacitated_tick - first_death_tick) / 24
-                 if ok2 and ent2.incapacitated_tick else
-                 (min(tick_no2, first_death_tick + heir_days * 24)
-                  - first_death_tick) / 24 if ok2 else 0.0)
+            g1 = (ent1.incapacitated_tick or min(last_tick, days * 24)) / 24 \
+                if ok else 0.0
+            row = heirs.get(owner)
+            if row is None:
+                out["seats"].append({
+                    "gen1_days": round(g1, 2), "heir_days": None,
+                    "bequest_days": None, "fuel_share": 0.0,
+                    "stockpile": _genome_has_block(
+                        genome_src, "winter.stockpile")})
+                continue
+            summary = row["summary"]
+            goods = (summary or {}).get("goods_delivered") or {}
+            fuel = _D(str(goods.get("WOOD", "0")))
+            goods_total = sum((_D(str(v)) for v in goods.values()), _D("0"))
+            if row["died"] is not None:
+                h = (row["died"] - row["born"]) / 24
+            else:
+                h = (min(last_tick, row["born"] + heir_days * 24)
+                     - row["born"]) / 24
             out["seats"].append({
                 "gen1_days": round(g1, 2), "heir_days": round(h, 2),
-                "bequest_days": round(g1 + h, 2)})
+                "bequest_days": round(g1 + h, 2),
+                "fuel_share": round(float(fuel / goods_total), 3)
+                if goods_total > 0 else 0.0,
+                "stockpile": _genome_has_block(
+                    genome_src, "winter.stockpile"),
+            })
     return out
 
 
