@@ -162,6 +162,113 @@ def run_winter_birth(genome_src: str, *, endowment: dict | None = None,
     return result
 
 
+def run_bequest(genome_src: str, *, days: int = 24,
+                heir_days: int = 6) -> dict:
+    """The bequest assay (tier 4, the fuel law's curriculum): fitness
+    is what you LEAVE. Phase 1 runs the genome to its death under the
+    pack's escrow policy — each seat its OWN owner, so estates stay
+    separate. Phase 2 delivers each escrow to a fresh heir born at the
+    first seat's death-season (the live succession's shape) and
+    measures the heir's survival. Returns per-seat
+    {gen1_days, heir_days, bequest_days} — the generational thesis's
+    metric, assay-side, zero tokens."""
+    from decimal import Decimal as _D
+    from econengine.models import EstateEscrow
+    from .stone_age import make_house
+    from econengine.markets import adjust_holding
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    out = {"genome_sha": _sha16(genome_src), "seats": []}
+    with Session(engine) as session:
+        create_content(session)
+        owners, rows = [], []
+        for i in range(SEATS):
+            house = make_house(session, f"House {i + 1}")
+            house.owner_id = f"u-assay-{i}"    # separate escrows
+            session.flush()
+            ok = True
+            try:
+                services.set_entity_behaviour(
+                    session, house, genome_src, owner_id=house.owner_id)
+            except Exception:
+                ok = False
+            owners.append((house.id, house.owner_id, ok))
+        session.commit()
+
+        # phase 1: to the death (early-exit when every counting seat
+        # is dead — the estate pass escrows each into its owner's pot)
+        first_death_tick = None
+        for tick_no in range(1, days * 24 + 1):
+            if (tick_no - 1) % 24 == 0:
+                spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
+            tick = tick_mod.run_tick(session)
+            session.commit()
+            alive_any = False
+            for hid, owner, ok in owners:
+                ent = session.get(Entity, hid)
+                if ok and ent.status == EntityStatus.ACTIVE:
+                    alive_any = True
+                elif ok and ent.status == EntityStatus.INCAPACITATED:
+                    if first_death_tick is None:
+                        first_death_tick = tick_no
+            if not alive_any:
+                break
+
+        # phase 2: the heirs — born the tick after the first death
+        # (the world's worst case, the succession's reality), each
+        # taking delivery of its line's escrow
+        if first_death_tick is None:
+            for hid, owner, ok in owners:
+                ent = session.get(Entity, hid)
+                out["seats"].append({
+                    "gen1_days": (tick_no and min(tick_no, days * 24) or 0) / 24
+                    if ok else 0.0,
+                    "heir_days": None, "bequest_days": None})
+            return out
+        heirs = []
+        for i, (hid, owner, ok) in enumerate(owners):
+            heir = make_house(session, f"Heir {i + 1}")
+            heir.owner_id = owner
+            session.flush()
+            try:
+                services.set_entity_behaviour(
+                    session, heir, genome_src, owner_id=owner)
+                installed = True
+            except Exception:
+                installed = False
+            summary = services.deliver_escrow(session, heir)
+            heirs.append((heir.id, owner, installed))
+        session.commit()
+        for tick_no2 in range(first_death_tick + 1,
+                              first_death_tick + 1 + heir_days * 24):
+            if (tick_no2 - 1) % 24 == 0:
+                spawns.apply_on_round(session, (tick_no2 - 1) // 24 + 1)
+            tick = tick_mod.run_tick(session)
+            session.commit()
+            alive_any = False
+            for hid2, owner2, ok2 in heirs:
+                if ok2 and session.get(Entity, hid2).status \
+                        == EntityStatus.ACTIVE:
+                    alive_any = True
+            if not alive_any:
+                break
+        for i, ((hid, owner, ok), (hid2, owner2, ok2)) in enumerate(
+                zip(owners, heirs)):
+            ent1 = session.get(Entity, hid)
+            g1 = (ent1.incapacitated_tick or tick_no) / 24 if ok else 0.0
+            ent2 = session.get(Entity, hid2)
+            h = ((ent2.incapacitated_tick - first_death_tick) / 24
+                 if ok2 and ent2.incapacitated_tick else
+                 (min(tick_no2, first_death_tick + heir_days * 24)
+                  - first_death_tick) / 24 if ok2 else 0.0)
+            out["seats"].append({
+                "gen1_days": round(g1, 2), "heir_days": round(h, 2),
+                "bequest_days": round(g1 + h, 2)})
+    return out
+
+
 def _sha16(source: str) -> str:
     import hashlib
     return hashlib.sha256(source.encode()).hexdigest()[:16]
