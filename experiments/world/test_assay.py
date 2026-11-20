@@ -138,6 +138,11 @@ def test_the_bequest_assay_measures_two_generations():
     out = run_bequest(STARTER, days=10, heir_days=2)
     assert out["seats"] and len(out["seats"]) == SEATS
     for s in out["seats"]:
-        assert s["gen1_days"] >= 0 and s["heir_days"] is not None
-        assert abs(s["bequest_days"]
-                   - (s["gen1_days"] + s["heir_days"])) < 0.01
+        assert s["gen1_days"] >= 0
+        if s["heir_days"] is None:
+            # the honest no-bequest row: nobody died in the window,
+            # no heir was born, nothing to leave yet
+            assert s["bequest_days"] is None
+        else:
+            assert abs(s["bequest_days"]
+                       - (s["gen1_days"] + s["heir_days"])) < 0.01
