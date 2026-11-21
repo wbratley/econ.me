@@ -216,7 +216,7 @@ def test_the_probe_reads_champions_past_the_window(tmp_path):
     rc = main(["--lineages", "1", "--generations", "1", "--mutants", "0",
                "--replicates", "1", "--days", "1", "--probe-days", "2",
                "--probe-replicates", "1", "--out", str(tmp_path),
-               "--workers", "0"])
+               "--workers", "0", "--block-ops", "0"])
     assert rc == 0
     report = json.loads((tmp_path / "report.json").read_text())
     assert "probe" in report and "line-1" in report["probe"]
@@ -338,3 +338,17 @@ def test_fresh_inserts_cross_the_valley(tmp_path):
     # with a fat epsilon a fresh insert within it may take the belt;
     # the report row records which tag won
     assert row["best"].startswith(("champion", "param", "block-"))
+
+
+def test_missing_library_fails_loudly(tmp_path, monkeypatch):
+    """The run-85 near-miss, made impossible: a --library dir that
+    doesn't exist is an ERROR unless --seed-library says 'I mean to
+    create one' — never a silent fresh seed."""
+    import pytest as _pytest
+    from experiments.agent.trainer import main
+    with _pytest.raises(SystemExit) as exc:
+        main(["--lineages", "1", "--generations", "1", "--mutants", "0",
+              "--replicates", "1", "--days", "1",
+              "--library", str(tmp_path / "nope"), "--workers", "0",
+              "--out", str(tmp_path / "o")])
+    assert "refusing to silently seed" in str(exc.value)

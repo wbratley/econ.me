@@ -258,6 +258,24 @@ class Library:
     def keys(self) -> list[str]:
         return sorted(self.index)
 
+    def fingerprint(self) -> str:
+        """A stable content hash of the whole library — sorted (key,
+        provenance, slot, source) pairs. The version a run used: pinned
+        at launch, printed, archived, and carried in the report (the
+        pack-manifest doctrine, one level up: the library is the
+        accumulated gene pool, and 'which library produced this
+        genome' must be answerable without archaeology)."""
+        import hashlib
+        h = hashlib.sha256()
+        for key in sorted(self.index):
+            v = self.index[key]
+            src = self.root.joinpath(f"{key}.lua").read_text()
+            h.update(key.encode())
+            h.update(str(v.get("provenance", "")).encode())
+            h.update(str(v.get("slot", "")).encode())
+            h.update(src.encode())
+        return h.hexdigest()[:16]
+
 
 # ---------------------------------------------------------------------------
 # The composition ops (the trainer's structural children)

@@ -604,8 +604,15 @@ def main(argv=None) -> int:
     ap.add_argument("--no-jitter", action="store_true",
                     help="disable per-generation window jitter")
     ap.add_argument("--library", type=Path, default=None, metavar="DIR",
-                    help="the block library dir (default: seeded into "
-                         "<out>/library on first run)")
+                    help="the block library dir — the gene pool. Pinned "
+                         "and fingerprinted at launch (the pack-manifest "
+                         "doctrine): a run reports WHICH library version "
+                         "produced its genomes")
+    ap.add_argument("--seed-library", action="store_true",
+                    help="explicitly CREATE the library at --library "
+                         "(fail-loudly doctrine: without this flag a "
+                         "missing library dir is an error, never a "
+                         "silent fresh seed — the run-85 near-miss)")
     ap.add_argument("--block-ops", type=float, default=BLOCK_OP_SHARE,
                     help="structural children's share of the mutation "
                          "budget (param gets the rest)")
@@ -664,15 +671,27 @@ def main(argv=None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
     block_op = None
+    library_sha = None
     if args.block_ops > 0:
         from .seed_library import seed, seed_alleles_from
         lib_dir = args.library or (args.out / "library")
         if not (lib_dir / "index.json").exists():
+            if not args.seed_library:
+                raise SystemExit(
+                    f"library {lib_dir} does not exist — refusing to "
+                    f"silently seed fresh (which library produced "
+                    f"this genome must never be archaeology). Pass "
+                    f"--seed-library to create it, or point --library "
+                    f"at the versioned home")
             seed(lib_dir)
             if args.allele_from:
                 seed_alleles_from(lib_dir, args.allele_from)
-            print(f"library: seeded {lib_dir}")
-        block_op = BlockOperator(Library(lib_dir))
+            print(f"library: SEEDED {lib_dir} (explicit --seed-library)")
+        lib = Library(lib_dir)
+        library_sha = lib.fingerprint()
+        print(f"library: pinned {lib_dir} fingerprint={library_sha} "
+              f"({len(lib.keys())} blocks)")
+        block_op = BlockOperator(lib)
     llm = None
     if args.llm:
         from .replay_prompt import build_model as build_llm_model
@@ -749,6 +768,8 @@ def main(argv=None) -> int:
                       f"{last['fuel_share']} stockpile={st}/"
                       f"{len(seats) or 1}")
     summary = {"report": report, "radiation": radiation(lineages)}
+    if library_sha is not None:
+        summary["library_sha"] = library_sha
     if args.bequest_probe:
         summary["bequest"] = bequest_rows
     if block_op is not None:

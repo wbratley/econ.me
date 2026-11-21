@@ -147,3 +147,17 @@ def test_compose_ops_never_stack_spans(tmp_path):
 
     gone = remove_block(stacked, "winter.ration")    # ALL spans
     assert "winter.ration" not in [b.name for b in parse_blocks(gone)]
+
+
+def test_library_fingerprint_is_content_stable(tmp_path):
+    """The versioned-artifact doctrine: the fingerprint covers key,
+    provenance, slot, and source — same content, same hash; any edit
+    moves it."""
+    lib = seed(tmp_path / "lib")
+    fp1 = lib.fingerprint()
+    lib2 = Library(tmp_path / "lib")
+    assert lib2.fingerprint() == fp1            # reload: stable
+    blk = lib.get("market")
+    blk.provenance = "edited"
+    lib.add(blk, allele="x")                    # new content
+    assert lib.fingerprint() != fp1

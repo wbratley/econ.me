@@ -213,6 +213,7 @@ def run_bequest(genome_src: str, *, days: int = 24,
         # birth. Early exit: every line resolved (gen-1 dead AND its
         # heir dead), or the horizon.
         heirs: dict[str, dict] = {}
+        flow = {owner: {"wood_in": _D("0"), "stokes": 0} for _h, owner, _ok in owners}
 
         def _birth_heir(owner, tick_no):
             heir = make_house(session, f"Heir {owner[-1]}")
@@ -238,6 +239,30 @@ def run_bequest(genome_src: str, *, days: int = 24,
             tick = tick_mod.run_tick(session)
             session.commit()
             last_tick = tick_no
+            for e in tick.events or []:
+                if e.get("type") != "process_completed":
+                    continue
+                nm2 = db_name(session, e.get("entity_id")) if False else None
+                for _h, owner, _ok in owners:
+                    pass
+            # wood flow: outputs into the estate's owners' hands
+            for e in tick.events or []:
+                if e.get("type") == "process_completed":
+                    eid = e.get("entity_id")
+                    owner_of = {h: o for h, o, _k in owners}.get(eid)
+                    if owner_of is None:
+                        continue
+                    for sym, qty in (e.get("outputs") or {}).items():
+                        if sym == "WOOD":
+                            flow[owner_of]["wood_in"] += _D(str(qty))
+                    if e.get("recipe") == "STOKE_FIRE":
+                        flow[owner_of]["stokes"] += 1
+                elif e.get("type") == "trade":
+                    eid = e.get("entity_id")
+                    owner_of = {h: o for h, o, _k in owners}.get(eid)
+                    if owner_of is not None and e.get("symbol") == "WOOD" \
+                            and e.get("side") == "buy":
+                        flow[owner_of]["wood_in"] += _D(str(e.get("quantity", "0")))
             resolved = True
             for hid, owner, ok in owners:
                 ent = session.get(Entity, hid)
@@ -279,11 +304,22 @@ def run_bequest(genome_src: str, *, days: int = 24,
             else:
                 h = (min(last_tick, row["born"] + heir_days * 24)
                      - row["born"]) / 24
+            # the gather-vs-bank fork's diagnostic: wood IN (gathered,
+            # chopped, bought), wood BURNED (stokes), wood BANKED (the
+            # estate's WOOD at delivery). Flat fuel-share + a present
+            # reserve = defaults too small (param patch); flat + no
+            # reserve = no withholding rule (winter.stockpile.v2 needs
+            # a bank line — structural).
+            st_wd = _D("0.6") * flow[owner]["stokes"]  # ~0.6 wood/stoke
             out["seats"].append({
                 "gen1_days": round(g1, 2), "heir_days": round(h, 2),
                 "bequest_days": round(g1 + h, 2),
                 "fuel_share": round(float(fuel / goods_total), 3)
                 if goods_total > 0 else 0.0,
+                "wood_in": round(float(flow[owner]["wood_in"]), 1),
+                "stokes": flow[owner]["stokes"],
+                "wood_burned_est": round(float(st_wd), 1),
+                "wood_banked": round(float(fuel), 1),
                 "stockpile": _genome_has_block(
                     genome_src, "winter.stockpile"),
             })
