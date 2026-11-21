@@ -336,7 +336,6 @@ class Lineage:
              workers: int = 0, epsilon: float = EPSILON_TURNOVER,
              jitter: int = WINDOW_JITTER_DAYS, block_op=None,
              block_share: float = BLOCK_OP_SHARE,
-             bequest_select: bool = False, gen1_floor: float = 18.0,
              heir_days: int = 6) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
@@ -394,36 +393,6 @@ class Lineage:
         # re-assay by MORE than epsilon (signal, not lottery — the
         # champion re-proved itself in this very assay). Among eligible
         # children: alive days, then fewer errors, then sha.
-        # Tier-4 selection (stage 2): the fitness read becomes the
-        # two-generation bequest with the gen-1 floor — a candidate
-        # that games the metric by dying young to feed its heir is
-        # ineligible (the floor is the champion-class gen-1 bar).
-        if bequest_select:
-            from experiments.world.assay import run_bequest
-
-            def _bequest_fit(src):
-                rows = [run_bequest(src, days=days, heir_days=heir_days)
-                        for _ in range(2)]
-                seats = [x for r in rows for x in r["seats"]
-                         if x["heir_days"] is not None and x["gen1_days"] > 0]
-                if not seats:
-                    return None
-                g1 = sum(x["gen1_days"] for x in seats) / len(seats)
-                b = sum(x["bequest_days"] for x in seats) / len(seats)
-                if g1 < gen1_floor:
-                    return None             # the gaming guard
-                return {"mean_alive_days": b, "gen1_days": g1,
-                        "script_errors": 0, "deaths": {},
-                        "installed": len(seats), "shelter": 0, "skin": 0}
-            bequest_rows_fit = []
-            for tag, src, _fit in rows:
-                bf = _bequest_fit(src)
-                bequest_rows_fit.append((tag, src, bf if bf else {
-                    "mean_alive_days": -1.0, "gen1_days": 0.0,
-                    "script_errors": 0, "deaths": {}, "installed": 0,
-                    "shelter": 0, "skin": 0}))
-            rows = bequest_rows_fit
-
         # Block-aware epsilon (valley crossing): a FRESH INSERT arrives
         # untuned (library-default constants) — within-epsilon of the
         # parent it takes the belt over a param-only child, so param
@@ -649,14 +618,14 @@ def main(argv=None) -> int:
                          "live run does. Not selection: a census probe.")
     ap.add_argument("--probe-replicates", type=int, default=2)
     ap.add_argument("--bequest-select", action="store_true",
-                    help="tier-4 PROMOTION (stage 2): selection metric "
-                         "becomes bequest_days (two-generation fitness) "
-                         "with the gen-1 floor armed (--gen1-floor); "
-                         "tier-3 stays the regression gate")
-    ap.add_argument("--gen1-floor", type=float, default=18.0,
-                    help="the champion-class gen-1 floor (bequest "
-                         "selection): candidates whose gen-1 mean falls "
-                         "below it are not eligible — the gaming guard")
+                    help="DEPRECATED (spec §DOCTRINE, post run-85): "
+                         "bequest_days is plumbing diagnostics, not the "
+                         "goal — structurally forced, not strategically "
+                         "emergent (the streetlight effect). The flag "
+                         "now refuses; selection stays survival + "
+                         "surplus (tier-3). The bequest assay, flow "
+                         "columns, and fuel_share remain census "
+                         "instruments via --bequest-probe")
     ap.add_argument("--bequest-probe", type=int, default=0, metavar="DAYS",
                     help="tier-4 census-not-selection (stage 1): each "
                          "generation, every lineage champion runs the "
@@ -670,6 +639,12 @@ def main(argv=None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
+    if args.bequest_select:
+        raise SystemExit(
+            "--bequest-select is demoted (spec §DOCTRINE): bequest is "
+            "plumbing diagnostics, not the selection objective. "
+            "Survival + surplus (tier-3) is the active assay; use "
+            "--bequest-probe for the diagnostic rows.")
     block_op = None
     library_sha = None
     if args.block_ops > 0:
@@ -723,8 +698,6 @@ def main(argv=None) -> int:
                            else WINDOW_JITTER_DAYS,
                            block_op=block_op,
                            block_share=args.block_ops,
-                           bequest_select=args.bequest_select,
-                           gen1_floor=args.gen1_floor,
                            heir_days=args.bequest_probe or 6)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
