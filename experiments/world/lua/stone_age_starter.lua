@@ -440,6 +440,95 @@ if place == "POST" then
 end
 -- ===== END market =====
 
+-- ===== BLOCK juvenile | the family's child (aging+repro spec) | slot=survival =====
+--     Juvenility is a phase of the GENOME, not a mechanic: the child
+--     runs this same script, age-branched. A juvenile keeps the safe
+--     home half (eat, warm, sleep -- sections 0-1b above) and returns
+--     before the adult economy: no trips, no market, no hunt, no
+--     spawn. Hungry with an empty hand, it picks from the family
+--     shelf (the camp's shared drop, which the PARENT block fills --
+--     provisioning-while-alive, the behavior this world exists to
+--     select). Childhood is J days; at J the graduate runs the adult
+--     routine by falling through.
+local my_age = ctx.query.age(ctx.entity.id) or 0
+if my_age < 240 then
+  local shelf_food = std.holding_qty("BERRIES") + std.holding_qty("APPLES")
+                   + std.holding_qty("COOKED_MEAT") + std.holding_qty("JERKY")
+  if satiety < 4 and shelf_food < 1 then
+    ctx.action.facility_pickup("JERKY", "2")   -- the family shelf
+    ctx.action.facility_pickup("COOKED_MEAT", "2")
+  end
+  return                                        -- not yet the adult day
+end
+-- ===== END juvenile =====
+
+-- ===== BLOCK parent | provisioning the living (aging+repro spec) | slot=survival =====
+--     Parental investment, as a visible tunable behavior: once a day,
+--     an adult with living children tops the family shelf (the camp's
+--     shared drop) with food surplus above the house's own floor.
+--     This -- not the death-estate -- is the normal strategy: the
+--     estate is the residual; the shelf is the family.
+local my_kids = ctx.query.children(ctx.entity.id)
+if #my_kids > 0 and place == home
+   and (S.provision_day or 0) ~= std.day() then
+  S.provision_day = std.day()
+  local food_total = berries + apples + cooked + jerky
+  if food_total > 8 then
+    local surplus_food = math.floor(food_total - 8)
+    if cooked >= surplus_food then
+      ctx.action.facility_drop("COOKED_MEAT", std.amount_str(surplus_food))
+    elseif jerky >= surplus_food then
+      ctx.action.facility_drop("JERKY", std.amount_str(surplus_food))
+    elseif berries >= surplus_food then
+      ctx.action.facility_drop("BERRIES", std.amount_str(surplus_food))
+    end
+  end
+  if wood_held > 6 then
+    ctx.action.facility_drop("WOOD",
+                             std.amount_str(math.floor(wood_held - 6)))
+  end
+end
+-- ===== END parent =====
+
+-- ===== BLOCK spawn | the family's timing (aging+repro spec) | slot=provisioning =====
+--     The kill-box physics become play: the genome CHOOSES when to
+--     spawn, and spring births become a selected behavior. The gates
+--     are the spec's discipline: adult (past juvenility, with time to
+--     raise before the lifespan horizon), needs stable, a real surplus
+--     (the spawn's cost is the buffer it costs to raise), the season
+--     survivable for a newborn (SPRING, or summer's opening days --
+--     never autumn's turn, never winter: a winter birth dies in ~2
+--     days, measured runs 74/80/81), spacing (no child in 8 days),
+--     and a commons courtesy (few living children). The child runs
+--     this genome (the harness installs it at spawn), stamped with
+--     the same 48-day lifespan.
+local my_age = ctx.query.age(ctx.entity.id) or 0
+local my_span = ctx.query.lifespan(ctx.entity.id)
+-- commons courtesy: children ever born (the query returns all; the
+-- dead are counted too -- stricter spacing, simpler truth)
+local kids_alive = #ctx.query.children(ctx.entity.id)
+local shelf_food = tonumber(ctx.query.dropped("JERKY") or 0)
+                 + tonumber(ctx.query.dropped("COOKED_MEAT") or 0)
+                 + tonumber(ctx.query.dropped("BERRIES") or 0)
+if my_age >= 336                                  -- past J + a season
+   and (my_span == nil or my_age < my_span - 336) -- time to raise one
+   and satiety > 3 and warmth > 3
+   and (berries + apples + cooked + jerky + shelf_food) >= 5
+   and wood_held >= 3
+   and (S.last_spawn_day or -99) + 8 <= std.day()
+   and kids_alive < 3 then
+  local C = ctx.clock
+  if C and (C.season == "SPRING"
+            or (C.season == "SUMMER" and C.season_day <= 3)) then
+    S.last_spawn_day = std.day()
+    ctx.action.spawn_entity({ ctx.entity.id }, {
+      name = "Child of " .. ctx.entity.name,
+      lifespan = 1152,                            -- 48 days, stamped
+    })
+  end
+end
+-- ===== END spawn =====
+
 -- 3. Everything else is gathering at the thicket: food first, then wood
 --    for the fire (wolves or no wolves, a dark camp is the expensive
 --    one). Daylight only -- the dark refuses the work. Bigger loads

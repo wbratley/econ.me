@@ -3386,6 +3386,18 @@ def make_house(session: Session, name: str = "House") -> Entity:
     # The seat wakes at the hearth clearing (S4: "start"): fire-ground,
     # safe nights, and every walk out of the valley measured from here.
     places.move_entity(session, house, "HEARTH")
+    # The family frame (aging-repro spec): a mortal body -- the 48-day
+    # horizon makes old age the late killer after failure's ~21 days --
+    # and the SPAWN capability: reproduction is a house's act, gated
+    # by the genome's discipline (the block library's spawn block).
+    house.lifespan = 48 * 24
+    house.capabilities = list(house.capabilities or []) + ["spawn"]
+    # Founders are ADULTS at genesis: birth_tick -336 means age 336 at
+    # tick 1 -- past juvenility AND past the spawn gate's floor, so the
+    # age-branched genome reads "founder" as grown, and only children
+    # born mid-world run the juvenile phase (the 20d soak caught the
+    # regression: founders treated as day-0 babies starved by day 2).
+    house.birth_tick = -336
     return house
 
 
