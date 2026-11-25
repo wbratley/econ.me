@@ -146,3 +146,22 @@ def test_the_bequest_assay_measures_two_generations():
         else:
             assert abs(s["bequest_days"]
                        - (s["gen1_days"] + s["heir_days"])) < 0.01
+
+
+# -- the family tier (metric pre-registered in the spec) --------------
+
+def test_the_family_assay_measures_two_lives():
+    """One genome, two lives: parents run the candidate with the spawn
+    discipline; children (born mid-world) inherit it via the seam v1
+    and run it age-branched. The rows must carry the pinned metric's
+    parts: parent/child days, births, alive-at-end (the 10-day bonus
+    is applied in family_days)."""
+    from experiments.world.assay import run_family
+    out = run_family(STARTER, days=12)
+    assert out["seats"] and len(out["seats"]) == SEATS
+    for s in out["seats"]:
+        assert s["parent_days"] >= 0 and s["child_days"] >= 0
+        assert s["family_days"] == round(
+            s["parent_days"] + s["child_days"]
+            + (10 if s["alive_at_end"] else 0), 2)
+        assert s["spam_ratio"] is None or s["spam_ratio"] >= 0

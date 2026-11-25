@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from econengine import services, spawns, tick as tick_mod
@@ -326,6 +326,99 @@ def run_bequest(genome_src: str, *, days: int = 24,
     return out
 
 
+def run_family(genome_src: str, *, days: int = 40,
+               seats: int = SEATS) -> dict:
+    """The family tier (aging-repro spec, metric pre-registered and
+    pinned): one genome, two lives at once. Each seat is a PARENT
+    running the candidate genome with the family frame's spawn
+    discipline; children born mid-world inherit it (family.
+    install_family_genomes, the seam v1, post-tick) and run the same
+    source age-branched. The lineage's fitness:
+
+        family_days = (lineage alive at window end ? 10 : 0)
+                      + sum(alive-days across members)
+
+    Members = every entity under the seat's owner, all generations,
+    in-window. Guards (journaled before the first family run): the
+    parent floor (anti-r-selection: a parent that burns itself to
+    breed is ineligible -- the trainer applies it), and the spam
+    ratio (child_days : parent_days, the standing census watch).
+    Returns per-seat rows + the rollup; zero tokens."""
+    from . import family as _fam
+    sha = _sha16(genome_src)
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    out = {"genome_sha": sha, "days": days, "seats": []}
+    with Session(engine) as session:
+        create_content(session)
+        parents = []
+        for i in range(seats):
+            house = make_house(session, f"House {i + 1}")
+            house.owner_id = f"u-fam-{i}"
+            session.flush()
+            ok = True
+            try:
+                services.set_entity_behaviour(
+                    session, house, genome_src, owner_id=house.owner_id)
+            except Exception:
+                ok = False
+            parents.append((house.id, house.owner_id, ok))
+        session.commit()
+
+        member_birth = {}      # entity id -> birth tick (parents = 0)
+        for tick_no in range(1, days * 24 + 1):
+            if (tick_no - 1) % 24 == 0:
+                spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
+            tick = tick_mod.run_tick(session)
+            _fam.install_family_genomes(session)
+            session.commit()
+            for e in tick.events or []:
+                if e.get("type") == "spawn_entity":
+                    member_birth[e.get("child_id")] = tick_no
+        # measure: alive-days per member + alive-at-end per lineage
+        from econengine.models import Entity, EntityStatus
+        rows = []
+        for pid, owner, ok in parents:
+            parent_days = 0.0
+            alive_end = False
+            child_days = 0.0
+            births = 0
+            if ok:
+                ent = session.get(Entity, pid)
+                if ent.incapacitated_tick:
+                    parent_days = ent.incapacitated_tick / 24
+                else:
+                    parent_days = days
+                    alive_end = True
+            members = session.execute(
+                select(Entity).where(Entity.owner_id == owner)
+            ).scalars().all()
+            for m in members:
+                if m.id == pid:
+                    continue
+                births += 1
+                if m.status == EntityStatus.ACTIVE:
+                    child_days += (days * 24 - member_birth.get(m.id, 0)) / 24
+                    alive_end = True
+                elif m.incapacitated_tick:
+                    child_days += (m.incapacitated_tick
+                                   - member_birth.get(m.id, 0)) / 24
+            family_days = (10 if alive_end else 0) + parent_days + child_days
+            rows.append({
+                "parent_days": round(parent_days, 2),
+                "child_days": round(child_days, 2),
+                "births": births,
+                "alive_at_end": alive_end,
+                "family_days": round(family_days, 2),
+                "spam_ratio": round(child_days / parent_days, 2)
+                if parent_days > 0 and child_days > 0 else None,
+                "fertile_reach": 1.0 if (ok and parent_days >= 25) else 0.0,
+            })
+        out["seats"] = rows
+    return out
+
+
 def _sha16(source: str) -> str:
     import hashlib
     return hashlib.sha256(source.encode()).hexdigest()[:16]
@@ -473,9 +566,17 @@ def fitness(results: list[AssayResult]) -> dict:
         for code, n in s.processes.items():
             mix[code] = mix.get(code, 0) + n
     mix_total = sum(mix.values()) or 1
+    # the climb's standing watch: fertile-window reach -- the share of
+    # seats alive into the second cycle's spring (tick 577+ = day 25,
+    # the fixed season clock). The family's activation energy: report
+    # per generation; reliable reach = bar-2's prerequisite met by
+    # selection rather than hope.
     out = {
         "mean_alive_days": sum(s.alive_ticks for s in seats)
         / (len(seats) * 24.0),
+        "fertile_reach": (sum(1 for s in seats
+                              if s.alive_ticks >= 24 * 24 + 1)
+                          / len(seats)) if seats else 0.0,
         "installed": sum(1 for s in seats if s.installed),
         "deaths": dict(sorted(domains.items(), key=lambda kv: (-kv[1], kv[0]))),
         "script_errors": sum(s.script_errors for s in seats),
