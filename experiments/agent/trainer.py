@@ -336,7 +336,8 @@ class Lineage:
              workers: int = 0, epsilon: float = EPSILON_TURNOVER,
              jitter: int = WINDOW_JITTER_DAYS, block_op=None,
              block_share: float = BLOCK_OP_SHARE,
-             heir_days: int = 6) -> dict:
+             heir_days: int = 6, family_select: bool = False,
+             parent_floor: float = 18.0, family_days: int = 40) -> dict:
         """One generation: the champion re-assayed (from scratch — no
         incumbency) against ``mutants`` param children; the best source
         becomes the new champion — but the belt moves only on signal: a
@@ -393,6 +394,42 @@ class Lineage:
         # re-assay by MORE than epsilon (signal, not lottery — the
         # champion re-proved itself in this very assay). Among eligible
         # children: alive days, then fewer errors, then sha.
+        # The family tier (metric pinned in the spec): family_days =
+        # (lineage alive at end ? 10 : 0) + sum of member alive-days,
+        # multi-entity assay. The parent floor is the anti-r-selection
+        # guard; the spam ratio rides the report (the standing watch).
+        family_stats = None
+        if family_select:
+            from experiments.world.assay import run_family
+            fam_rows = []
+            for tag, src, _fit in rows:
+                runs = [run_family(src, days=family_days)
+                        for _ in range(2)]
+                seats = [x for r in runs for x in r["seats"]]
+                if not seats:
+                    fam_rows.append((tag, src, None))
+                    continue
+                fd = sum(x["family_days"] for x in seats) / len(seats)
+                pd = sum(x["parent_days"] for x in seats) / len(seats)
+                cd = sum(x["child_days"] for x in seats) / len(seats)
+                bi = sum(x["births"] for x in seats) / len(seats)
+                el = ({"mean_alive_days": fd, "parent_days": pd,
+                       "child_days": cd, "births": bi,
+                       "script_errors": 0, "deaths": {},
+                       "installed": len(seats), "shelter": 0, "skin": 0,
+                       "family_days": fd}
+                      if pd >= parent_floor else None)   # the floor
+                fam_rows.append((tag, src, el))
+            rows = [(t, s_, f if f else {
+                "mean_alive_days": -1.0, "parent_days": 0.0,
+                "child_days": 0.0, "births": 0.0, "script_errors": 0,
+                "deaths": {}, "installed": 0, "shelter": 0, "skin": 0,
+                "family_days": -1.0}) for t, s_, f in fam_rows]
+            family_stats = {
+                "parent_days": rows[0][2].get("parent_days"),
+                "child_days": rows[0][2].get("child_days"),
+            }
+
         # Block-aware epsilon (valley crossing): a FRESH INSERT arrives
         # untuned (library-default constants) — within-epsilon of the
         # parent it takes the belt over a param-only child, so param
@@ -626,6 +663,23 @@ def main(argv=None) -> int:
                          "surplus (tier-3). The bequest assay, flow "
                          "columns, and fuel_share remain census "
                          "instruments via --bequest-probe")
+    ap.add_argument("--family-select", action="store_true",
+                    help="the FAMILY tier (aging-repro spec, metric "
+                         "pre-registered): selection becomes family_days "
+                         "= (lineage alive at end ? 10 : 0) + sum of "
+                         "alive-days across members, multi-entity assay "
+                         "(one genome, two lives, the seam v1). Guards: "
+                         "--parent-floor (anti-r-selection), the spam "
+                         "ratio watch, and the pre-registered retreat "
+                         "(5 generations without discrimination)")
+    ap.add_argument("--parent-floor", type=float, default=18.0,
+                    help="the anti-r-selection floor: a candidate whose "
+                         "parent mean alive-days falls below it is "
+                         "ineligible — burning the parent to breed is "
+                         "legal biology but not the game being built")
+    ap.add_argument("--family-days", type=int, default=40,
+                    help="the family tier's assay window (>= 40d: a "
+                         "birth + a provisioned childhood + late life)")
     ap.add_argument("--bequest-probe", type=int, default=0, metavar="DAYS",
                     help="tier-4 census-not-selection (stage 1): each "
                          "generation, every lineage champion runs the "
@@ -639,6 +693,10 @@ def main(argv=None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
+    if args.family_select and args.bequest_select:
+        raise SystemExit("--family-select and the demoted --bequest "
+                         "are mutually exclusive; diagnostics ride "
+                         "--bequest-probe")
     if args.bequest_select:
         raise SystemExit(
             "--bequest-select is demoted (spec §DOCTRINE): bequest is "
@@ -698,13 +756,24 @@ def main(argv=None) -> int:
                            else WINDOW_JITTER_DAYS,
                            block_op=block_op,
                            block_share=args.block_ops,
-                           heir_days=args.bequest_probe or 6)
+                           heir_days=args.bequest_probe or 6,
+                           family_select=args.family_select,
+                           parent_floor=args.parent_floor,
+                           family_days=args.family_days)
             winter = row["fitness"].get("winter")
             wtxt = (f" winter={winter['mean_alive_days']:.2f}"
                     f" deaths={winter['deaths']}" if winter else "")
+            fam_txt = ""
+            if args.family_select:
+                f = row["fitness"]
+                fam_txt = (f" parent={f.get('parent_days', 0):.1f}"
+                           f" child={f.get('child_days', 0):.1f}"
+                           f" births={f.get('births', 0):.1f}")
             print(f"  {lin.name} gen {row['generation']}: best="
-                  f"{row['best']} alive={row['fitness']['mean_alive_days']:.2f}"
+                  f"{row['best']} fitness={row['fitness']['mean_alive_days']:.2f}"
                   f"{wtxt} win={row['window']} turnover={row['turnover']}"
+                  f" reach={row['fitness'].get('fertile_reach', 0):.2f}"
+                  f"{fam_txt}"
                   + (f" llm_tokens={row['llm_tokens']}"
                      if row.get("llm_tokens") is not None else ""))
             report.append(row)
