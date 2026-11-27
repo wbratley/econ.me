@@ -385,9 +385,57 @@ def run_family(genome_src: str, *, days: int = 40,
                     member_birth[e.get("child_id")] = tick_no
                 elif e.get("type") == "say" \
                         and "spawn blocked" in str(e.get("text", "")):
-                    key = "surplus" if "surplus" in e.get("text", "") \
-                        else "wood"
+                    key = ("surplus" if "surplus" in e.get("text", "")
+                           else "wood")
                     blocked[key] += 1
+            # the distance-to-gate instrument (second-cycle fertile
+            # window only: tick 577+ = day 25+; spring-1 founders are
+            # full-buffered and would dominate the peaks)
+            season = season_of(tick_no, 6)
+            fertile2 = tick_no >= 24 * 24 + 1 and (
+                season == "SPRING"
+                or (season == "SUMMER" and season_day_of(tick_no, 6) <= 3))
+            if fertile2:
+                for i, (pid, owner, ok) in enumerate(parents):
+                    if not ok:
+                        continue
+                    ent_p = session.get(Entity, pid)
+                    if ent_p is None \
+                            or ent_p.status != EntityStatus.ACTIVE:
+                        continue
+                    hold_p = {r.symbol: float(r.quantity) for r in
+                              session.execute(select(Holding).where(
+                                  Holding.entity_id == pid)).scalars()}
+                    food_p = (hold_p.get("BERRIES", 0)
+                              + hold_p.get("APPLES", 0)
+                              + hold_p.get("COOKED_MEAT", 0)
+                              + hold_p.get("JERKY", 0))
+                    wood_p = hold_p.get("WOOD", 0)
+                    coin_p = sum(float(a.balance) for a in
+                                 session.execute(select(Account).where(
+                                     Account.entity_id == pid)).scalars())
+                    shelf_p = 0.0
+                    for parcel_p in session.execute(
+                            select(Parcel).where(
+                                Parcel.owner_id == pid)).scalars():
+                        for fh in session.execute(
+                                select(FacilityHolding).where(
+                                    FacilityHolding.facility_id
+                                    == parcel_p.id,
+                                    FacilityHolding.owner_id == "*",
+                                )).scalars():
+                            if fh.symbol in ("JERKY", "COOKED_MEAT",
+                                             "BERRIES", "APPLES", "WOOD"):
+                                shelf_p += float(fh.quantity)
+                    ps = peak_spring[i]
+                    ps["food"] = max(ps["food"], food_p)
+                    ps["wood"] = max(ps["wood"], wood_p)
+                    ps["coin"] = max(ps["coin"], coin_p)
+                    ps["shelf"] = max(ps["shelf"], shelf_p)
+                    if (food_p + shelf_p >= 5 and wood_p >= 3
+                            and hold_p.get("SATIETY", 0) > 3
+                            and hold_p.get("WARMTH", 0) > 3):
+                        ps["gate_clear_ticks"] += 1
             # the distance-to-gate read: at every tick of the FAMILY
             # window (the SECOND cycle's fertile season, ticks 577+ --
             # spring-1 founders are full-buffered and would dominate
