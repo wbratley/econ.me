@@ -174,3 +174,6 @@ def test_the_family_assay_measures_two_lives():
         assert set(ps) == {"food", "wood", "coin", "shelf",
                            "gate_clear_ticks"}
         assert ps["gate_clear_ticks"] >= 0
+        assert set(s) >= {"parent_days", "child_days", "births",
+                          "fertile_reach", "blocked_surplus",
+                          "blocked_wood", "peak_spring"}
