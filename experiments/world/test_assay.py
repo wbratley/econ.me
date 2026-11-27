@@ -165,3 +165,12 @@ def test_the_family_assay_measures_two_lives():
             s["parent_days"] + s["child_days"]
             + (10 if s["alive_at_end"] else 0), 2)
         assert s["spam_ratio"] is None or s["spam_ratio"] >= 0
+        # the instrumented rows: reach, blocked reasons, the
+        # distance-to-gate components (second-cycle peaks + joint
+        # gate-clear ticks)
+        assert s["fertile_reach"] in (0.0, 1.0)
+        assert s["blocked_surplus"] >= 0 and s["blocked_wood"] >= 0
+        ps = s["peak_spring"]
+        assert set(ps) == {"food", "wood", "coin", "shelf",
+                           "gate_clear_ticks"}
+        assert ps["gate_clear_ticks"] >= 0
