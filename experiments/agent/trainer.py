@@ -413,8 +413,21 @@ class Lineage:
                 pd = sum(x["parent_days"] for x in seats) / len(seats)
                 cd = sum(x["child_days"] for x in seats) / len(seats)
                 bi = sum(x["births"] for x in seats) / len(seats)
+                reach = sum(x.get("fertile_reach", 0) for x in seats) / len(seats)
+                gate = sum(x.get("peak_spring", {}).get("gate_clear_ticks", 0)
+                           for x in seats)
+                peak = {"food": max(x.get("peak_spring", {}).get("food", 0)
+                                    for x in seats),
+                        "wood": max(x.get("peak_spring", {}).get("wood", 0)
+                                    for x in seats),
+                        "coin": max(x.get("peak_spring", {}).get("coin", 0)
+                                    for x in seats),
+                        "shelf": max(x.get("peak_spring", {}).get("shelf", 0)
+                                     for x in seats)}
                 el = ({"mean_alive_days": fd, "parent_days": pd,
                        "child_days": cd, "births": bi,
+                       "fertile_reach": reach, "gate_clear_ticks": gate,
+                       "peak_spring": peak,
                        "script_errors": 0, "deaths": {},
                        "installed": len(seats), "shelter": 0, "skin": 0,
                        "family_days": fd}
@@ -679,7 +692,19 @@ def main(argv=None) -> int:
                          "legal biology but not the game being built")
     ap.add_argument("--family-days", type=int, default=40,
                     help="the family tier's assay window (>= 40d: a "
-                         "birth + a provisioned childhood + late life)")
+                         "birth + a provisioned childhood + late life); "
+                         "selection's or the parked probe's")
+    ap.add_argument("--family-probe", action="store_true",
+                    help="the PARKED family tier as census (post-retreat): "
+                         "each generation, every lineage champion runs "
+                         "the family assay -- family_days, births, the "
+                         "distance-to-gate row (peak spring surplus "
+                         "components + gate-clear ticks). Selection "
+                         "stays survival; the row replaces births as "
+                         "the discriminating signal while births are "
+                         "zero (threshold journaled: rising-with-"
+                         "survival = window opens on its own; flat-"
+                         "while-alive-days-climb = structural cap)")
     ap.add_argument("--bequest-probe", type=int, default=0, metavar="DAYS",
                     help="tier-4 census-not-selection (stage 1): each "
                          "generation, every lineage champion runs the "
@@ -746,6 +771,7 @@ def main(argv=None) -> int:
 
     report = []
     bequest_rows: list[dict] = []
+    family_probe_rows: list[dict] = []
     for g in range(args.generations):
         for lin in lineages:
             row = lin.step(mutants=args.mutants,
@@ -766,9 +792,13 @@ def main(argv=None) -> int:
             fam_txt = ""
             if args.family_select:
                 f = row["fitness"]
+                pk = f.get("peak_spring") or {}
                 fam_txt = (f" parent={f.get('parent_days', 0):.1f}"
                            f" child={f.get('child_days', 0):.1f}"
-                           f" births={f.get('births', 0):.1f}")
+                           f" births={f.get('births', 0):.1f}"
+                           f" gate={f.get('gate_clear_ticks', 0)}"
+                           f" peak_food={pk.get('food', 0):.1f}"
+                           f" peak_wood={pk.get('wood', 0):.1f}")
             print(f"  {lin.name} gen {row['generation']}: best="
                   f"{row['best']} fitness={row['fitness']['mean_alive_days']:.2f}"
                   f"{wtxt} win={row['window']} turnover={row['turnover']}"
@@ -779,6 +809,31 @@ def main(argv=None) -> int:
             report.append(row)
         rad = radiation(lineages)
         print(f"  radiation: {rad}")
+        if args.family_probe:
+            from experiments.world.assay import run_family
+            for lin in lineages:
+                r = run_family(lin.champion_src, days=args.family_days or 40)
+                seats = r["seats"]
+                if seats:
+                    row = {
+                        "lineage": lin.name, "generation": lin.generation,
+                        "family_days": round(sum(x["family_days"]
+                                                 for x in seats) / len(seats), 2),
+                        "births": sum(x["births"] for x in seats),
+                        "gate_clear": sum(x.get("peak_spring", {})
+                                          .get("gate_clear_ticks", 0)
+                                          for x in seats),
+                        "peak_spring": {
+                            k: round(max(x.get("peak_spring", {}).get(k, 0)
+                                         for x in seats), 2)
+                            for k in ("food", "wood", "coin", "shelf")},
+                        "blocked_surplus": seats[0].get("blocked_surplus", 0),
+                    }
+                    family_probe_rows.append(row)
+                    pk = row["peak_spring"]
+                    print(f"  family[{lin.name}] gen{lin.generation}: "
+                          f"family={row['family_days']} births={row['births']} "
+                          f"gate={row['gate_clear']} peak={pk}")
         if args.bequest_probe:
             from experiments.world.assay import run_bequest
             for lin in lineages:
@@ -812,6 +867,8 @@ def main(argv=None) -> int:
     summary = {"report": report, "radiation": radiation(lineages)}
     if library_sha is not None:
         summary["library_sha"] = library_sha
+    if args.family_probe:
+        summary["family_probe"] = family_probe_rows
     if args.bequest_probe:
         summary["bequest"] = bequest_rows
     if block_op is not None:

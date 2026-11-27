@@ -345,6 +345,8 @@ def run_family(genome_src: str, *, days: int = 40,
     ratio (child_days : parent_days, the standing census watch).
     Returns per-seat rows + the rollup; zero tokens."""
     from . import family as _fam
+    from econengine.models import (
+        Account, Entity, EntityStatus, FacilityHolding, Holding, Parcel)
     sha = _sha16(genome_src)
     engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -367,6 +369,11 @@ def run_family(genome_src: str, *, days: int = 40,
         session.commit()
 
         member_birth = {}      # entity id -> birth tick (parents = 0)
+        blocked = {"surplus": 0, "wood": 0}   # the spawn-gate row, live
+        peak_spring = [dict(food=0.0, wood=0.0, coin=0.0, shelf=0.0,
+                             gate_clear_ticks=0)
+                       for _ in parents]      # distance-to-gate row
+        from econengine.clock import season_of, season_day_of
         for tick_no in range(1, days * 24 + 1):
             if (tick_no - 1) % 24 == 0:
                 spawns.apply_on_round(session, (tick_no - 1) // 24 + 1)
@@ -376,8 +383,64 @@ def run_family(genome_src: str, *, days: int = 40,
             for e in tick.events or []:
                 if e.get("type") == "spawn_entity":
                     member_birth[e.get("child_id")] = tick_no
+                elif e.get("type") == "say" \
+                        and "spawn blocked" in str(e.get("text", "")):
+                    key = "surplus" if "surplus" in e.get("text", "") \
+                        else "wood"
+                    blocked[key] += 1
+            # the distance-to-gate read: at every tick of the FAMILY
+            # window (the SECOND cycle's fertile season, ticks 577+ --
+            # spring-1 founders are full-buffered and would dominate
+            # the peaks), each seat's holdings vs the spawn gate's own
+            # bars. Components (goods, coin, the family shelf) show
+            # WHAT the lineage holds; gate_clear_ticks counts the
+            # instants ALL the economic gates pass jointly (surplus 5
+            # incl shelf, wood 3, satiety, warmth) -- the honest
+            # distance to a birth.
+            season = season_of(tick_no, 6)
+            fertile = (tick_no >= 24 * 24 + 1) and (
+                season == "SPRING"
+                or (season == "SUMMER" and season_day_of(tick_no, 6) <= 3))
+            if fertile:
+                for i, (pid, owner, ok) in enumerate(parents):
+                    if not ok:
+                        continue
+                    ent = session.get(Entity, pid)
+                    if ent.status != EntityStatus.ACTIVE:
+                        continue
+                    hold = {r.symbol: float(r.quantity) for r in session.execute(
+                        select(Holding).where(
+                            Holding.entity_id == pid)).scalars()}
+                    food = (hold.get("BERRIES", 0) + hold.get("APPLES", 0)
+                            + hold.get("COOKED_MEAT", 0) + hold.get("JERKY", 0))
+                    wood = hold.get("WOOD", 0)
+                    coin = sum(float(a.balance) for a in session.execute(
+                        select(Account).where(
+                            Account.entity_id == pid)).scalars())
+                    # the family shelf: the camp parcel's shared drop rows
+                    shelf = 0.0
+                    for parcel in session.execute(
+                            select(Parcel).where(
+                                Parcel.owner_id == pid)).scalars():
+                        for fh in session.execute(
+                                select(FacilityHolding).where(
+                                    FacilityHolding.facility_id == parcel.id,
+                                    FacilityHolding.owner_id == "*",
+                                )).scalars():
+                            if fh.symbol in ("JERKY", "COOKED_MEAT",
+                                             "BERRIES", "APPLES", "WOOD"):
+                                shelf += float(fh.quantity)
+                    ps = peak_spring[i]
+                    ps["food"] = max(ps["food"], food)
+                    ps["wood"] = max(ps["wood"], wood)
+                    ps["coin"] = max(ps["coin"], coin)
+                    ps["shelf"] = max(ps["shelf"], shelf)
+                    if (food + shelf >= 5 and wood >= 3
+                            and hold.get("SATIETY", 0) > 3
+                            and hold.get("WARMTH", 0) > 3):
+                        ps["gate_clear_ticks"] = \
+                            ps.get("gate_clear_ticks", 0) + 1
         # measure: alive-days per member + alive-at-end per lineage
-        from econengine.models import Entity, EntityStatus
         rows = []
         for pid, owner, ok in parents:
             parent_days = 0.0
@@ -414,6 +477,9 @@ def run_family(genome_src: str, *, days: int = 40,
                 "spam_ratio": round(child_days / parent_days, 2)
                 if parent_days > 0 and child_days > 0 else None,
                 "fertile_reach": 1.0 if (ok and parent_days >= 25) else 0.0,
+                "blocked_surplus": blocked["surplus"],
+                "blocked_wood": blocked["wood"],
+                "peak_spring": peak_spring[i],
             })
         out["seats"] = rows
     return out
