@@ -286,13 +286,23 @@ def _slot_rank_of_section(lines: list[str], i: int) -> int | None:
 
 
 def needs_met(genome_src: str, block: Block) -> bool:
-    """The cheap static check: every needs= key (a ctx.state key or a
-    library dependency) must appear in the host genome or be provided
-    by the block itself. Unmet inserts are refused before the assay
-    spends worlds on them."""
+    """The cheap static check: every needs= key must be satisfiable in
+    the host genome or provided by the block itself. Three key kinds:
+    a ctx.state key (checked as ``S.<key>``), a good symbol (checked
+    upper-cased — the genome crafts or carries goods, e.g. an axe the
+    chop block presupposes), or a library dependency (checked as the
+    bare key against provides). Unmet inserts are refused before the
+    assay spends worlds on them."""
     hay = genome_src + "\n" + block.source
-    return all((f"S.{k}" in hay) or (k in block.provides)
-               for k in block.needs)
+    for k in block.needs:
+        if k in block.provides:
+            continue
+        if f"S.{k}" in hay:
+            continue
+        if k.upper() in hay.upper():
+            continue
+        return False
+    return True
 
 
 def insert_block(genome_src: str, block: Block) -> str:
