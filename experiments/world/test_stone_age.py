@@ -5194,8 +5194,12 @@ def test_the_g0_scaffold_blocks_parse_and_the_tool_run_fires(session):
     _set(session, seat, "WOOD", 2)       # the night paid
     session.commit()
     _run(session, 2)
+    # the axe-less knapped house's day 2 belongs to the ACQUISITION
+    # decision (the aging-repro family frame + tool.axe): it walks the
+    # flint scrape (the axe-want's flint leg) before any post trip —
+    # the axe comes before the shopping
     assert any(e["entity_id"] == seat.id
-               and str(e.get("to", e.get("place", ""))).upper() == "POST"
+               and str(e.get("to", e.get("place", ""))).upper() == "FLINT"
                for e in _events(session, "travel"))
     # and standing at the counter, the skin order lands on its own book
     _run(session, 4)                     # the walk is an hour each way
